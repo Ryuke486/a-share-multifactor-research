@@ -1,0 +1,33 @@
+version: 1
+
+field_groups:
+  valuation:
+    fields: [pe_ttm, pb, ps_ttm]
+    point_in_time_status: unverified
+    evidence_note: Historical point-in-time valuation provenance has not been verified.
+    cross_check:
+      source: null
+      retrieval_date: null
+      sample_rule: null
+      result_summary: No external cross-check completed.
+
+  industry:
+    fields: [industry]
+    point_in_time_status: unverified
+    evidence_note: Historical industry classification provenance has not been verified.
+    cross_check:
+      source: null
+      retrieval_date: null
+      sample_rule: null
+      result_summary: No external cross-check completed.
+
+  historical_st:
+    fields: [is_st]
+    point_in_time_status: unverified
+    evidence_note: Historical ST status provenance has not been verified; this affects the universe filter.
+    affected_scope: dynamic_universe
+    cross_check:
+      source: null
+      retrieval_date: null
+      sample_rule: null
+      result_summary: No external cross-check completed.

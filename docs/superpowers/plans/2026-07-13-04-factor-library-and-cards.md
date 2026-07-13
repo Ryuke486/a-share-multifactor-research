@@ -398,15 +398,15 @@ git commit -m "feat: freeze factor research protocol"
 - Produces: FACTOR_DEFINITIONS: Sequence[FactorDefinition]。
 - Produces: FieldReadiness、audit_factor_fields(frame, definitions)。
 
-- [ ] **Step 1: 写注册表失败测试**
+- [x] **Step 1: 写注册表失败测试**
 
 断言正好包含第2.2节14个唯一名称，direction只能为-1或+1，价值因子requires_verified_pit=True，log_market_cap.size_neutralize=False。
 
-- [ ] **Step 2: 实现FactorDefinition和固定注册表**
+- [x] **Step 2: 实现FactorDefinition和固定注册表**
 
 注册表是因子元数据唯一来源。评价、报告和因子卡片不得各自维护名称或方向。
 
-- [ ] **Step 3: 写数据门禁失败测试**
+- [x] **Step 3: 写数据门禁失败测试**
 
 至少覆盖：
 
@@ -420,19 +420,19 @@ def test_industry_neutralization_is_disabled_without_historical_evidence() -> No
     assert readiness.industry_neutralization_enabled is False
 ~~~
 
-- [ ] **Step 4: 实现门禁报告**
+- [x] **Step 4: 实现门禁报告**
 
 data_readiness.json至少包含每个字段的非空率、有限值率、正值率、最早/最晚日期、point-in-time状态、证据说明和受影响因子。外部核验材料不存在时必须写unverified，不能默认通过。
 
 configs/data_field_evidence.yaml初始明确写valuation、industry和historical_st的状态。交叉核验只记录来源、抓取日期、样本规则和结果摘要；不能把AKShare或BaoStock网络请求变成核心研究管道的隐式步骤。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: .venv/bin/pytest tests/test_factor_definitions.py tests/test_field_audit.py -v
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交本任务**
+- [x] **Step 6: 提交本任务**
 
 ~~~bash
 git add configs/data_field_evidence.yaml src/ashare_multifactor/factors src/ashare_multifactor/data/field_audit.py tests/test_factor_definitions.py tests/test_field_audit.py
@@ -441,9 +441,9 @@ git commit -m "feat: register factors and data readiness gates"
 
 **验收：**
 
-- [ ] 因子列表、方向和数据要求只有一个权威来源。
-- [ ] 未核验价值字段不能产出candidate。
-- [ ] 未核验行业字段不会静默进入中性化。
+- [x] 因子列表、方向和数据要求只有一个权威来源。
+- [x] 未核验价值字段不能产出candidate。
+- [x] 未核验行业字段不会静默进入中性化。
 
 ---
 
