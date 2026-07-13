@@ -111,6 +111,10 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
         or years != sorted(set(years))
     ):
         raise ValueError("daily panel manifest must contain sorted unique years")
+    if years != list(range(minimum.year, maximum.year + 1)):
+        raise ValueError(
+            "daily panel manifest years must match the continuous min/max year range"
+        )
 
     records: list[tuple[dict[str, object], Path, date, date]] = []
     expected_relative_paths: set[str] = set()
@@ -126,6 +130,10 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
             raise ValueError(f"invalid daily panel partition year: {relative_path}")
         if relative.parent.as_posix() != f"year={year}":
             raise ValueError(f"daily panel partition year/path mismatch: {relative_path}")
+        if relative_path != f"year={year}/part-000.parquet":
+            raise ValueError(
+                "daily panel manifest must contain exactly one part-000 partition per year"
+            )
         if year not in years:
             raise ValueError(f"daily panel partition year absent from manifest years: {year}")
         if not allowed.start.year <= year <= allowed.end.year:
@@ -180,12 +188,14 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
                 f"{path.relative_to(root).as_posix()}"
             )
         actual_file = _file_summary(path)
-        if (
-            record["sha256"] != actual_file["sha256"]
-            or record["size_bytes"] != actual_file["size_bytes"]
-        ):
+        if record["sha256"] != actual_file["sha256"]:
             raise ValueError(
                 "daily panel partition digest mismatch: "
+                f"{path.relative_to(root).as_posix()}"
+            )
+        if record["size_bytes"] != actual_file["size_bytes"]:
+            raise ValueError(
+                "daily panel partition size mismatch: "
                 f"{path.relative_to(root).as_posix()}"
             )
         actual_rows, actual_minimum, actual_maximum = _parquet_summary(path)
@@ -218,9 +228,11 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
         or declared_rows != sum(int(record["rows"]) for record, _, _, _ in records)
     ):
         raise ValueError("daily panel partition rows do not match data manifest")
-    partition_years = sorted({int(record["year"]) for record, _, _, _ in records})
+    partition_years = sorted(int(record["year"]) for record, _, _, _ in records)
     if partition_years != years:
-        raise ValueError("daily panel partition years do not match data manifest")
+        raise ValueError(
+            "daily panel manifest must contain exactly one part-000 partition per year"
+        )
     if min(item[2] for item in records) != minimum or max(item[3] for item in records) != maximum:
         raise ValueError("daily panel partition dates do not match data manifest")
     return DailyPanelSource(

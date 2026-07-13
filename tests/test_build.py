@@ -1,5 +1,6 @@
 import hashlib
 import json
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -202,6 +203,131 @@ def test_explicit_output_root_isolates_research_panel_from_mvp(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
+    "destination",
+    ("mvp", "processed", "raw_unadjusted", "external"),
+)
+def test_explicit_output_root_rejects_every_non_research_destination_before_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    destination: str,
+) -> None:
+    import ashare_multifactor.data.build as build_module
+
+    config = _config(tmp_path)
+    mvp_root = config.paths.processed / "daily_panel"
+    research_root = config.paths.processed / "factor_research/daily_panel"
+    for root, marker in ((mvp_root, "mvp"), (research_root, "research")):
+        root.mkdir(parents=True)
+        (root / "old-marker").write_text(marker, encoding="utf-8")
+    destinations = {
+        "mvp": mvp_root,
+        "processed": config.paths.processed,
+        "raw_unadjusted": config.paths.raw_unadjusted,
+        "external": tmp_path / "external/daily_panel",
+    }
+    attempted = destinations[destination]
+    attempted.mkdir(parents=True, exist_ok=True)
+    (attempted / "attempted-marker").write_text("unchanged", encoding="utf-8")
+    processed_before = _tree_hashes(config.paths.processed)
+    attempted_before = _tree_hashes(attempted)
+
+    monkeypatch.setattr(
+        build_module,
+        "discover_daily_pairs",
+        lambda *args, **kwargs: pytest.fail("invalid path reached raw discovery"),
+    )
+
+    with pytest.raises(ValueError, match="configured factor research daily panel"):
+        build_module.build_parquet_dataset(
+            config,
+            date(2005, 1, 4),
+            date(2005, 1, 4),
+            output_root=attempted,
+        )
+
+    assert _tree_hashes(config.paths.processed) == processed_before
+    assert _tree_hashes(attempted) == attempted_before
+
+
+def test_explicit_output_root_rejects_symlink_escape_before_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ashare_multifactor.data.build as build_module
+
+    config = _config(tmp_path)
+    mvp_root = config.paths.processed / "daily_panel"
+    mvp_root.mkdir(parents=True)
+    (mvp_root / "old-marker").write_text("mvp", encoding="utf-8")
+    outside_parent = tmp_path / "outside-factor-research"
+    outside_target = outside_parent / "daily_panel"
+    outside_target.mkdir(parents=True)
+    (outside_target / "old-marker").write_text("research", encoding="utf-8")
+    factor_link = config.paths.processed / "factor_research"
+    factor_link.symlink_to(outside_parent, target_is_directory=True)
+    mvp_before = _tree_hashes(mvp_root)
+    outside_before = _tree_hashes(outside_target)
+
+    monkeypatch.setattr(
+        build_module,
+        "discover_daily_pairs",
+        lambda *args, **kwargs: pytest.fail("symlink escape reached raw discovery"),
+    )
+
+    with pytest.raises(ValueError, match="escapes configured processed root"):
+        build_module.build_parquet_dataset(
+            config,
+            date(2005, 1, 4),
+            date(2005, 1, 4),
+            output_root=factor_link / "daily_panel",
+        )
+
+    assert _tree_hashes(mvp_root) == mvp_before
+    assert _tree_hashes(outside_target) == outside_before
+
+
+@pytest.mark.parametrize(
+    "overlap",
+    ("same", "processed_inside_raw", "raw_inside_processed"),
+)
+def test_build_rejects_processed_and_raw_path_overlap_before_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    overlap: str,
+) -> None:
+    import ashare_multifactor.data.build as build_module
+
+    config = _config(tmp_path)
+    if overlap == "same":
+        paths = replace(config.paths, processed=config.paths.raw_unadjusted)
+    elif overlap == "processed_inside_raw":
+        paths = replace(
+            config.paths,
+            processed=config.paths.raw_unadjusted / "processed",
+        )
+    else:
+        paths = replace(
+            config.paths,
+            raw_unadjusted=config.paths.processed / "raw",
+        )
+    config = replace(config, paths=paths)
+    monkeypatch.setattr(
+        build_module,
+        "discover_daily_pairs",
+        lambda *args, **kwargs: pytest.fail("overlapping paths reached raw discovery"),
+    )
+
+    with pytest.raises(ValueError, match="processed path overlaps raw input"):
+        build_module.build_parquet_dataset(
+            config,
+            date(2014, 1, 2),
+            date(2014, 1, 2),
+        )
+
+    assert not (config.paths.processed / "daily_panel").exists()
+
+
+@pytest.mark.parametrize(
     ("start", "end"),
     [
         (date(2002, 12, 31), date(2003, 1, 2)),
@@ -271,3 +397,75 @@ def test_publish_failure_restores_existing_dataset(tmp_path: Path, monkeypatch) 
     assert list(target.iterdir()) == [marker]
     assert not list(config.paths.processed.glob(".daily_panel-*.tmp"))
     assert not list(config.paths.processed.glob(".daily_panel-*.backup"))
+
+
+def test_publish_and_rollback_rename_failure_restores_copy_and_retains_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import os
+
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2))
+    target = config.paths.processed / "daily_panel"
+    target.mkdir(parents=True)
+    marker = target / "old-marker"
+    marker.write_text("old", encoding="utf-8")
+    real_replace = os.replace
+
+    def fail_publish_and_rollback(source: Path, destination: Path) -> None:
+        source_path = Path(source)
+        if destination == target and source_path.name.endswith(".tmp"):
+            raise OSError("simulated publish failure")
+        if destination == target and source_path.name.endswith(".backup"):
+            raise OSError("simulated rollback rename failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_publish_and_rollback)
+
+    with pytest.raises(
+        RuntimeError,
+        match="rollback rename failed.*restored target from backup copy",
+    ):
+        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+
+    assert marker.read_text(encoding="utf-8") == "old"
+    assert list(target.iterdir()) == [marker]
+    backups = list(config.paths.processed.glob(".daily_panel-*.backup"))
+    assert len(backups) == 1
+    assert (backups[0] / "old-marker").read_text(encoding="utf-8") == "old"
+    assert not list(config.paths.processed.glob(".daily_panel-*.tmp"))
+
+
+def test_successful_publish_ignores_cleanup_failure_and_retains_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import shutil
+
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2))
+    target = config.paths.processed / "daily_panel"
+    target.mkdir(parents=True)
+    (target / "old-marker").write_text("old", encoding="utf-8")
+    real_rmtree = shutil.rmtree
+
+    def fail_backup_cleanup(path: Path, *args: object, **kwargs: object) -> None:
+        if Path(path).name.endswith(".backup"):
+            raise OSError("simulated backup cleanup failure")
+        real_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", fail_backup_cleanup)
+
+    manifest = build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+
+    assert manifest.rows == 1
+    assert (target / "manifest.json").exists()
+    assert not (target / "old-marker").exists()
+    backups = list(config.paths.processed.glob(".daily_panel-*.backup"))
+    assert len(backups) == 1
+    assert (backups[0] / "old-marker").read_text(encoding="utf-8") == "old"

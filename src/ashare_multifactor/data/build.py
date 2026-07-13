@@ -100,10 +100,65 @@ def _publish_staging(staging: Path, target: Path) -> None:
     os.replace(target, backup)
     try:
         os.replace(staging, target)
-    except BaseException:
-        os.replace(backup, target)
+    except BaseException as publish_error:
+        try:
+            os.replace(backup, target)
+        except BaseException as rollback_error:
+            try:
+                shutil.copytree(backup, target)
+            except BaseException as recovery_error:
+                error = RuntimeError(
+                    "dataset publish failed; rollback rename failed; "
+                    f"backup copy recovery failed; backup retained at {backup}"
+                )
+                error.add_note(f"publish error: {publish_error!r}")
+                error.add_note(f"rollback rename error: {rollback_error!r}")
+                error.add_note(f"backup copy error: {recovery_error!r}")
+                raise error from publish_error
+            error = RuntimeError(
+                "dataset publish failed; rollback rename failed; "
+                f"restored target from backup copy; backup retained at {backup}"
+            )
+            error.add_note(f"publish error: {publish_error!r}")
+            error.add_note(f"rollback rename error: {rollback_error!r}")
+            raise error from publish_error
         raise
-    shutil.rmtree(backup)
+    try:
+        shutil.rmtree(backup)
+    except OSError:
+        pass
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    return left == right or left in right.parents or right in left.parents
+
+
+def _validated_output_root(
+    config: ResearchConfig,
+    output_root: Path | None,
+) -> Path:
+    processed = config.paths.processed.resolve()
+    for raw_root in (
+        config.paths.raw_unadjusted.resolve(),
+        config.paths.raw_backward_adjusted.resolve(),
+    ):
+        if _paths_overlap(processed, raw_root):
+            raise ValueError("configured processed path overlaps raw input path")
+
+    if output_root is None:
+        return config.paths.processed / "daily_panel"
+
+    expected = config.paths.processed / "factor_research/daily_panel"
+    expected_resolved = expected.resolve()
+    if not expected_resolved.is_relative_to(processed):
+        raise ValueError(
+            "configured factor research daily panel escapes configured processed root"
+        )
+    if output_root.resolve() != expected_resolved:
+        raise ValueError(
+            "output_root must equal configured factor research daily panel"
+        )
+    return expected
 
 
 def build_parquet_dataset(
@@ -114,17 +169,16 @@ def build_parquet_dataset(
 ) -> BuildManifest:
     if end < start:
         raise ValueError("build end precedes start")
+    target = _validated_output_root(config, output_root)
     if output_root is None:
         allowed_start = config.smoke_data.start
         allowed_end = config.smoke_data.end
-        target = config.paths.processed / "daily_panel"
         period_name = "smoke_data"
     else:
         if config.factor_research is None:
             raise ValueError("explicit output_root requires factor_research settings")
         allowed_start = config.factor_research.data_start
         allowed_end = config.factor_research.analysis_end
-        target = output_root
         period_name = "factor_research data"
     if start < allowed_start or end > allowed_end:
         raise ValueError(f"build dates must stay inside configured {period_name} period")
