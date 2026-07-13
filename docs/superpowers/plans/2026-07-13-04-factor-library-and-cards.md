@@ -579,29 +579,29 @@ git commit -m "feat: add factor research universe and labels"
 **Interfaces:**
 - Produces: compute_momentum_factors、compute_reversal_factors、compute_low_volatility_factors。
 
-- [ ] **Step 1: 写安全收益和滚动窗口测试**
+- [x] **Step 1: 写安全收益和滚动窗口测试**
 
 覆盖零价格、负价格、NaN、Inf、跨年窗口、缺观测、精确t-21/t-252和不足样本时返回空值。
 
-- [ ] **Step 2: 实现transforms.py**
+- [x] **Step 2: 实现transforms.py**
 
 只提供可复用表达式和小函数，不出现具体因子名称、配置路径或评价逻辑。
 
-- [ ] **Step 3: 写手算因子测试**
+- [x] **Step 3: 写手算因子测试**
 
 使用单调增长、单调下降、混合正负收益三类人工序列，逐项验证5个收益路径因子与3个波动因子。
 
-- [ ] **Step 4: 实现三个因子族文件**
+- [x] **Step 4: 实现三个因子族文件**
 
 每个函数只读取注册表声明的列，返回date、symbol和本因子族原始值。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: .venv/bin/pytest tests/test_factor_transforms.py tests/test_price_factors.py -v
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交本任务**
+- [x] **Step 6: 提交本任务**
 
 ~~~bash
 git add src/ashare_multifactor/factors/transforms.py src/ashare_multifactor/factors/momentum.py src/ashare_multifactor/factors/reversal.py src/ashare_multifactor/factors/low_volatility.py tests/test_factor_transforms.py tests/test_price_factors.py
@@ -610,9 +610,9 @@ git commit -m "feat: add price based factor families"
 
 **验收：**
 
-- [ ] 60日动量direction保持+1，没有因MVP负IC翻转。
-- [ ] 12-1动量明确跳过最近21个观测。
-- [ ] 波动率只基于历史后复权收益。
+- [x] 60日动量direction保持+1，没有因MVP负IC翻转。
+- [x] 12-1动量明确跳过最近21个观测。
+- [x] 波动率只基于历史后复权收益。
 
 ---
 
