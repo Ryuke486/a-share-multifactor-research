@@ -749,56 +749,62 @@ git commit -m "feat: build monthly factor panel"
 
 **Files:**
 - Create: src/ashare_multifactor/research/factor_statistics.py
+- Create: src/ashare_multifactor/research/factor_metrics.py
 - Create: src/ashare_multifactor/research/factor_evaluation.py
 - Create: src/ashare_multifactor/research/factor_selection.py
 - Test: tests/test_factor_statistics.py
 - Test: tests/test_factor_evaluation.py
+- Test: tests/test_factor_selection.py
+
+实现中 `factor_evaluation.py` 一度达到 524 行，触发单一职责拆分：纯月度/截面
+指标移入 `factor_metrics.py`，分类测试也独立到 `test_factor_selection.py`。该调整仅改变
+模块边界，不改变预注册统计口径。
 
 **Interfaces:**
 - Produces: newey_west_mean_test、benjamini_hochberg、evaluate_factors、classify_factors。
 
-- [ ] **Step 1: 写Newey-West和BH手算测试**
+- [x] **Step 1: 写Newey-West和BH手算测试**
 
 使用可手算序列验证均值、标准误、t值和单调q值；空序列、单观测、零方差必须返回明确reason。
 
-- [ ] **Step 2: 实现统计工具**
+- [x] **Step 2: 实现统计工具**
 
 只依赖NumPy/SciPy，不新增statsmodels。BH校正只对同一预注册主评价族的有效p值执行。
 
-- [ ] **Step 3: 写IC、五分组和换手测试**
+- [x] **Step 3: 写IC、五分组和换手测试**
 
 覆盖完全同序IC=1、完全反序IC=-1、少于20只、并列分数、五组数量不整除、Top 20%成员变化和标签缺失。
 
-- [ ] **Step 4: 实现通用评价**
+- [x] **Step 4: 实现通用评价**
 
 评价函数只按factor_name和score_variant分组，不能包含ep_ttm、momentum_60等特例。
 
-- [ ] **Step 5: 写分类规则测试**
+- [x] **Step 5: 写分类规则测试**
 
 逐项验证candidate、watch、reject和unverified上限；不允许根据因子名称给予豁免。
 
-- [ ] **Step 6: 实现分类**
+- [x] **Step 6: 实现分类**
 
 输出每项门槛的布尔值和最终reason，不能只输出一个不透明标签。
 
-- [ ] **Step 7: 运行测试**
+- [x] **Step 7: 运行测试**
 
-Run: .venv/bin/pytest tests/test_factor_statistics.py tests/test_factor_evaluation.py -v
+Run: .venv/bin/pytest tests/test_factor_statistics.py tests/test_factor_evaluation.py tests/test_factor_selection.py -v
 
 Expected: PASS。
 
-- [ ] **Step 8: 提交本任务**
+- [x] **Step 8: 提交本任务**
 
 ~~~bash
-git add src/ashare_multifactor/research/factor_statistics.py src/ashare_multifactor/research/factor_evaluation.py src/ashare_multifactor/research/factor_selection.py tests/test_factor_statistics.py tests/test_factor_evaluation.py
+git add src/ashare_multifactor/research/factor_statistics.py src/ashare_multifactor/research/factor_metrics.py src/ashare_multifactor/research/factor_evaluation.py src/ashare_multifactor/research/factor_selection.py tests/test_factor_statistics.py tests/test_factor_evaluation.py tests/test_factor_selection.py
 git commit -m "feat: evaluate and classify single factors"
 ~~~
 
 **验收：**
 
-- [ ] IC、ICIR、Newey-West、BH q值、分组、衰减、覆盖率和换手均可复算。
-- [ ] 负结果保留并带原因。
-- [ ] 阶段验收不以candidate数量为条件。
+- [x] IC、ICIR、Newey-West、BH q值、分组、衰减、覆盖率和换手均可复算。
+- [x] 负结果保留并带原因。
+- [x] 阶段验收不以candidate数量为条件。
 
 ---
 
