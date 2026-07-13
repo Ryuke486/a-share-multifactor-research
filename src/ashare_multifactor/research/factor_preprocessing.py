@@ -35,7 +35,6 @@ _OUTPUT_SCHEMA = {
     "point_in_time_status": pl.String,
     "preprocessing_reason": pl.String,
 }
-_ZERO_TOLERANCE = 1e-12
 
 
 def preprocess_factor_panel(
@@ -227,14 +226,28 @@ def _neutralize_group(
     x = size_scores[common_indices]
     y = scores[common_indices]
     x_centered = x - x.mean()
-    if float(x.std(ddof=0)) <= _ZERO_TOLERANCE:
+    design = np.column_stack((np.ones(common_indices.size), x_centered))
+    if np.linalg.matrix_rank(design) < design.shape[1]:
         _set_reason(reasons, common_indices.tolist(), "singular_size_control")
         return _with_neutral_results(group, neutral, reasons)
 
-    slope = float(np.dot(x_centered, y - y.mean()) / np.dot(x_centered, x_centered))
-    residual = y - (y.mean() + slope * x_centered)
+    orthogonal_basis, _ = np.linalg.qr(design, mode="reduced")
+    fitted = orthogonal_basis @ (orthogonal_basis.T @ y)
+    residual = y - fitted
+    residual -= orthogonal_basis @ (orthogonal_basis.T @ residual)
+    fitted = y - residual
     residual_standard_deviation = float(residual.std(ddof=0))
-    if residual_standard_deviation <= _ZERO_TOLERANCE:
+    scale = max(
+        float(np.max(np.abs(y))),
+        float(np.max(np.abs(fitted))),
+        float(np.linalg.norm(design, ord=np.inf)),
+    )
+    exact_fit_tolerance = np.finfo(float).eps * max(design.shape) * scale
+    if (
+        not np.isfinite(residual_standard_deviation)
+        or residual_standard_deviation == 0.0
+        or float(np.max(np.abs(residual))) <= exact_fit_tolerance
+    ):
         _set_reason(reasons, common_indices.tolist(), "constant_size_residual")
         return _with_neutral_results(group, neutral, reasons)
 

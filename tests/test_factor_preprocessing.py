@@ -9,7 +9,7 @@ from polars.testing import assert_frame_equal
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.data.field_audit import FieldReadiness
 from ashare_multifactor.factors import panel as panel_module
-from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
+from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 from ashare_multifactor.factors.panel import build_monthly_factor_panel
 from ashare_multifactor.research.factor_preprocessing import preprocess_factor_panel
 
@@ -173,6 +173,90 @@ def test_monthly_panel_rejects_rows_after_the_analysis_end_before_computation() 
         build_monthly_factor_panel(frame, FACTOR_DEFINITIONS, _settings())
 
 
+def test_empty_definitions_still_enforce_date_gate_before_any_computation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frame = pl.DataFrame([_daily_row(date(2005, 3, 1), "000001", 99.0)])
+    calls: list[str] = []
+
+    def forbidden(*args: object, **kwargs: object) -> pl.DataFrame:
+        calls.append("called")
+        raise AssertionError("computation must not start")
+
+    monkeypatch.setattr(panel_module, "build_research_universe", forbidden)
+    for family in panel_module._FAMILY_COMPUTERS:
+        monkeypatch.setitem(panel_module._FAMILY_COMPUTERS, family, forbidden)
+
+    with pytest.raises(ValueError, match="after factor research analysis_end"):
+        build_monthly_factor_panel(frame, (), _settings())
+
+    assert calls == []
+
+
+def test_legal_empty_definitions_return_the_fixed_typed_empty_schema() -> None:
+    actual = build_monthly_factor_panel(_daily_panel(), (), _settings())
+
+    assert actual.is_empty()
+    assert actual.schema == pl.Schema(RAW_PANEL_SCHEMA)
+
+
+@pytest.mark.parametrize(
+    "factor_names",
+    [
+        pytest.param(("ep_ttm",), id="single-value"),
+        pytest.param(("momentum_60",), id="single-momentum"),
+        pytest.param(("ep_ttm", "turnover_20"), id="cross-family"),
+    ],
+)
+def test_registered_definition_subsets_compute_only_requested_factors(
+    factor_names: tuple[str, ...],
+) -> None:
+    definitions = tuple(
+        definition for definition in FACTOR_DEFINITIONS if definition.name in factor_names
+    )
+
+    actual = build_monthly_factor_panel(_daily_panel(), definitions, _settings())
+
+    assert set(actual.get_column("factor_name")) == set(factor_names)
+    assert actual.height == len(factor_names)
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        pytest.param(
+            FactorDefinition("unknown", "value", ("pe_ttm",), 0, 1),
+            id="unknown",
+        ),
+        pytest.param(
+            replace(
+                next(
+                    definition for definition in FACTOR_DEFINITIONS if definition.name == "ep_ttm"
+                ),
+                direction=-1,
+            ),
+            id="tampered",
+        ),
+    ],
+)
+def test_unknown_or_tampered_definitions_are_rejected_before_computation(
+    definition: FactorDefinition,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def forbidden(*args: object, **kwargs: object) -> pl.DataFrame:
+        calls.append("called")
+        raise AssertionError("computation must not start")
+
+    monkeypatch.setattr(panel_module, "build_research_universe", forbidden)
+
+    with pytest.raises(ValueError, match="authoritative factor registry"):
+        build_monthly_factor_panel(_daily_panel(), (definition,), _settings())
+
+    assert calls == []
+
+
 def test_each_family_receives_only_keys_and_its_registered_sources(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -183,7 +267,17 @@ def test_each_family_receives_only_keys_and_its_registered_sources(
     seen: dict[str, tuple[str, ...]] = {}
 
     for definition in selected:
-        expected_columns = ("date", "symbol", *definition.source_columns)
+        registered_family = tuple(
+            registered
+            for registered in FACTOR_DEFINITIONS
+            if registered.family == definition.family
+        )
+        family_sources = tuple(
+            dict.fromkeys(
+                column for registered in registered_family for column in registered.source_columns
+            )
+        )
+        expected_columns = ("date", "symbol", *family_sources)
 
         def spy(
             frame: pl.DataFrame,
@@ -373,6 +467,57 @@ def test_size_neutral_residual_is_standardized_and_orthogonal_to_size() -> None:
     assert residual.mean() == pytest.approx(0.0, abs=1e-12)
     assert residual.std(ddof=0) == pytest.approx(1.0, abs=1e-12)
     assert np.corrcoef(residual, size_score)[0, 1] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_tiny_but_identifiable_size_control_is_not_treated_as_singular() -> None:
+    factor_symbols = ["000001", "000002", "000003"]
+    size_symbols = ["000001", "000002", "000003", "000004", "000005"]
+    panel = _factor_with_size_panel(
+        date(2005, 1, 31),
+        "ep_ttm",
+        [1.0, 4.0, 2.0],
+        [1.0, 1.0 + 1e-14, 1.0 + 2e-14, 2.0, 3.0],
+        factor_symbols=factor_symbols,
+        size_symbols=size_symbols,
+    )
+
+    actual = preprocess_factor_panel(panel, _readiness(panel), _settings())
+    factor = actual.filter(pl.col("factor_name") == "ep_ttm").sort("symbol")
+    size = (
+        actual.filter(
+            (pl.col("factor_name") == "log_market_cap") & pl.col("symbol").is_in(factor_symbols)
+        )
+        .sort("symbol")
+        .get_column("score")
+        .to_numpy()
+    )
+    neutral = factor.get_column("score_size_neutral").to_numpy()
+
+    assert factor.get_column("preprocessing_reason").null_count() == factor.height
+    assert np.corrcoef(neutral, size)[0, 1] == pytest.approx(0.0, abs=1e-10)
+
+
+def test_tiny_nonzero_ols_residual_is_standardized() -> None:
+    panel = _factor_with_size_panel(
+        date(2005, 1, 31),
+        "ep_ttm",
+        [1.0, 2.0, 3.0 + 1e-13, 4.0, 5.0],
+        [1.0, 2.0, 3.0, 4.0, 5.0],
+    )
+
+    actual = preprocess_factor_panel(panel, _readiness(panel), _settings())
+    factor = actual.filter(pl.col("factor_name") == "ep_ttm").sort("symbol")
+    size = (
+        actual.filter(pl.col("factor_name") == "log_market_cap")
+        .sort("symbol")
+        .get_column("score")
+        .to_numpy()
+    )
+    neutral = factor.get_column("score_size_neutral").to_numpy()
+
+    assert factor.get_column("preprocessing_reason").null_count() == factor.height
+    assert np.std(neutral, ddof=0) == pytest.approx(1.0, abs=1e-12)
+    assert np.corrcoef(neutral, size)[0, 1] == pytest.approx(0.0, abs=1e-10)
 
 
 def test_missing_size_score_is_a_row_level_failure() -> None:

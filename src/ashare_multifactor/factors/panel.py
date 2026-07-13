@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 import polars as pl
 
 from ashare_multifactor.config import FactorResearchSettings
-from ashare_multifactor.factors.definitions import FactorDefinition
+from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 from ashare_multifactor.factors.liquidity import compute_liquidity_factors
 from ashare_multifactor.factors.low_volatility import compute_low_volatility_factors
 from ashare_multifactor.factors.momentum import compute_momentum_factors
@@ -54,9 +54,9 @@ def build_monthly_factor_panel(
 ) -> pl.DataFrame:
     """Build the eligible global-month-end raw panel one factor family at a time."""
     definitions = tuple(definitions)
+    _validate_inputs(frame, definitions, settings)
     if not definitions:
         return _empty_raw_panel()
-    _validate_inputs(frame, definitions, settings)
 
     bounded = frame.filter(pl.col("date") >= settings.data_start)
     universe = build_research_universe(bounded.select(*_UNIVERSE_COLUMNS), settings)
@@ -80,14 +80,17 @@ def build_monthly_factor_panel(
     )
 
     monthly_families: list[pl.DataFrame] = []
-    for family, family_definitions in _definitions_by_family(definitions):
+    for family, requested_definitions in _definitions_by_family(definitions):
         computer = _FAMILY_COMPUTERS.get(family)
         if computer is None:
             raise ValueError(f"unsupported factor family: {family}")
-        factor_names = tuple(definition.name for definition in family_definitions)
+        factor_names = tuple(definition.name for definition in requested_definitions)
+        registered_family = tuple(
+            definition for definition in FACTOR_DEFINITIONS if definition.family == family
+        )
         source_columns = tuple(
             dict.fromkeys(
-                column for definition in family_definitions for column in definition.source_columns
+                column for definition in registered_family for column in definition.source_columns
             )
         )
         family_inputs = bounded.select(*_KEY_COLUMNS, *source_columns)
@@ -128,6 +131,16 @@ def _validate_inputs(
     names = [definition.name for definition in definitions]
     if len(names) != len(set(names)):
         raise ValueError("duplicate factor definitions are not allowed")
+    authoritative = {definition.name: definition for definition in FACTOR_DEFINITIONS}
+    invalid = [
+        definition.name
+        for definition in definitions
+        if authoritative.get(definition.name) != definition
+    ]
+    if invalid:
+        raise ValueError(
+            "definitions must match the authoritative factor registry: " + ", ".join(invalid)
+        )
     if frame.select(*_KEY_COLUMNS).is_duplicated().any():
         raise ValueError("duplicate date and symbol keys are not allowed")
     latest_date = frame.get_column("date").max()
