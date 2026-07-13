@@ -26,6 +26,7 @@ factor_research:
   universe_size: 1000
   minimum_history: 252
   liquidity_lookback: 20
+  require_valid_trade_observation: true
   signal_frequency: month_end
   forward_horizons: [5, 20, 60]
   primary_horizon: 20

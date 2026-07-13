@@ -46,6 +46,7 @@ def test_official_factor_research_settings_are_frozen() -> None:
     assert settings.universe_size == 1000
     assert settings.minimum_history == 252
     assert settings.liquidity_lookback == 20
+    assert settings.require_valid_trade_observation is True
     assert settings.signal_frequency == "month_end"
     assert settings.forward_horizons == (5, 20, 60)
     assert settings.primary_horizon == 20
@@ -136,4 +137,14 @@ def test_signal_frequency_is_frozen_to_month_end(tmp_path: Path) -> None:
     config = _write_factor_config(tmp_path, signal_frequency="weekly")
 
     with pytest.raises(ValueError, match="signal_frequency must be month_end"):
+        load_config(config)
+
+
+def test_factor_research_rejects_disabling_valid_trade_observations(tmp_path: Path) -> None:
+    config = _write_factor_config(tmp_path, require_valid_trade_observation=False)
+
+    with pytest.raises(
+        ValueError,
+        match="require_valid_trade_observation must be true",
+    ):
         load_config(config)

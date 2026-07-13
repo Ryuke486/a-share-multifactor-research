@@ -46,6 +46,7 @@ class FactorResearchSettings:
     universe_size: int
     minimum_history: int
     liquidity_lookback: int
+    require_valid_trade_observation: bool
     signal_frequency: str
     forward_horizons: tuple[int, ...]
     primary_horizon: int
@@ -98,6 +99,7 @@ def _factor_research(value: dict[str, object]) -> FactorResearchSettings:
         universe_size=value["universe_size"],
         minimum_history=value["minimum_history"],
         liquidity_lookback=value["liquidity_lookback"],
+        require_valid_trade_observation=value["require_valid_trade_observation"],
         signal_frequency=value["signal_frequency"],
         forward_horizons=tuple(horizons),
         primary_horizon=value["primary_horizon"],
@@ -188,6 +190,8 @@ def _validate_factor_research(
         raise ValueError("factor research primary_horizon must belong to forward_horizons")
     if settings.signal_frequency != "month_end":
         raise ValueError("factor research signal_frequency must be month_end")
+    if settings.require_valid_trade_observation is not True:
+        raise ValueError("factor research require_valid_trade_observation must be true")
 
     if not (
         _is_finite_number(settings.winsor_lower)

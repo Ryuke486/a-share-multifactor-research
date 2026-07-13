@@ -50,10 +50,12 @@
 
 ### 2.1 研究股票池
 
-- 至少252个历史有效观测；
+- 由于规范面板没有显式历史停牌字段，在完整研究结果生成前经用户批准，将 `close_adj`、`volume`、`amount` 均为数值有限且严格大于0冻结为有效交易观测的可审计代理；
+- 信号日必须是有效交易观测，无效行保留在面板中但标记为False；
+- 截至当日至少252个有效交易观测；
 - 当日非ST；
-- 当日原始OHLC均为有限正数；
-- 过去20个观测平均成交额为有限正数；
+- 当日原始OHLC均为有限正数，原始OHLC只负责股票池价格门槛，`close_adj` 负责有效观测和收益；
+- 最近20个有效交易观测的原始成交额均值为有限正数，无效行不进入滚动窗口；
 - 每日按过去20个观测平均成交额降序，保留前1,000只；不足1,000只时保留全部合格股票；
 - 不使用当前股票列表、未来退市时间和未来停牌状态；
 - symbol并列排序时按六位代码升序。
@@ -100,6 +102,9 @@
 
 - 主评价期限：20个交易观测；
 - 衰减期限：5、20、60个交易观测；
+- 只有信号行有效时才产生标签，逐证券跳过无效面板行后取第5、20、60个有效 `close_adj`，不使用自然日或全市场统一shift；
+- 同时输出 `forward_calendar_days_{h}` 和 `forward_skipped_observations_{h}` 审计日历跨度与被跳过的无效面板观测；目标不存在时诊断值为空；
+- `forward_return` 是唯一评价标签，诊断列不得进入因子特征、过滤或权重；
 - 月度Rank IC、IC均值、IC标准差、年化ICIR；
 - 对IC均值计算Newey-West t值；滞后阶数固定为 max(0, ceil(horizon / 21) - 1)；
 - 对14个主评价检验使用Benjamini-Hochberg校正，输出q值；
@@ -151,6 +156,7 @@
 - src/ashare_multifactor/factors/size.py：对数总市值。
 - src/ashare_multifactor/factors/panel.py：按因子族生成月度长表，不承载具体公式。
 - src/ashare_multifactor/research/research_universe.py：阶段四股票池。
+- src/ashare_multifactor/research/trade_observations.py：有效交易观测的唯一权威谓词。
 - src/ashare_multifactor/research/labels.py：5/20/60日未来收益标签。
 - src/ashare_multifactor/research/factor_preprocessing.py：去极值、标准化和中性化。
 - src/ashare_multifactor/research/factor_statistics.py：Newey-West和BH校正。
@@ -224,6 +230,7 @@ class FactorResearchSettings:
     universe_size: int
     minimum_history: int
     liquidity_lookback: int
+    require_valid_trade_observation: bool
     signal_frequency: str
     forward_horizons: Sequence[int]
     primary_horizon: int
@@ -345,6 +352,7 @@ factor_research:
   universe_size: 1000
   minimum_history: 252
   liquidity_lookback: 20
+  require_valid_trade_observation: true
   signal_frequency: month_end
   forward_horizons: [5, 20, 60]
   primary_horizon: 20
@@ -504,48 +512,57 @@ git commit -m "refactor: isolate research panel manifests"
 ### Task 4: 构建研究股票池和多期限标签
 
 **Files:**
+- Modify: configs/research_protocol.yaml
+- Modify: src/ashare_multifactor/config.py
+- Modify: docs/factor_research_protocol.md
+- Modify: docs/superpowers/plans/2026-07-13-04-factor-library-and-cards.md
+- Create: src/ashare_multifactor/research/trade_observations.py
 - Create: src/ashare_multifactor/research/research_universe.py
 - Create: src/ashare_multifactor/research/labels.py
+- Modify: tests/test_factor_config.py
+- Modify: tests/test_build.py
 - Test: tests/test_research_universe_labels.py
 
 **Interfaces:**
 - Consumes: 规范daily panel和FactorResearchSettings。
-- Produces: is_research_eligible、liquidity_rank、forward_return_5/20/60。
+- Produces: is_valid_trade_observation、is_research_eligible、liquidity_rank、forward_return_5/20/60及各期限日历跨度/跳过观测诊断列。
 
-- [ ] **Step 1: 写无未来信息股票池测试**
+**批准变更：** 初始计划使用“证券有效交易观测”但规范面板无显式停牌字段。在完整研究期结果生成前，用户批准以 `close_adj`、`volume`、`amount` 均为有限正数作为统一可审计代理，并增加日历跨度和跳过观测诊断。该变更不改变样本划分、因子方向或其他门槛。
 
-改变目标日之后的成交额、ST或价格，不得改变目标日股票池；当日并列成交额按symbol升序稳定选择。
+- [x] **Step 1: 写无未来信息股票池测试**
 
-- [ ] **Step 2: 实现前1,000只研究股票池**
+改变目标日之后的成交额、成交量、ST、原始价格或后复权收益价格，不得改变目标日股票池；当日并列成交额按symbol升序稳定选择。覆盖252个有效历史边界、最近20个有效观测滚动窗口及OHLC/ST/成交反例。
+
+- [x] **Step 2: 实现前1,000只研究股票池**
 
 不能修改阶段三build_universe的MVP语义；新逻辑放在research_universe.py。
 
-- [ ] **Step 3: 写标签偏移测试**
+- [x] **Step 3: 写标签偏移测试**
 
-对缺交易日和个股停牌人工序列，断言标签使用每只证券之后第5、20、60个有效观测，而不是自然日。
+对缺交易日、停牌、零成交和异常人工序列，断言只有有效信号行才使用每只证券之后第5、20、60个有效观测，并准确输出日历跨度和被跳过无效面板观测数。
 
-- [ ] **Step 4: 实现标签**
+- [x] **Step 4: 实现标签**
 
-标签列只能由labels.py生成；factors包不得导入或访问forward_return列。
+标签列只能由labels.py生成；有效观测只能由trade_observations.py定义；factors包不得导入或访问forward_return或诊断列。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: .venv/bin/pytest tests/test_research_universe_labels.py tests/test_universe_momentum.py -v
 
 Expected: PASS，MVP逻辑无回归。
 
-- [ ] **Step 6: 提交本任务**
+- [x] **Step 6: 提交本任务**
 
 ~~~bash
-git add src/ashare_multifactor/research/research_universe.py src/ashare_multifactor/research/labels.py tests/test_research_universe_labels.py
+git add configs/research_protocol.yaml src/ashare_multifactor/config.py docs/factor_research_protocol.md docs/superpowers/plans/2026-07-13-04-factor-library-and-cards.md src/ashare_multifactor/research/trade_observations.py src/ashare_multifactor/research/research_universe.py src/ashare_multifactor/research/labels.py tests/test_factor_config.py tests/test_build.py tests/test_research_universe_labels.py
 git commit -m "feat: add factor research universe and labels"
 ~~~
 
 **验收：**
 
-- [ ] 研究股票池不再受MVP前200限制。
-- [ ] 未来收益与因子模块物理隔离。
-- [ ] 2003–2004不进入评价输出。
+- [x] 研究股票池不再受MVP前200限制。
+- [x] 未来收益与因子模块物理隔离。
+- [x] 2003–2004不进入评价输出。
 
 ---
 
