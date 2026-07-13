@@ -17,7 +17,7 @@ from ashare_multifactor.data.field_audit import (
     write_data_readiness,
 )
 from ashare_multifactor.data.manifest import DailyPanelSource, validate_panel_source
-from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
+from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 from ashare_multifactor.factors.panel import build_monthly_factor_panel
 from ashare_multifactor.research.factor_evaluation import (
     FactorEvaluationBundle,
@@ -50,6 +50,12 @@ from ashare_multifactor.research.factor_redundancy import (
     analyze_factor_redundancy,
 )
 from ashare_multifactor.research.factor_selection import classify_factors
+from ashare_multifactor.research.factor_workspace import (
+    cleanup_orphan_stage_roots,
+    clone_stage_root,
+    discard_stage_root,
+    publish_stage_root as _publish_stage_root,
+)
 from ashare_multifactor.research.labels import add_forward_returns
 
 
@@ -90,19 +96,32 @@ def run_factor_pipeline(config_path: Path, stage: str) -> None:
     paths = validate_factor_paths(config)
     factor_root = paths.processed_root
     artifact_root = paths.artifact_root
-    evidence = load_field_evidence(config_path) if stage != "build" else None
+    cleanup_orphan_stage_roots(factor_root)
+    definitions = tuple(FACTOR_DEFINITIONS)
+    if stage == "build":
+        _run_build(config, settings, factor_root, artifact_root)
+        return
+    evidence = load_field_evidence(config_path)
+    if stage == "all" and not (factor_root / "daily_panel/manifest.json").is_file():
+        _run_build(config, settings, factor_root, artifact_root)
+    source = _validate_source(factor_root, settings)
     runners = {
-        "build": lambda: _run_build(config, settings, factor_root, artifact_root),
-        "audit": lambda: _run_audit(settings, factor_root, artifact_root, evidence),
-        "factors": lambda: _run_factors(settings, factor_root, artifact_root, evidence),
-        "evaluate": lambda: _run_evaluate(settings, factor_root, artifact_root, evidence),
-        "report": lambda: _run_report(settings, factor_root, artifact_root, evidence),
+        "audit": lambda: _run_audit(
+            settings, factor_root, artifact_root, evidence, source, definitions
+        ),
+        "factors": lambda: _run_factors(
+            settings, factor_root, artifact_root, evidence, source, definitions
+        ),
+        "evaluate": lambda: _run_evaluate(
+            settings, factor_root, artifact_root, evidence, source, definitions
+        ),
+        "report": lambda: _run_report(
+            settings, factor_root, artifact_root, evidence, source, definitions
+        ),
     }
     if stage != "all":
         runners[stage]()
         return
-    if not (factor_root / "daily_panel/manifest.json").is_file():
-        runners["build"]()
     for stage_name in ("audit", "factors", "evaluate", "report"):
         runners[stage_name]()
 
@@ -126,19 +145,19 @@ def _run_audit(
     settings: FactorResearchSettings,
     factor_root: Path,
     artifact_root: Path,
-    evidence: dict[str, object] | None,
+    evidence: dict[str, object],
+    source: DailyPanelSource,
+    definitions: tuple[FactorDefinition, ...],
 ) -> None:
-    evidence = _require_evidence(evidence)
-    source = _validate_source(factor_root, settings)
     statuses = evidence["statuses"]
     if not isinstance(statuses, dict):
         raise ValueError("invalid field evidence statuses")
-    lineage = new_lineage(settings, source, factor_root, evidence)
+    lineage = new_lineage(settings, source, evidence, definitions)
     _prepare_stage(lineage, "audit", factor_root, artifact_root)
     try:
         readiness = audit_factor_fields(
             _read_daily(source, _AUDIT_INPUT_COLUMNS),
-            FACTOR_DEFINITIONS,
+            definitions,
             valuation_verified=statuses["valuation"] == "verified",
             industry_verified=statuses["industry"] == "verified",
             historical_st_verified=statuses["historical_st"] == "verified",
@@ -148,8 +167,8 @@ def _run_audit(
         record_stage(
             lineage,
             "audit",
-            (factor_root / "daily_panel/manifest.json", *source.files),
-            expected_stage_outputs(factor_root, "audit", tuple(FACTOR_DEFINITIONS)),
+            (),
+            expected_stage_outputs(factor_root, "audit", definitions),
             factor_root,
         )
         write_json_atomic(factor_root / "lineage.json", lineage)
@@ -162,27 +181,29 @@ def _run_factors(
     settings: FactorResearchSettings,
     factor_root: Path,
     artifact_root: Path,
-    evidence: dict[str, object] | None,
+    evidence: dict[str, object],
+    source: DailyPanelSource,
+    definitions: tuple[FactorDefinition, ...],
 ) -> None:
-    evidence = _require_evidence(evidence)
-    source, lineage = _validated_lineage(factor_root, settings, evidence, ("audit",))
+    lineage = _validated_lineage(source, factor_root, settings, evidence, definitions, ("audit",))
     _prepare_stage(lineage, "factors", factor_root, artifact_root)
+    stage_root = clone_stage_root(factor_root, "factors")
     try:
-        readiness_path = factor_root / "data_readiness.json"
+        readiness_path = stage_root / "data_readiness.json"
         readiness = FieldReadiness(**json.loads(readiness_path.read_text(encoding="utf-8")))
         daily = _read_daily(source, _FACTOR_INPUT_COLUMNS)
-        raw = build_monthly_factor_panel(daily, FACTOR_DEFINITIONS, settings)
-        monthly_root = factor_root / "monthly_raw"
-        write_monthly_raw(monthly_root, raw)
+        raw = build_monthly_factor_panel(daily, definitions, settings)
+        monthly_root = stage_root / "monthly_raw"
+        write_monthly_raw(monthly_root, raw, definitions)
         features = preprocess_factor_panel(raw, readiness, settings).sort(
             "date", "symbol", "factor_name"
         )
         del raw
-        feature_path = factor_root / "factor_features.parquet"
+        feature_path = stage_root / "factor_features.parquet"
         write_parquet_atomic(feature_path, features)
         labels = _signal_labels(daily, features, settings)
         del daily
-        labels_path = factor_root / "forward_returns.parquet"
+        labels_path = stage_root / "forward_returns.parquet"
         write_parquet_atomic(labels_path, labels)
         return_columns = [f"forward_return_{horizon}" for horizon in settings.forward_horizons]
         panel = features.join(
@@ -191,17 +212,19 @@ def _run_factors(
             how="left",
             validate="m:1",
         ).sort("date", "symbol", "factor_name")
-        panel_path = factor_root / "factor_panel.parquet"
+        panel_path = stage_root / "factor_panel.parquet"
         write_parquet_atomic(panel_path, panel)
         record_stage(
             lineage,
             "factors",
-            (readiness_path, factor_root / "daily_panel/manifest.json", *source.files),
-            expected_stage_outputs(factor_root, "factors", tuple(FACTOR_DEFINITIONS)),
-            factor_root,
+            (readiness_path,),
+            expected_stage_outputs(stage_root, "factors", definitions),
+            stage_root,
         )
-        write_json_atomic(factor_root / "lineage.json", lineage)
+        write_json_atomic(stage_root / "lineage.json", lineage)
+        _publish_stage_root(stage_root, factor_root)
     except BaseException:
+        discard_stage_root(stage_root)
         _abort_stage(lineage, "factors", factor_root, artifact_root)
         raise
 
@@ -210,34 +233,40 @@ def _run_evaluate(
     settings: FactorResearchSettings,
     factor_root: Path,
     artifact_root: Path,
-    evidence: dict[str, object] | None,
+    evidence: dict[str, object],
+    source: DailyPanelSource,
+    definitions: tuple[FactorDefinition, ...],
 ) -> None:
-    evidence = _require_evidence(evidence)
-    _, lineage = _validated_lineage(factor_root, settings, evidence, ("audit", "factors"))
+    lineage = _validated_lineage(
+        source, factor_root, settings, evidence, definitions, ("audit", "factors")
+    )
     _prepare_stage(lineage, "evaluate", factor_root, artifact_root)
+    stage_root = clone_stage_root(factor_root, "evaluate")
     try:
-        panel_path = factor_root / "factor_panel.parquet"
-        features_path = factor_root / "factor_features.parquet"
-        evaluation = evaluate_factors(pl.read_parquet(panel_path), FACTOR_DEFINITIONS, settings)
+        panel_path = stage_root / "factor_panel.parquet"
+        features_path = stage_root / "factor_features.parquet"
+        evaluation = evaluate_factors(pl.read_parquet(panel_path), definitions, settings)
         classifications = classify_factors(
             evaluation.factor_summary,
             evaluation.subperiod_metrics,
-            FACTOR_DEFINITIONS,
+            definitions,
             settings,
         )
         redundancy = analyze_factor_redundancy(
-            pl.read_parquet(features_path), FACTOR_DEFINITIONS, settings
+            pl.read_parquet(features_path), definitions, settings
         )
-        _write_evaluation(factor_root, evaluation, classifications, redundancy)
+        _write_evaluation(stage_root, evaluation, classifications, redundancy)
         record_stage(
             lineage,
             "evaluate",
             (panel_path, features_path),
-            expected_stage_outputs(factor_root, "evaluate", tuple(FACTOR_DEFINITIONS)),
-            factor_root,
+            expected_stage_outputs(stage_root, "evaluate", definitions),
+            stage_root,
         )
-        write_json_atomic(factor_root / "lineage.json", lineage)
+        write_json_atomic(stage_root / "lineage.json", lineage)
+        _publish_stage_root(stage_root, factor_root)
     except BaseException:
+        discard_stage_root(stage_root)
         _abort_stage(lineage, "evaluate", factor_root, artifact_root)
         raise
 
@@ -246,21 +275,26 @@ def _run_report(
     settings: FactorResearchSettings,
     factor_root: Path,
     artifact_root: Path,
-    evidence: dict[str, object] | None,
+    evidence: dict[str, object],
+    source: DailyPanelSource,
+    definitions: tuple[FactorDefinition, ...],
 ) -> None:
-    evidence = _require_evidence(evidence)
     required_stages = ("audit", "factors", "evaluate")
-    _, lineage = _validated_lineage(
+    lineage = _validated_lineage(
+        source,
         factor_root,
         settings,
         evidence,
+        definitions,
         required_stages,
     )
     if _has_stage(lineage, "report"):
-        _, lineage = _validated_lineage(
+        lineage = _validated_lineage(
+            source,
             factor_root,
             settings,
             evidence,
+            definitions,
             (*required_stages, "report"),
         )
         validate_published_report(lineage, factor_root, artifact_root)
@@ -280,7 +314,7 @@ def _run_report(
             evaluation,
             classifications,
             redundancy,
-            tuple(FACTOR_DEFINITIONS),
+            definitions,
             settings,
             research_identity=lineage_identity(lineage),
             evaluate_outputs_sha256=stage_outputs_digest(lineage, "evaluate"),
@@ -296,7 +330,7 @@ def _run_report(
             lineage,
             "report",
             inputs,
-            expected_stage_outputs(factor_root, "report", tuple(FACTOR_DEFINITIONS)),
+            expected_stage_outputs(factor_root, "report", definitions),
             factor_root,
         )
         validate_published_report(lineage, factor_root, artifact_root)
@@ -315,29 +349,31 @@ def _validate_source(factor_root: Path, settings: FactorResearchSettings) -> Dai
 
 
 def _validated_lineage(
+    source: DailyPanelSource,
     factor_root: Path,
     settings: FactorResearchSettings,
     evidence: dict[str, object],
+    definitions: tuple[FactorDefinition, ...],
     stages: tuple[str, ...],
-) -> tuple[DailyPanelSource, dict[str, object]]:
-    source = _validate_source(factor_root, settings)
+) -> dict[str, object]:
     lineage = load_and_validate_lineage(
         factor_root / "lineage.json",
         settings,
         source,
         factor_root,
         evidence,
+        definitions,
         stages,
         {
             stage: expected_stage_outputs(
                 factor_root,
                 stage,
-                tuple(FACTOR_DEFINITIONS),
+                definitions,
             )
             for stage in stages
         },
     )
-    return source, lineage
+    return lineage
 
 
 def _read_daily(source: DailyPanelSource, columns: tuple[str, ...]) -> pl.DataFrame:
@@ -401,12 +437,6 @@ def _settings(config: ResearchConfig) -> FactorResearchSettings:
     if config.factor_research is None:
         raise ValueError("factor_research settings are required")
     return config.factor_research
-
-
-def _require_evidence(evidence: dict[str, object] | None) -> dict[str, object]:
-    if evidence is None:
-        raise ValueError("field evidence is required outside the build stage")
-    return evidence
 
 
 def _drop_stages(lineage: dict[str, object], names: tuple[str, ...]) -> None:

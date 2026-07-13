@@ -110,7 +110,9 @@ def test_lineage_absolute_input_path_is_rejected_before_data_read(
     run_factor_pipeline(config_path, "audit")
     lineage = _read_lineage(factor_root)
     audit = lineage["stages"]["audit"]
-    audit["inputs"][0]["path"] = str(factor_root / "daily_panel" / "manifest.json")
+    injected = dict(audit["outputs"][0])
+    injected["path"] = str(factor_root / "data_readiness.json")
+    audit["inputs"].append(injected)
     _write_lineage(factor_root, lineage)
     monkeypatch.setattr(pipeline_module, "_read_daily", _fail_if_daily_is_read)
 
@@ -180,7 +182,9 @@ def test_lineage_input_digest_is_validated_before_data_read(
     factor_root = daily_root.parent
     run_factor_pipeline(config_path, "audit")
     lineage = _read_lineage(factor_root)
-    lineage["stages"]["audit"]["inputs"][0]["sha256"] = "0" * 64
+    injected = dict(lineage["stages"]["audit"]["outputs"][0])
+    injected["sha256"] = "0" * 64
+    lineage["stages"]["audit"]["inputs"].append(injected)
     _write_lineage(factor_root, lineage)
     monkeypatch.setattr(pipeline_module, "_read_daily", _fail_if_daily_is_read)
 

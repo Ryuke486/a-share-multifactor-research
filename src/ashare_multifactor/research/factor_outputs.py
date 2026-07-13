@@ -174,12 +174,21 @@ def clear_stage_and_downstream(
     shutil.rmtree(artifact_root, ignore_errors=True)
 
 
-def write_monthly_raw(root: Path, panel: pl.DataFrame) -> None:
+def write_monthly_raw(
+    root: Path,
+    panel: pl.DataFrame,
+    definitions: tuple[FactorDefinition, ...],
+) -> None:
     staging = root.parent / f".{root.name}-{uuid4().hex}.tmp"
     staging.mkdir(parents=True)
     try:
-        for family_frame in panel.partition_by("family", maintain_order=True):
-            family = family_frame.item(0, "family")
+        families = tuple(dict.fromkeys(definition.family for definition in definitions))
+        observed = set(panel.get_column("family").unique())
+        unexpected = observed - set(families)
+        if unexpected:
+            raise ValueError(f"unexpected factor families: {sorted(unexpected)}")
+        for family in families:
+            family_frame = panel.filter(pl.col("family") == family)
             output = staging / f"family={family}" / "part-000.parquet"
             write_parquet_atomic(output, family_frame.sort("date", "symbol", "factor_name"))
         replace_directory(staging, root)

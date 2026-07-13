@@ -18,6 +18,8 @@ from ashare_multifactor.config import Period
 class DailyPanelSource:
     manifest: dict[str, object]
     files: tuple[Path, ...]
+    manifest_sha256: str | None = None
+    manifest_size_bytes: int | None = None
 
 
 def _manifest_date(
@@ -29,11 +31,12 @@ def _manifest_date(
         raise ValueError(f"invalid {key} in data manifest: {manifest_path}") from error
 
 
-def _read_manifest(path: Path) -> dict[str, object]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
+def _read_manifest(path: Path) -> tuple[dict[str, object], bytes]:
+    raw_bytes = path.read_bytes()
+    payload = json.loads(raw_bytes)
     if not isinstance(payload, dict):
         raise ValueError(f"daily panel manifest must be a JSON object: {path}")
-    return payload
+    return payload, raw_bytes
 
 
 def _file_summary(path: Path) -> dict[str, int | str]:
@@ -84,7 +87,7 @@ def _partition_path(root: Path, relative_path: object) -> tuple[str, PurePosixPa
 def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
     """Validate a daily panel without trusting paths or declared partition statistics."""
     manifest_path = root / "manifest.json"
-    manifest = _read_manifest(manifest_path)
+    manifest, manifest_bytes = _read_manifest(manifest_path)
     minimum = _manifest_date(manifest, "min_date", manifest_path)
     maximum = _manifest_date(manifest, "max_date", manifest_path)
     if maximum < minimum:
@@ -238,4 +241,6 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
     return DailyPanelSource(
         manifest=manifest,
         files=tuple(path for _, path, _, _ in sorted(records, key=lambda item: str(item[1]))),
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+        manifest_size_bytes=len(manifest_bytes),
     )

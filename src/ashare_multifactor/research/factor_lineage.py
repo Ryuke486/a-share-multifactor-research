@@ -13,9 +13,10 @@ import yaml
 
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.data.manifest import DailyPanelSource
+from ashare_multifactor.factors.definitions import FactorDefinition
 
 
-LINEAGE_VERSION = 1
+LINEAGE_VERSION = 2
 
 
 def load_field_evidence(config_path: Path) -> dict[str, object]:
@@ -44,14 +45,15 @@ def load_field_evidence(config_path: Path) -> dict[str, object]:
 def new_lineage(
     settings: FactorResearchSettings,
     source: DailyPanelSource,
-    factor_root: Path,
     field_evidence: Mapping[str, object],
+    definitions: Iterable[FactorDefinition],
 ) -> dict[str, object]:
     return {
         "version": LINEAGE_VERSION,
         "factor_config": _config_snapshot(settings),
+        "factor_registry": _registry_snapshot(definitions),
         "field_evidence": dict(field_evidence),
-        "daily_panel": _daily_snapshot(source, factor_root),
+        "daily_panel": _daily_snapshot(source),
         "stages": {},
     }
 
@@ -62,6 +64,7 @@ def load_and_validate_lineage(
     source: DailyPanelSource,
     factor_root: Path,
     field_evidence: Mapping[str, object],
+    definitions: Iterable[FactorDefinition],
     required_stages: Iterable[str],
     expected_outputs: Mapping[str, Iterable[Path]],
 ) -> dict[str, object]:
@@ -72,9 +75,11 @@ def load_and_validate_lineage(
         raise ValueError("invalid factor research lineage")
     if payload.get("factor_config") != _config_snapshot(settings):
         raise ValueError("factor research config does not match frozen lineage")
+    if payload.get("factor_registry") != _registry_snapshot(definitions):
+        raise ValueError("factor registry does not match frozen lineage")
     if payload.get("field_evidence") != dict(field_evidence):
         raise ValueError("field evidence does not match frozen lineage")
-    if payload.get("daily_panel") != _daily_snapshot(source, factor_root):
+    if payload.get("daily_panel") != _daily_snapshot(source):
         raise ValueError("daily panel does not match frozen factor research lineage")
     stages = payload.get("stages")
     if not isinstance(stages, dict):
@@ -131,7 +136,15 @@ def file_records(paths: Iterable[Path], root: Path) -> list[dict[str, object]]:
 
 def lineage_identity(lineage: Mapping[str, object]) -> str:
     """Fingerprint the frozen config, evidence, and daily-panel identity."""
-    identity = {key: lineage.get(key) for key in ("factor_config", "field_evidence", "daily_panel")}
+    identity = {
+        key: lineage.get(key)
+        for key in (
+            "factor_config",
+            "factor_registry",
+            "field_evidence",
+            "daily_panel",
+        )
+    }
     if any(value is None for value in identity.values()):
         raise ValueError("invalid factor research identity")
     return hashlib.sha256(_canonical_json(identity)).hexdigest()
@@ -211,11 +224,37 @@ def _config_snapshot(settings: FactorResearchSettings) -> dict[str, object]:
     return {"payload": payload, "sha256": hashlib.sha256(encoded).hexdigest()}
 
 
-def _daily_snapshot(source: DailyPanelSource, factor_root: Path) -> dict[str, object]:
-    manifest_path = factor_root / "daily_panel" / "manifest.json"
+def _registry_snapshot(
+    definitions: Iterable[FactorDefinition],
+) -> dict[str, object]:
+    payload = json.loads(_canonical_json([asdict(definition) for definition in definitions]))
     return {
-        "manifest": file_records((manifest_path,), factor_root)[0],
-        "partitions": file_records(source.files, factor_root),
+        "payload": payload,
+        "sha256": hashlib.sha256(_canonical_json(payload)).hexdigest(),
+    }
+
+
+def _daily_snapshot(source: DailyPanelSource) -> dict[str, object]:
+    if source.manifest_sha256 is None or source.manifest_size_bytes is None:
+        raise ValueError("daily panel source lacks validated manifest identity")
+    partitions = source.manifest.get("partitions")
+    if not isinstance(partitions, list):
+        raise ValueError("daily panel source lacks validated partition identity")
+    return {
+        "manifest": {
+            "path": "daily_panel/manifest.json",
+            "size_bytes": source.manifest_size_bytes,
+            "sha256": source.manifest_sha256,
+        },
+        "partitions": [
+            {
+                "path": f"daily_panel/{record['relative_path']}",
+                "size_bytes": record["size_bytes"],
+                "sha256": record["sha256"],
+            }
+            for record in sorted(partitions, key=lambda item: str(item["relative_path"]))
+            if isinstance(record, Mapping)
+        ],
     }
 
 
