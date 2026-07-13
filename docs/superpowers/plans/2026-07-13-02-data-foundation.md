@@ -57,7 +57,7 @@ processed/daily_panel/          # Git ignored
 - Consumes: 两个原始日文件根目录和日期范围。
 - Produces: 按日期排序的DailyFilePair；每个日期必须同时有不复权和后复权文件。
 
-- [ ] **Step 1: 写文件发现测试**
+- [x] **Step 1: 写文件发现测试**
 
 ~~~python
 # tests/test_discovery.py
@@ -93,7 +93,7 @@ def test_discovery_sorts_pairs_by_date(tmp_path: Path):
     assert [pair.trading_date.isoformat() for pair in pairs] == ["2014-01-02", "2014-01-03"]
 ~~~
 
-- [ ] **Step 2: 定义规范字段**
+- [x] **Step 2: 定义规范字段**
 
 schema.py必须定义：
 
@@ -133,7 +133,7 @@ CANONICAL_COLUMNS = (
 SCHEMA_VERSION = "1.0.0"
 ~~~
 
-- [ ] **Step 3: 实现文件配对接口**
+- [x] **Step 3: 实现文件配对接口**
 
 discovery.py必须包含：
 
@@ -184,7 +184,7 @@ def discover_daily_pairs(
     ]
 ~~~
 
-- [ ] **Step 4: 在真实2014年目录上做只读发现检查**
+- [x] **Step 4: 在真实2014年目录上做只读发现检查**
 
 Run:
 
@@ -195,7 +195,7 @@ Run:
 
 Expected: 测试通过；真实文件数为245。
 
-- [ ] **Step 5: 提交字段和发现模块**
+- [x] **Step 5: 提交字段和发现模块**
 
 ~~~bash
 git add src/ashare_multifactor/data tests/test_discovery.py
@@ -204,10 +204,10 @@ git commit -m "feat: discover paired daily market files"
 
 **Task 3 Acceptance Checklist**
 
-- [ ] 同一天的两种复权文件总是成对。
-- [ ] 文件列表按交易日稳定排序。
-- [ ] 2014年发现245对文件。
-- [ ] 发现逻辑不会读取CSV内容。
+- [x] 同一天的两种复权文件总是成对。
+- [x] 文件列表按交易日稳定排序。
+- [x] 2014年发现245对文件。
+- [x] 发现逻辑不会读取CSV内容。
 
 ---
 
