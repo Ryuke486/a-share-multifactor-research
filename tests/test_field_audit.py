@@ -18,8 +18,10 @@ def _frame_with_audited_fields() -> pl.DataFrame:
             "pb": [2.0, 2.1, 2.2, 2.3],
             "ps_ttm": [3.0, 3.1, 3.2, 3.3],
             "close_adj": [8.0, 8.2, 8.1, 8.4],
+            "prev_close_adj": [7.9, 8.0, 8.2, 8.1],
+            "volume": [10.0, 11.0, 12.0, 13.0],
             "amount": [100.0, 110.0, 120.0, 130.0],
-            "turnover": [0.01, 0.02, 0.03, 0.04],
+            "turnover_rate": [0.01, 0.02, 0.03, 0.04],
             "total_market_cap": [1000.0, 1100.0, 1200.0, 1300.0],
             "industry": ["A", None, "B", "B"],
             "is_st": [False, False, None, True],
@@ -44,7 +46,7 @@ def test_verified_valuation_is_ready_when_source_columns_exist() -> None:
 
 
 def test_missing_required_field_is_reported_per_factor() -> None:
-    readiness = audit_factor_fields(_frame_with_audited_fields().drop("turnover"))
+    readiness = audit_factor_fields(_frame_with_audited_fields().drop("turnover_rate"))
 
     assert readiness.factor_status["turnover_20"] == "missing"
 
@@ -133,12 +135,8 @@ def test_pit_fields_and_impacts_are_derived_from_injected_definitions() -> None:
         "plain_factor": "ready",
     }
     assert readiness.field_metrics["custom_pit"]["point_in_time_status"] == "unverified"
-    assert readiness.field_metrics["custom_pit"]["affected_factors"] == [
-        "custom_pit_factor"
-    ]
-    assert readiness.field_metrics["pe_ttm"]["point_in_time_status"] == (
-        "protocol_accepted"
-    )
+    assert readiness.field_metrics["custom_pit"]["affected_factors"] == ["custom_pit_factor"]
+    assert readiness.field_metrics["pe_ttm"]["point_in_time_status"] == ("protocol_accepted")
     assert readiness.field_metrics["pe_ttm"]["affected_factors"] == ["plain_factor"]
 
 

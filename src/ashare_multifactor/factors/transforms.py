@@ -2,7 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import polars as pl
+
+from ashare_multifactor.factors.definitions import factor_source_columns
+
+
+def prepare_factor_inputs(frame: pl.DataFrame, factor_names: Sequence[str]) -> pl.DataFrame:
+    """Project registered inputs, reject duplicate keys, and sort for grouped windows."""
+    projected = frame.select("date", "symbol", *factor_source_columns(factor_names))
+    has_duplicate_keys = projected.select(pl.struct("date", "symbol").is_duplicated().any()).item()
+    if has_duplicate_keys:
+        raise ValueError("duplicate date/symbol keys are not allowed")
+    return projected.sort("symbol", "date")
+
+
+def safe_positive_reciprocal(values: pl.Expr) -> pl.Expr:
+    """Return the reciprocal only for finite strictly positive values."""
+    reciprocal = 1.0 / values
+    valid = values.is_not_null() & values.is_finite() & (values > 0) & reciprocal.is_finite()
+    return pl.when(valid).then(reciprocal)
+
+
+def safe_positive_log(values: pl.Expr) -> pl.Expr:
+    """Return the natural logarithm only for finite strictly positive values."""
+    logarithm = values.log()
+    valid = values.is_not_null() & values.is_finite() & (values > 0) & logarithm.is_finite()
+    return pl.when(valid).then(logarithm)
 
 
 def safe_return(current: pl.Expr, previous: pl.Expr) -> pl.Expr:
