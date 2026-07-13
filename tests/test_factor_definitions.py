@@ -1,26 +1,46 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, fields
 
 import pytest
 
-from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
+from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 
 
-EXPECTED_REQUIREMENTS = {
-    "ep_ttm": ("pe_ttm",),
-    "bp": ("pb",),
-    "sp_ttm": ("ps_ttm",),
-    "momentum_60": ("close_adj",),
-    "momentum_120": ("close_adj",),
-    "momentum_12_1": ("close_adj",),
-    "reversal_5": ("close_adj",),
-    "reversal_20": ("close_adj",),
-    "turnover_20": ("turnover",),
-    "amihud_20": ("close_adj", "amount"),
-    "volatility_20": ("close_adj",),
-    "volatility_60": ("close_adj",),
-    "downside_volatility_60": ("close_adj",),
-    "log_market_cap": ("total_market_cap",),
-}
+EXPECTED_DEFINITIONS = (
+    ("ep_ttm", "value", ("pe_ttm",), 0, 1, True, True),
+    ("bp", "value", ("pb",), 0, 1, True, True),
+    ("sp_ttm", "value", ("ps_ttm",), 0, 1, True, True),
+    ("momentum_60", "momentum", ("close_adj",), 60, 1, False, True),
+    ("momentum_120", "momentum", ("close_adj",), 120, 1, False, True),
+    ("momentum_12_1", "momentum", ("close_adj",), 252, 1, False, True),
+    ("reversal_5", "reversal", ("close_adj",), 5, -1, False, True),
+    ("reversal_20", "reversal", ("close_adj",), 20, -1, False, True),
+    ("turnover_20", "liquidity", ("turnover",), 20, -1, False, True),
+    ("amihud_20", "liquidity", ("close_adj", "amount"), 20, 1, False, True),
+    ("volatility_20", "low_volatility", ("close_adj",), 20, -1, False, True),
+    ("volatility_60", "low_volatility", ("close_adj",), 60, -1, False, True),
+    (
+        "downside_volatility_60",
+        "low_volatility",
+        ("close_adj",),
+        60,
+        -1,
+        False,
+        True,
+    ),
+    ("log_market_cap", "size", ("total_market_cap",), 0, -1, False, False),
+)
+
+
+def test_factor_definition_has_exact_frozen_contract() -> None:
+    assert tuple(field.name for field in fields(FactorDefinition)) == (
+        "name",
+        "family",
+        "source_columns",
+        "lookback",
+        "direction",
+        "requires_verified_pit",
+        "size_neutralize",
+    )
 
 
 def test_registry_contains_exactly_the_fourteen_preregistered_factors() -> None:
@@ -28,33 +48,26 @@ def test_registry_contains_exactly_the_fourteen_preregistered_factors() -> None:
 
     assert len(names) == 14
     assert len(set(names)) == 14
-    assert set(names) == set(EXPECTED_REQUIREMENTS)
+    assert names == [definition[0] for definition in EXPECTED_DEFINITIONS]
 
 
-def test_registry_freezes_direction_and_data_requirements() -> None:
-    directions = {definition.name: definition.direction for definition in FACTOR_DEFINITIONS}
-    requirements = {
-        definition.name: definition.required_fields for definition in FACTOR_DEFINITIONS
-    }
+def test_registry_freezes_complete_preregistered_metadata_matrix() -> None:
+    actual = tuple(
+        (
+            definition.name,
+            definition.family,
+            definition.source_columns,
+            definition.lookback,
+            definition.direction,
+            definition.requires_verified_pit,
+            definition.size_neutralize,
+        )
+        for definition in FACTOR_DEFINITIONS
+    )
 
-    assert set(directions.values()) <= {-1, 1}
-    assert directions == {
-        "ep_ttm": 1,
-        "bp": 1,
-        "sp_ttm": 1,
-        "momentum_60": 1,
-        "momentum_120": 1,
-        "momentum_12_1": 1,
-        "reversal_5": -1,
-        "reversal_20": -1,
-        "turnover_20": -1,
-        "amihud_20": 1,
-        "volatility_20": -1,
-        "volatility_60": -1,
-        "downside_volatility_60": -1,
-        "log_market_cap": -1,
-    }
-    assert requirements == EXPECTED_REQUIREMENTS
+    assert actual == EXPECTED_DEFINITIONS
+    assert all(isinstance(definition.lookback, int) for definition in FACTOR_DEFINITIONS)
+    assert set(definition.direction for definition in FACTOR_DEFINITIONS) <= {-1, 1}
 
 
 def test_valuation_requires_verified_point_in_time_evidence() -> None:

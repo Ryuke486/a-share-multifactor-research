@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from ashare_multifactor.data.field_audit import audit_factor_fields, write_data_readiness
-from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
+from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 
 
 def _frame_with_audited_fields() -> pl.DataFrame:
@@ -35,7 +35,7 @@ def test_unverified_valuation_caps_factor_at_watch() -> None:
     assert readiness.factor_status["sp_ttm"] == "unverified"
 
 
-def test_verified_valuation_is_ready_when_required_fields_exist() -> None:
+def test_verified_valuation_is_ready_when_source_columns_exist() -> None:
     readiness = audit_factor_fields(_frame_with_audited_fields(), valuation_verified=True)
 
     assert readiness.factor_status["ep_ttm"] == "ready"
@@ -95,6 +95,53 @@ def test_field_metrics_report_coverage_dates_evidence_and_impact() -> None:
     ]
 
 
+def test_pit_fields_and_impacts_are_derived_from_injected_definitions() -> None:
+    definitions = (
+        FactorDefinition(
+            name="custom_pit_factor",
+            family="value",
+            source_columns=("custom_pit",),
+            lookback=0,
+            direction=1,
+            requires_verified_pit=True,
+            size_neutralize=True,
+        ),
+        FactorDefinition(
+            name="plain_factor",
+            family="other",
+            source_columns=("pe_ttm",),
+            lookback=0,
+            direction=1,
+            requires_verified_pit=False,
+            size_neutralize=True,
+        ),
+    )
+    frame = pl.DataFrame(
+        {
+            "date": [date(2005, 1, 4)],
+            "custom_pit": [2.0],
+            "pe_ttm": [10.0],
+            "industry": ["A"],
+            "is_st": [False],
+        }
+    )
+
+    readiness = audit_factor_fields(frame, definitions, valuation_verified=False)
+
+    assert readiness.factor_status == {
+        "custom_pit_factor": "unverified",
+        "plain_factor": "ready",
+    }
+    assert readiness.field_metrics["custom_pit"]["point_in_time_status"] == "unverified"
+    assert readiness.field_metrics["custom_pit"]["affected_factors"] == [
+        "custom_pit_factor"
+    ]
+    assert readiness.field_metrics["pe_ttm"]["point_in_time_status"] == (
+        "protocol_accepted"
+    )
+    assert readiness.field_metrics["pe_ttm"]["affected_factors"] == ["plain_factor"]
+
+
 def test_data_readiness_json_is_thin_deterministic_serialization(tmp_path: Path) -> None:
     readiness = audit_factor_fields(_frame_with_audited_fields())
     output = tmp_path / "data_readiness.json"
@@ -127,3 +174,7 @@ def test_evidence_config_starts_unverified_without_fabricated_cross_checks() -> 
         assert entry["cross_check"]["retrieval_date"] is None
         assert entry["cross_check"]["sample_rule"] is None
         assert entry["cross_check"]["result_summary"] == "No external cross-check completed."
+
+    valuation = payload["field_groups"]["valuation"]
+    assert "fields" not in valuation
+    assert "affected_factors" not in valuation

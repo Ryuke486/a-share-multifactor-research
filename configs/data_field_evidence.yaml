@@ -2,7 +2,6 @@ version: 1
 
 field_groups:
   valuation:
-    fields: [pe_ttm, pb, ps_ttm]
     point_in_time_status: unverified
     evidence_note: Historical point-in-time valuation provenance has not been verified.
     cross_check:

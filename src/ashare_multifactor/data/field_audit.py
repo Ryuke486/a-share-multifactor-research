@@ -14,7 +14,6 @@ import polars as pl
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 
 
-_VALUATION_FIELDS = frozenset({"pe_ttm", "pb", "ps_ttm"})
 _NON_NUMERIC_FIELDS = frozenset({"industry", "is_st"})
 _PROTOCOL_NOTE = "Field is accepted for use by the frozen stage-four research protocol."
 
@@ -40,6 +39,12 @@ def audit_factor_fields(
     """Summarize factor inputs and apply explicit point-in-time evidence gates."""
     definitions = tuple(definitions)
     affected = _affected_factors(definitions)
+    point_in_time_fields = {
+        field
+        for definition in definitions
+        if definition.requires_verified_pit
+        for field in definition.source_columns
+    }
     fields = tuple(affected) + ("industry", "is_st")
     metrics = {
         field: _field_metrics(
@@ -48,12 +53,14 @@ def audit_factor_fields(
             affected.get(field, _neutralized_factor_names(definitions)),
             point_in_time_status=_point_in_time_status(
                 field,
+                requires_verified_pit=field in point_in_time_fields,
                 valuation_verified=valuation_verified,
                 industry_verified=industry_verified,
                 historical_st_verified=historical_st_verified,
             ),
             evidence_note=_evidence_note(
                 field,
+                requires_verified_pit=field in point_in_time_fields,
                 valuation_verified=valuation_verified,
                 industry_verified=industry_verified,
                 historical_st_verified=historical_st_verified,
@@ -97,7 +104,7 @@ def _affected_factors(
 ) -> dict[str, list[str]]:
     affected: dict[str, list[str]] = {}
     for definition in definitions:
-        for field in definition.required_fields:
+        for field in definition.source_columns:
             affected.setdefault(field, []).append(definition.name)
     return affected
 
@@ -112,9 +119,12 @@ def _factor_status(
     *,
     valuation_verified: bool,
 ) -> str:
-    if any(field not in frame.columns for field in definition.required_fields):
+    if any(field not in frame.columns for field in definition.source_columns):
         return "missing"
-    if any(frame.get_column(field).null_count() == frame.height for field in definition.required_fields):
+    if any(
+        frame.get_column(field).null_count() == frame.height
+        for field in definition.source_columns
+    ):
         return "missing"
     if definition.requires_verified_pit and not valuation_verified:
         return "unverified"
@@ -192,11 +202,12 @@ def _date_string(value: date | datetime | str | None) -> str | None:
 def _point_in_time_status(
     field: str,
     *,
+    requires_verified_pit: bool,
     valuation_verified: bool,
     industry_verified: bool,
     historical_st_verified: bool,
 ) -> str:
-    if field in _VALUATION_FIELDS:
+    if requires_verified_pit:
         return "verified" if valuation_verified else "unverified"
     if field == "industry":
         return "verified" if industry_verified else "unverified"
@@ -208,11 +219,12 @@ def _point_in_time_status(
 def _evidence_note(
     field: str,
     *,
+    requires_verified_pit: bool,
     valuation_verified: bool,
     industry_verified: bool,
     historical_st_verified: bool,
 ) -> str:
-    if field in _VALUATION_FIELDS:
+    if requires_verified_pit:
         if valuation_verified:
             return "Historical point-in-time valuation provenance has been explicitly verified."
         return "Historical point-in-time valuation provenance has not been verified."
