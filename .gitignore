@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 *.py[cod]
+*.egg-info/
 Data/
 data/raw/
 processed/
