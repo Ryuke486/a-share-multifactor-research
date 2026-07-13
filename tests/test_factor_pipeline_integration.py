@@ -80,6 +80,7 @@ def test_all_stage_builds_complete_auditable_synthetic_research(tmp_path: Path) 
         "factor_classifications.parquet",
         "factor_correlations.parquet",
         "redundancy_flags.parquet",
+        "report_manifest.json",
         "lineage.json",
     }
     assert all((processed / name).is_file() for name in expected_processed)

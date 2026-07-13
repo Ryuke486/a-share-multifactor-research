@@ -24,20 +24,26 @@ from ashare_multifactor.research.factor_evaluation import (
     evaluate_factors,
 )
 from ashare_multifactor.research.factor_lineage import (
+    lineage_identity,
     load_and_validate_lineage,
     load_field_evidence,
     new_lineage,
     record_stage,
+    stage_outputs_digest,
 )
 from ashare_multifactor.research.factor_outputs import (
     EVALUATION_FILE_NAMES,
-    clear_downstream,
+    clear_stage_and_downstream,
+    copy_file_atomic,
+    expected_stage_outputs,
     invalidate_factor_outputs,
     publish_report,
+    validate_published_report,
     write_json_atomic,
     write_monthly_raw,
     write_parquet_atomic,
 )
+from ashare_multifactor.research.factor_paths import validate_factor_paths
 from ashare_multifactor.research.factor_preprocessing import preprocess_factor_panel
 from ashare_multifactor.research.factor_redundancy import (
     FactorRedundancyBundle,
@@ -81,8 +87,9 @@ def run_factor_pipeline(config_path: Path, stage: str) -> None:
         raise ValueError(f"unsupported factor research stage: {stage}")
     config = load_config(config_path)
     settings = _settings(config)
-    factor_root = config.paths.processed / "factor_research"
-    artifact_root = config.paths.artifacts / "factor_research"
+    paths = validate_factor_paths(config)
+    factor_root = paths.processed_root
+    artifact_root = paths.artifact_root
     evidence = load_field_evidence(config_path) if stage != "build" else None
     runners = {
         "build": lambda: _run_build(config, settings, factor_root, artifact_root),
@@ -126,25 +133,29 @@ def _run_audit(
     statuses = evidence["statuses"]
     if not isinstance(statuses, dict):
         raise ValueError("invalid field evidence statuses")
-    readiness = audit_factor_fields(
-        _read_daily(source, _AUDIT_INPUT_COLUMNS),
-        FACTOR_DEFINITIONS,
-        valuation_verified=statuses["valuation"] == "verified",
-        industry_verified=statuses["industry"] == "verified",
-        historical_st_verified=statuses["historical_st"] == "verified",
-    )
-    readiness_path = factor_root / "data_readiness.json"
-    write_data_readiness(readiness_path, readiness)
-    clear_downstream(factor_root, artifact_root, after="audit")
     lineage = new_lineage(settings, source, factor_root, evidence)
-    record_stage(
-        lineage,
-        "audit",
-        (factor_root / "daily_panel/manifest.json", *source.files),
-        (readiness_path,),
-        factor_root,
-    )
-    write_json_atomic(factor_root / "lineage.json", lineage)
+    _prepare_stage(lineage, "audit", factor_root, artifact_root)
+    try:
+        readiness = audit_factor_fields(
+            _read_daily(source, _AUDIT_INPUT_COLUMNS),
+            FACTOR_DEFINITIONS,
+            valuation_verified=statuses["valuation"] == "verified",
+            industry_verified=statuses["industry"] == "verified",
+            historical_st_verified=statuses["historical_st"] == "verified",
+        )
+        readiness_path = factor_root / "data_readiness.json"
+        write_data_readiness(readiness_path, readiness)
+        record_stage(
+            lineage,
+            "audit",
+            (factor_root / "daily_panel/manifest.json", *source.files),
+            expected_stage_outputs(factor_root, "audit", tuple(FACTOR_DEFINITIONS)),
+            factor_root,
+        )
+        write_json_atomic(factor_root / "lineage.json", lineage)
+    except BaseException:
+        _abort_stage(lineage, "audit", factor_root, artifact_root)
+        raise
 
 
 def _run_factors(
@@ -155,41 +166,44 @@ def _run_factors(
 ) -> None:
     evidence = _require_evidence(evidence)
     source, lineage = _validated_lineage(factor_root, settings, evidence, ("audit",))
-    readiness_path = factor_root / "data_readiness.json"
-    readiness = FieldReadiness(**json.loads(readiness_path.read_text(encoding="utf-8")))
-    daily = _read_daily(source, _FACTOR_INPUT_COLUMNS)
-    raw = build_monthly_factor_panel(daily, FACTOR_DEFINITIONS, settings)
-    monthly_root = factor_root / "monthly_raw"
-    write_monthly_raw(monthly_root, raw)
-    features = preprocess_factor_panel(raw, readiness, settings).sort(
-        "date", "symbol", "factor_name"
-    )
-    del raw
-    feature_path = factor_root / "factor_features.parquet"
-    write_parquet_atomic(feature_path, features)
-    labels = _signal_labels(daily, features, settings)
-    del daily
-    labels_path = factor_root / "forward_returns.parquet"
-    write_parquet_atomic(labels_path, labels)
-    return_columns = [f"forward_return_{horizon}" for horizon in settings.forward_horizons]
-    panel = features.join(
-        labels.select("date", "symbol", *return_columns),
-        on=["date", "symbol"],
-        how="left",
-        validate="m:1",
-    ).sort("date", "symbol", "factor_name")
-    panel_path = factor_root / "factor_panel.parquet"
-    write_parquet_atomic(panel_path, panel)
-    clear_downstream(factor_root, artifact_root, after="factors")
-    _drop_stages(lineage, ("factors", "evaluate", "report"))
-    record_stage(
-        lineage,
-        "factors",
-        (readiness_path, factor_root / "daily_panel/manifest.json", *source.files),
-        (monthly_root, feature_path, labels_path, panel_path),
-        factor_root,
-    )
-    write_json_atomic(factor_root / "lineage.json", lineage)
+    _prepare_stage(lineage, "factors", factor_root, artifact_root)
+    try:
+        readiness_path = factor_root / "data_readiness.json"
+        readiness = FieldReadiness(**json.loads(readiness_path.read_text(encoding="utf-8")))
+        daily = _read_daily(source, _FACTOR_INPUT_COLUMNS)
+        raw = build_monthly_factor_panel(daily, FACTOR_DEFINITIONS, settings)
+        monthly_root = factor_root / "monthly_raw"
+        write_monthly_raw(monthly_root, raw)
+        features = preprocess_factor_panel(raw, readiness, settings).sort(
+            "date", "symbol", "factor_name"
+        )
+        del raw
+        feature_path = factor_root / "factor_features.parquet"
+        write_parquet_atomic(feature_path, features)
+        labels = _signal_labels(daily, features, settings)
+        del daily
+        labels_path = factor_root / "forward_returns.parquet"
+        write_parquet_atomic(labels_path, labels)
+        return_columns = [f"forward_return_{horizon}" for horizon in settings.forward_horizons]
+        panel = features.join(
+            labels.select("date", "symbol", *return_columns),
+            on=["date", "symbol"],
+            how="left",
+            validate="m:1",
+        ).sort("date", "symbol", "factor_name")
+        panel_path = factor_root / "factor_panel.parquet"
+        write_parquet_atomic(panel_path, panel)
+        record_stage(
+            lineage,
+            "factors",
+            (readiness_path, factor_root / "daily_panel/manifest.json", *source.files),
+            expected_stage_outputs(factor_root, "factors", tuple(FACTOR_DEFINITIONS)),
+            factor_root,
+        )
+        write_json_atomic(factor_root / "lineage.json", lineage)
+    except BaseException:
+        _abort_stage(lineage, "factors", factor_root, artifact_root)
+        raise
 
 
 def _run_evaluate(
@@ -200,23 +214,32 @@ def _run_evaluate(
 ) -> None:
     evidence = _require_evidence(evidence)
     _, lineage = _validated_lineage(factor_root, settings, evidence, ("audit", "factors"))
-    panel_path = factor_root / "factor_panel.parquet"
-    features_path = factor_root / "factor_features.parquet"
-    evaluation = evaluate_factors(pl.read_parquet(panel_path), FACTOR_DEFINITIONS, settings)
-    classifications = classify_factors(
-        evaluation.factor_summary,
-        evaluation.subperiod_metrics,
-        FACTOR_DEFINITIONS,
-        settings,
-    )
-    redundancy = analyze_factor_redundancy(
-        pl.read_parquet(features_path), FACTOR_DEFINITIONS, settings
-    )
-    outputs = _write_evaluation(factor_root, evaluation, classifications, redundancy)
-    clear_downstream(factor_root, artifact_root, after="evaluate")
-    _drop_stages(lineage, ("evaluate", "report"))
-    record_stage(lineage, "evaluate", (panel_path, features_path), outputs, factor_root)
-    write_json_atomic(factor_root / "lineage.json", lineage)
+    _prepare_stage(lineage, "evaluate", factor_root, artifact_root)
+    try:
+        panel_path = factor_root / "factor_panel.parquet"
+        features_path = factor_root / "factor_features.parquet"
+        evaluation = evaluate_factors(pl.read_parquet(panel_path), FACTOR_DEFINITIONS, settings)
+        classifications = classify_factors(
+            evaluation.factor_summary,
+            evaluation.subperiod_metrics,
+            FACTOR_DEFINITIONS,
+            settings,
+        )
+        redundancy = analyze_factor_redundancy(
+            pl.read_parquet(features_path), FACTOR_DEFINITIONS, settings
+        )
+        _write_evaluation(factor_root, evaluation, classifications, redundancy)
+        record_stage(
+            lineage,
+            "evaluate",
+            (panel_path, features_path),
+            expected_stage_outputs(factor_root, "evaluate", tuple(FACTOR_DEFINITIONS)),
+            factor_root,
+        )
+        write_json_atomic(factor_root / "lineage.json", lineage)
+    except BaseException:
+        _abort_stage(lineage, "evaluate", factor_root, artifact_root)
+        raise
 
 
 def _run_report(
@@ -226,37 +249,61 @@ def _run_report(
     evidence: dict[str, object] | None,
 ) -> None:
     evidence = _require_evidence(evidence)
+    required_stages = ("audit", "factors", "evaluate")
     _, lineage = _validated_lineage(
         factor_root,
         settings,
         evidence,
-        ("audit", "factors", "evaluate"),
+        required_stages,
     )
-    evaluation = _read_evaluation(factor_root)
-    classifications = pl.read_parquet(factor_root / "factor_classifications.parquet")
-    redundancy = FactorRedundancyBundle(
-        factor_correlations=pl.read_parquet(factor_root / "factor_correlations.parquet"),
-        redundancy_flags=pl.read_parquet(factor_root / "redundancy_flags.parquet"),
-    )
-    readiness_path = factor_root / "data_readiness.json"
-    publish_report(
-        artifact_root,
-        json.loads(readiness_path.read_text(encoding="utf-8")),
-        evaluation,
-        classifications,
-        redundancy,
-        tuple(FACTOR_DEFINITIONS),
-        settings,
-    )
-    _drop_stages(lineage, ("report",))
-    inputs = tuple(factor_root / name for name in EVALUATION_FILE_NAMES) + (
-        factor_root / "factor_classifications.parquet",
-        factor_root / "factor_correlations.parquet",
-        factor_root / "redundancy_flags.parquet",
-        readiness_path,
-    )
-    record_stage(lineage, "report", inputs, (), factor_root)
-    write_json_atomic(factor_root / "lineage.json", lineage)
+    if _has_stage(lineage, "report"):
+        _, lineage = _validated_lineage(
+            factor_root,
+            settings,
+            evidence,
+            (*required_stages, "report"),
+        )
+        validate_published_report(lineage, factor_root, artifact_root)
+    _prepare_stage(lineage, "report", factor_root, artifact_root)
+    try:
+        evaluation = _read_evaluation(factor_root)
+        classifications = pl.read_parquet(factor_root / "factor_classifications.parquet")
+        redundancy = FactorRedundancyBundle(
+            factor_correlations=pl.read_parquet(factor_root / "factor_correlations.parquet"),
+            redundancy_flags=pl.read_parquet(factor_root / "redundancy_flags.parquet"),
+        )
+        readiness_path = factor_root / "data_readiness.json"
+        report_manifest = factor_root / "report_manifest.json"
+        artifact_manifest = publish_report(
+            artifact_root,
+            json.loads(readiness_path.read_text(encoding="utf-8")),
+            evaluation,
+            classifications,
+            redundancy,
+            tuple(FACTOR_DEFINITIONS),
+            settings,
+            research_identity=lineage_identity(lineage),
+            evaluate_outputs_sha256=stage_outputs_digest(lineage, "evaluate"),
+        )
+        copy_file_atomic(artifact_manifest, report_manifest)
+        inputs = tuple(factor_root / name for name in EVALUATION_FILE_NAMES) + (
+            factor_root / "factor_classifications.parquet",
+            factor_root / "factor_correlations.parquet",
+            factor_root / "redundancy_flags.parquet",
+            readiness_path,
+        )
+        record_stage(
+            lineage,
+            "report",
+            inputs,
+            expected_stage_outputs(factor_root, "report", tuple(FACTOR_DEFINITIONS)),
+            factor_root,
+        )
+        validate_published_report(lineage, factor_root, artifact_root)
+        write_json_atomic(factor_root / "lineage.json", lineage)
+    except BaseException:
+        _abort_stage(lineage, "report", factor_root, artifact_root)
+        raise
 
 
 def _validate_source(factor_root: Path, settings: FactorResearchSettings) -> DailyPanelSource:
@@ -281,6 +328,14 @@ def _validated_lineage(
         factor_root,
         evidence,
         stages,
+        {
+            stage: expected_stage_outputs(
+                factor_root,
+                stage,
+                tuple(FACTOR_DEFINITIONS),
+            )
+            for stage in stages
+        },
     )
     return source, lineage
 
@@ -360,3 +415,40 @@ def _drop_stages(lineage: dict[str, object], names: tuple[str, ...]) -> None:
         raise ValueError("invalid factor research lineage stages")
     for name in names:
         stages.pop(name, None)
+
+
+def _has_stage(lineage: dict[str, object], name: str) -> bool:
+    stages = lineage.get("stages")
+    if not isinstance(stages, dict):
+        raise ValueError("invalid factor research lineage stages")
+    return name in stages
+
+
+_STAGE_TAILS = {
+    "audit": ("audit", "factors", "evaluate", "report"),
+    "factors": ("factors", "evaluate", "report"),
+    "evaluate": ("evaluate", "report"),
+    "report": ("report",),
+}
+
+
+def _prepare_stage(
+    lineage: dict[str, object],
+    stage: str,
+    factor_root: Path,
+    artifact_root: Path,
+) -> None:
+    _drop_stages(lineage, _STAGE_TAILS[stage])
+    write_json_atomic(factor_root / "lineage.json", lineage)
+    clear_stage_and_downstream(factor_root, artifact_root, stage)
+
+
+def _abort_stage(
+    lineage: dict[str, object],
+    stage: str,
+    factor_root: Path,
+    artifact_root: Path,
+) -> None:
+    _drop_stages(lineage, _STAGE_TAILS[stage])
+    write_json_atomic(factor_root / "lineage.json", lineage)
+    clear_stage_and_downstream(factor_root, artifact_root, stage)

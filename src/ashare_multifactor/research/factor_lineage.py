@@ -6,7 +6,7 @@ from dataclasses import asdict
 from datetime import date
 import hashlib
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping
 
 import yaml
@@ -63,6 +63,7 @@ def load_and_validate_lineage(
     factor_root: Path,
     field_evidence: Mapping[str, object],
     required_stages: Iterable[str],
+    expected_outputs: Mapping[str, Iterable[Path]],
 ) -> dict[str, object]:
     if not path.is_file():
         raise ValueError("factor research lineage is missing; run audit first")
@@ -82,10 +83,21 @@ def load_and_validate_lineage(
         record = stages.get(stage)
         if not isinstance(record, dict):
             raise ValueError(f"factor research stage lineage is missing: {stage}")
+        inputs = record.get("inputs")
         outputs = record.get("outputs")
+        if not isinstance(inputs, list):
+            raise ValueError(f"invalid factor research stage inputs: {stage}")
         if not isinstance(outputs, list):
             raise ValueError(f"invalid factor research stage outputs: {stage}")
-        _validate_file_records(outputs, factor_root)
+        _validate_file_records(inputs, factor_root)
+        actual_paths = _validate_file_records(outputs, factor_root)
+        expected_paths = {_display_path(output, factor_root) for output in expected_outputs[stage]}
+        if actual_paths != expected_paths:
+            raise ValueError(
+                f"factor research stage output set mismatch: {stage}; "
+                f"missing={sorted(expected_paths - actual_paths)}, "
+                f"extra={sorted(actual_paths - expected_paths)}"
+            )
     return payload
 
 
@@ -117,20 +129,76 @@ def file_records(paths: Iterable[Path], root: Path) -> list[dict[str, object]]:
     ]
 
 
-def _validate_file_records(records: list[object], root: Path) -> None:
+def lineage_identity(lineage: Mapping[str, object]) -> str:
+    """Fingerprint the frozen config, evidence, and daily-panel identity."""
+    identity = {key: lineage.get(key) for key in ("factor_config", "field_evidence", "daily_panel")}
+    if any(value is None for value in identity.values()):
+        raise ValueError("invalid factor research identity")
+    return hashlib.sha256(_canonical_json(identity)).hexdigest()
+
+
+def stage_outputs_digest(lineage: Mapping[str, object], stage: str) -> str:
+    """Fingerprint a stage's stably ordered output records."""
+    stages = lineage.get("stages")
+    if not isinstance(stages, Mapping):
+        raise ValueError("invalid factor research lineage stages")
+    record = stages.get(stage)
+    if not isinstance(record, Mapping) or not isinstance(record.get("outputs"), list):
+        raise ValueError(f"invalid factor research stage outputs: {stage}")
+    outputs = record["outputs"]
+    if not all(isinstance(item, Mapping) for item in outputs):
+        raise ValueError(f"invalid factor research stage outputs: {stage}")
+    ordered = sorted(outputs, key=lambda item: str(item.get("path")))
+    return hashlib.sha256(_canonical_json(ordered)).hexdigest()
+
+
+def validate_file_records(records: list[object], root: Path) -> set[str]:
+    """Validate safe relative paths and current file integrity."""
+    return _validate_file_records(records, root)
+
+
+def _validate_file_records(records: list[object], root: Path) -> set[str]:
+    seen: set[str] = set()
     for item in records:
         if not isinstance(item, Mapping):
             raise ValueError("invalid upstream file record")
         path_value = item.get("path")
         if not isinstance(path_value, str):
             raise ValueError("invalid upstream file path")
-        path = root / path_value
+        if path_value in seen:
+            raise ValueError(f"duplicate lineage file path: {path_value}")
+        seen.add(path_value)
+        path = _safe_record_path(path_value, root)
         if not path.is_file():
             raise ValueError(f"upstream file is missing: {path_value}")
         if _sha256(path) != item.get("sha256"):
             raise ValueError(f"upstream file digest mismatch: {path_value}")
         if path.stat().st_size != item.get("size_bytes"):
             raise ValueError(f"upstream file size mismatch: {path_value}")
+    return seen
+
+
+def _safe_record_path(path_value: str, root: Path) -> Path:
+    pure = PurePosixPath(path_value)
+    if (
+        not path_value
+        or path_value == "."
+        or "\\" in path_value
+        or pure.is_absolute()
+        or ".." in pure.parts
+        or pure.as_posix() != path_value
+    ):
+        raise ValueError(f"invalid lineage file path: {path_value}")
+    path = root.joinpath(*pure.parts)
+    current = path
+    while current != root:
+        if current.is_symlink():
+            raise ValueError(f"lineage file path uses symlink: {path_value}")
+        current = current.parent
+    root_resolved = root.resolve()
+    if not path.resolve().is_relative_to(root_resolved):
+        raise ValueError(f"lineage file path escapes factor research root: {path_value}")
+    return path
 
 
 def _config_snapshot(settings: FactorResearchSettings) -> dict[str, object]:
