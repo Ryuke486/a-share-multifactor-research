@@ -246,6 +246,33 @@ def test_top_twenty_percent_turnover_uses_equal_weight_member_sets() -> None:
     assert second["turnover"] == pytest.approx(0.25)
 
 
+def test_top_twenty_percent_turnover_breaks_boundary_score_ties_by_symbol_ascending() -> None:
+    symbols = [f"{value:06d}" for value in range(1, 21)]
+    rows = _rows(
+        date(2005, 1, 31),
+        ALPHA,
+        [1.0] * 20,
+        list(range(20)),
+        symbols=symbols,
+    )
+    rows += _rows(
+        date(2005, 2, 28),
+        ALPHA,
+        [2.0] * 4 + [1.0] * 16,
+        list(range(20)),
+        symbols=symbols,
+    )
+
+    turnover = evaluate_factors(_frame(rows), [ALPHA], _settings()).factor_turnover.filter(
+        pl.col("score_variant") == "score"
+    )
+    first, second = turnover.sort("date").iter_rows(named=True)
+
+    assert first["turnover"] is None
+    assert first["top_count"] == 4
+    assert second["turnover"] == pytest.approx(0.0)
+
+
 def test_decay_subperiods_and_empty_registered_combinations_are_retained() -> None:
     ascending = [float(value) for value in range(20)]
     rows: list[dict[str, object]] = []

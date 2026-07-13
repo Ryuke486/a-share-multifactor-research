@@ -5,6 +5,7 @@ import polars as pl
 import pytest
 
 from ashare_multifactor.config import FactorResearchSettings
+from ashare_multifactor.factors.definitions import FactorDefinition
 from ashare_multifactor.research.factor_selection import classify_factors
 
 
@@ -46,6 +47,21 @@ def _selection_summary(rows: list[dict[str, object]]) -> pl.DataFrame:
             "q5_q1": pl.Float64,
             "point_in_time_status": pl.String,
         },
+    )
+
+
+def _definition(
+    factor_name: str,
+    *,
+    size_neutralize: bool = True,
+) -> FactorDefinition:
+    return FactorDefinition(
+        factor_name,
+        "test",
+        (),
+        0,
+        1,
+        size_neutralize=size_neutralize,
     )
 
 
@@ -99,7 +115,7 @@ def _subperiods(
     ]
 
 
-def test_classification_selects_neutral_primary_when_available_and_has_no_candidate_quota() -> None:
+def test_classification_uses_registered_primary_variant_and_has_no_candidate_quota() -> None:
     summary = _selection_summary(
         [
             _selection_row(
@@ -111,13 +127,28 @@ def test_classification_selects_neutral_primary_when_available_and_has_no_candid
             ),
             _selection_row("neutral_factor"),
             _selection_row("plain_factor", score_variant="score"),
+            _selection_row(
+                "plain_factor",
+                score_variant="score_size_neutral",
+                mean_ic=-0.2,
+                bh_q=None,
+                q5_q1=-0.1,
+            ),
         ]
     )
     subperiods = pl.DataFrame(
         _subperiods("neutral_factor", "score_size_neutral") + _subperiods("plain_factor", "score")
     )
 
-    selected = classify_factors(summary, subperiods, _settings()).sort("factor_name")
+    selected = classify_factors(
+        summary,
+        subperiods,
+        [
+            _definition("neutral_factor"),
+            _definition("plain_factor", size_neutralize=False),
+        ],
+        _settings(),
+    ).sort("factor_name")
 
     assert selected.select("factor_name", "primary_score_variant", "classification").rows() == [
         ("neutral_factor", "score_size_neutral", "candidate"),
@@ -175,7 +206,12 @@ def test_classification_watch_reasons_are_explicit(
     summary = _selection_summary([_selection_row("factor", **overrides)])
     subperiods = pl.DataFrame(_subperiods("factor", "score_size_neutral", subperiod_means))
 
-    selected = classify_factors(summary, subperiods, _settings()).row(0, named=True)
+    selected = classify_factors(
+        summary,
+        subperiods,
+        [_definition("factor")],
+        _settings(),
+    ).row(0, named=True)
 
     assert selected["classification"] == "watch"
     assert selected[failed_column] is False
@@ -215,7 +251,12 @@ def test_classification_rejects_each_failed_core_gate(
     summary = _selection_summary([_selection_row("factor", **overrides)])
     subperiods = pl.DataFrame(_subperiods("factor", "score_size_neutral"))
 
-    selected = classify_factors(summary, subperiods, _settings()).row(0, named=True)
+    selected = classify_factors(
+        summary,
+        subperiods,
+        [_definition("factor")],
+        _settings(),
+    ).row(0, named=True)
 
     assert selected["classification"] == "reject"
     assert selected[failed_column] is False
@@ -233,7 +274,12 @@ def test_classification_uses_status_not_factor_name_for_unverified_cap() -> None
         _subperiods("ep_ttm", "score_size_neutral") + _subperiods("ordinary", "score_size_neutral")
     )
 
-    selected = classify_factors(summary, subperiods, _settings()).sort("factor_name")
+    selected = classify_factors(
+        summary,
+        subperiods,
+        [_definition("ep_ttm"), _definition("ordinary")],
+        _settings(),
+    ).sort("factor_name")
 
     assert selected.select("factor_name", "classification").rows() == [
         ("ep_ttm", "candidate"),
@@ -255,7 +301,12 @@ def test_classification_ignores_non_preregistered_subperiod_rows() -> None:
         ]
     )
 
-    selected = classify_factors(summary, subperiods, _settings()).row(0, named=True)
+    selected = classify_factors(
+        summary,
+        subperiods,
+        [_definition("factor")],
+        _settings(),
+    ).row(0, named=True)
 
     assert selected["positive_subperiods"] == 0
     assert selected["subperiod_stability_pass"] is False
@@ -270,4 +321,45 @@ def test_classification_rejects_a_summary_that_omits_a_factor_primary_row() -> N
     subperiods = pl.DataFrame(_subperiods("factor", "score_size_neutral"))
 
     with pytest.raises(ValueError, match="exactly one.*primary summary row"):
-        classify_factors(summary, subperiods, _settings())
+        classify_factors(
+            summary,
+            subperiods,
+            [_definition("factor")],
+            _settings(),
+        )
+
+
+def test_classification_does_not_fallback_when_registered_primary_variant_is_missing() -> None:
+    summary = _selection_summary([_selection_row("factor", score_variant="score")])
+    subperiods = pl.DataFrame(_subperiods("factor", "score"))
+
+    with pytest.raises(ValueError, match="exactly one score_size_neutral primary summary row"):
+        classify_factors(
+            summary,
+            subperiods,
+            [_definition("factor")],
+            _settings(),
+        )
+
+
+def test_classification_rejects_duplicate_definitions_and_summary_name_mismatch() -> None:
+    summary = _selection_summary([_selection_row("summary_factor")])
+    subperiods = pl.DataFrame(_subperiods("summary_factor", "score_size_neutral"))
+
+    with pytest.raises(ValueError, match="duplicate factor definitions"):
+        classify_factors(
+            summary,
+            subperiods,
+            [_definition("summary_factor"), _definition("summary_factor")],
+            _settings(),
+        )
+    with pytest.raises(
+        ValueError,
+        match="factor summary names must match factor definitions",
+    ):
+        classify_factors(
+            summary,
+            subperiods,
+            [_definition("registered_factor")],
+            _settings(),
+        )

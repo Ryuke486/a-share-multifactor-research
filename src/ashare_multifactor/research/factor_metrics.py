@@ -250,9 +250,11 @@ def _build_turnover(
             previous_date: date | None = None
             previous_top: set[str] | None = None
             for day, group in groups_by_factor.get(definition.name, ()):
-                valid = _finite_group(group, variant).sort(variant, "symbol")
+                valid = _finite_group(group, variant).sort(
+                    [variant, "symbol"], descending=[True, False]
+                )
                 count = math.ceil(0.2 * valid.height) if valid.height else 0
-                top = set(valid.tail(count).get_column("symbol").to_list()) if count else set()
+                top = set(valid.head(count).get_column("symbol").to_list()) if count else set()
                 rows.append(
                     {
                         "date": day,

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 import math
 
 import polars as pl
 
 from ashare_multifactor.config import FactorResearchSettings
+from ashare_multifactor.factors.definitions import FactorDefinition
 
 
 _SUMMARY_COLUMNS = (
@@ -52,19 +54,22 @@ _OUTPUT_SCHEMA = {
 def classify_factors(
     factor_summary: pl.DataFrame,
     subperiod_metrics: pl.DataFrame,
+    definitions: Sequence[FactorDefinition],
     settings: FactorResearchSettings,
 ) -> pl.DataFrame:
     """Classify each factor from its preregistered primary test and subperiods."""
     _require_columns(factor_summary, _SUMMARY_COLUMNS, "factor_summary")
     _require_columns(subperiod_metrics, _SUBPERIOD_COLUMNS, "subperiod_metrics")
+    definitions = tuple(definitions)
+    _validate_factor_names(factor_summary, definitions)
     primary = factor_summary.filter(pl.col("horizon") == settings.primary_horizon)
     rows = [
         _classify_row(
-            _primary_row(primary, factor_name),
+            _primary_row(primary, definition),
             subperiod_metrics,
             settings,
         )
-        for factor_name in factor_summary.get_column("factor_name").unique().sort().to_list()
+        for definition in definitions
     ]
     return pl.DataFrame(rows, schema=_OUTPUT_SCHEMA, strict=False).sort("factor_name")
 
@@ -75,10 +80,26 @@ def _require_columns(frame: pl.DataFrame, columns: tuple[str, ...], name: str) -
         raise ValueError(f"{name} is missing columns: " + ", ".join(missing))
 
 
-def _primary_row(primary: pl.DataFrame, factor_name: str) -> dict[str, object]:
+def _validate_factor_names(
+    factor_summary: pl.DataFrame,
+    definitions: Sequence[FactorDefinition],
+) -> None:
+    definition_names = [definition.name for definition in definitions]
+    if len(definition_names) != len(set(definition_names)):
+        raise ValueError("duplicate factor definitions are not allowed")
+    expected = set(definition_names)
+    actual = set(factor_summary.get_column("factor_name").unique().to_list())
+    if actual != expected:
+        raise ValueError("factor summary names must match factor definitions")
+
+
+def _primary_row(
+    primary: pl.DataFrame,
+    definition: FactorDefinition,
+) -> dict[str, object]:
+    factor_name = definition.name
+    primary_variant = "score_size_neutral" if definition.size_neutralize else "score"
     factor = primary.filter(pl.col("factor_name") == factor_name)
-    variants = set(factor.get_column("score_variant"))
-    primary_variant = "score_size_neutral" if "score_size_neutral" in variants else "score"
     selected = factor.filter(pl.col("score_variant") == primary_variant)
     if selected.height != 1:
         raise ValueError(
