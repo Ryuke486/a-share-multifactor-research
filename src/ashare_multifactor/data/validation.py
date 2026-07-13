@@ -40,7 +40,10 @@ def validate_daily_panel(frame: pl.DataFrame, expected_date: date) -> list[Quali
     if duplicate_count:
         issues.append(QualityIssue("error", "duplicate_key", duplicate_count, "duplicate (date, symbol) keys"))
 
-    date_count = _row_count(frame, pl.col("date") != expected_date)
+    date_count = _row_count(
+        frame,
+        pl.col("date").is_null() | (pl.col("date") != expected_date),
+    )
     if date_count:
         issues.append(QualityIssue("error", "date_mismatch", date_count, "date differs from expected file date"))
 

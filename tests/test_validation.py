@@ -55,11 +55,17 @@ def test_clean_panel_has_no_issues() -> None:
     ("mutations", "expected_code"),
     [
         ({"date": [date(2014, 1, 3)]}, "date_mismatch"),
+        ({"date": [None]}, "date_mismatch"),
         ({"open_raw": [0.0]}, "invalid_ohlc"),
         ({"high_raw": [9.0]}, "invalid_ohlc"),
+        ({"low_raw": [10.6]}, "invalid_ohlc"),
+        ({"open_adj": [0.0]}, "invalid_ohlc"),
+        ({"high_adj": [19.0]}, "invalid_ohlc"),
         ({"low_adj": [22.0]}, "invalid_ohlc"),
+        ({"close_raw": [None]}, "missing_price"),
         ({"close_adj": [None]}, "missing_price"),
         ({"volume": [-1.0]}, "negative_volume_amount"),
+        ({"amount": [-1.0]}, "negative_volume_amount"),
     ],
 )
 def test_errors_are_identified(mutations: dict[str, list[object]], expected_code: str) -> None:
