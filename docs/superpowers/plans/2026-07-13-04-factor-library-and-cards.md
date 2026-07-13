@@ -273,7 +273,33 @@ preprocess_factor_panel(panel: pl.DataFrame, readiness: FieldReadiness, settings
 evaluate_factors(panel: pl.DataFrame, definitions: Sequence[FactorDefinition], settings: FactorResearchSettings) -> FactorEvaluationBundle
 ~~~
 
-factor_panel固定长表字段：
+Task 7先物理隔离标签：`factors/panel.py`禁止导入标签模块，也不读取或传递
+`forward_return_*`及诊断标签列。它按族生成并返回下列无标签 `monthly_raw`
+长表：
+
+~~~text
+date: Date
+symbol: String
+factor_name: String
+family: String
+raw_value: Float64 nullable
+~~~
+
+Task 7的截面预处理在上述5列上增加：
+
+~~~text
+winsorized_value: Float64 nullable
+score: Float64 nullable
+score_size_neutral: Float64 nullable
+score_industry_size_neutral: Float64 nullable
+point_in_time_status: String
+preprocessing_reason: String nullable
+~~~
+
+Task 10薄管道负责将各族 `monthly_raw`写入
+`processed/factor_research/monthly_raw/family=FAMILY/`，并且只在全部因子与预处理完成后，
+按 `(date, symbol)` 连接标签。`factors`包保持无副作用，不自行选择或写入路径。
+最终 `factor_panel`固定长表字段仍为：
 
 ~~~text
 date: Date
@@ -289,6 +315,7 @@ forward_return_5: Float64 nullable
 forward_return_20: Float64 nullable
 forward_return_60: Float64 nullable
 point_in_time_status: String
+preprocessing_reason: String nullable
 ~~~
 
 ---
@@ -673,35 +700,37 @@ git commit -m "feat: add value liquidity and size factors"
 
 **Interfaces:**
 - Produces: build_monthly_factor_panel、preprocess_factor_panel。
-- Output contract: 本计划第4节factor_panel长表。
+- Output contract: 本计划第4节无标签 `monthly_raw`与预处理因子侧长表。
+- Architecture boundary: Task 7只返回内存长表；Task 10薄管道负责分区写盘，并在因子预处理完成后才连接标签。
 
-- [ ] **Step 1: 写月末和长表schema测试**
+- [x] **Step 1: 写月末和长表schema测试**
 
 每月只保留最后真实交易日；每个date-symbol-factor_name最多一行；字段和类型固定；2003–2004不输出。
 
-- [ ] **Step 2: 实现按因子族分批计算**
+- [x] **Step 2: 实现按因子族分批计算**
 
-每个因子族只扫描需要列并写monthly_raw/family=FAMILY；禁止一次保留全部日频因子宽表。
+每个因子族只投影键列和该族注册 `source_columns`，计算后立即整形为小型月度长表并释放日频宽表。
+Task 7不写路径；Task 10按 `family=FAMILY`写入 `monthly_raw`。禁止一次保留全部日频因子宽表。
 
-- [ ] **Step 3: 写去极值与定向测试**
+- [x] **Step 3: 写去极值与定向测试**
 
 人工截面验证1%/99%分位数只使用同日合格股票；direction=-1后排序相反；未来日期极值不影响当前日期。
 
-- [ ] **Step 4: 写市值中性化测试**
+- [x] **Step 4: 写市值中性化测试**
 
 构造与log_market_cap线性相关的因子，残差与市值截面相关接近0；奇异截面、样本不足和常数因子必须记录reason而不是崩溃。
 
-- [ ] **Step 5: 实现预处理**
+- [x] **Step 5: 实现预处理**
 
 行业门禁未通过时score_industry_size_neutral整列为空，并在data_readiness和报告中解释。
 
-- [ ] **Step 6: 运行测试**
+- [x] **Step 6: 运行测试**
 
 Run: .venv/bin/pytest tests/test_factor_preprocessing.py tests/test_price_factors.py tests/test_cross_sectional_factors.py -v
 
 Expected: PASS。
 
-- [ ] **Step 7: 提交本任务**
+- [x] **Step 7: 提交本任务**
 
 ~~~bash
 git add src/ashare_multifactor/factors/panel.py src/ashare_multifactor/research/factor_preprocessing.py tests/test_factor_preprocessing.py
@@ -710,9 +739,9 @@ git commit -m "feat: build monthly factor panel"
 
 **验收：**
 
-- [ ] 因子面板结构统一且无重复主键。
-- [ ] 预处理没有跨日期估计。
-- [ ] 计算分批进行，不制造超大中间宽表。
+- [x] 因子面板结构统一且无重复主键。
+- [x] 预处理没有跨日期估计。
+- [x] 计算分批进行，不制造超大中间宽表。
 
 ---
 
