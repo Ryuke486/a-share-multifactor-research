@@ -20,6 +20,7 @@ from ashare_multifactor.research.factor_outputs import (
 )
 import ashare_multifactor.research.factor_pipeline as pipeline_module
 from ashare_multifactor.research.factor_pipeline import run_factor_pipeline
+from ashare_multifactor.research.factor_workspace import clone_stage_root
 
 
 class _InjectedStageCrash(BaseException):
@@ -240,3 +241,112 @@ def test_empty_monthly_panel_writes_every_registered_family_with_stable_schema(
         frame = pl.read_parquet(partition)
         assert frame.schema == empty.schema
         assert frame.is_empty()
+
+
+def test_daily_manifest_symlink_is_rejected_before_manifest_read(tmp_path: Path) -> None:
+    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    manifest = daily_root / "manifest.json"
+    outside = tmp_path / "outside-manifest.json"
+    shutil.copy2(manifest, outside)
+    manifest.unlink()
+    manifest.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="daily panel manifest.*symlink"):
+        run_factor_pipeline(config_path, "audit")
+
+
+def test_lineage_symlink_is_rejected_before_stage_prepare(tmp_path: Path) -> None:
+    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    factor_root = daily_root.parent
+    run_factor_pipeline(config_path, "audit")
+    lineage = factor_root / "lineage.json"
+    outside = tmp_path / "outside-lineage.json"
+    shutil.move(lineage, outside)
+    lineage.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="lineage.*symlink"):
+        run_factor_pipeline(config_path, "factors")
+
+    assert lineage.is_symlink()
+
+
+def test_factors_clone_ignores_unregistered_daily_directory_symlink(tmp_path: Path) -> None:
+    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    factor_root = daily_root.parent
+    run_factor_pipeline(config_path, "audit")
+    outside = tmp_path / "outside-daily-extra"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("must not be retained", encoding="utf-8")
+    (daily_root / "extra").symlink_to(outside, target_is_directory=True)
+
+    run_factor_pipeline(config_path, "factors")
+
+    assert not (factor_root / "daily_panel/extra").exists()
+    assert secret.stat().st_ino not in {
+        path.stat().st_ino
+        for path in factor_root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+
+
+def test_evaluate_clone_ignores_unregistered_monthly_directory_symlink(
+    tmp_path: Path,
+) -> None:
+    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    factor_root = daily_root.parent
+    run_factor_pipeline(config_path, "audit")
+    run_factor_pipeline(config_path, "factors")
+    outside = tmp_path / "outside-monthly-extra"
+    outside.mkdir()
+    secret = outside / "secret.txt"
+    secret.write_text("must not be retained", encoding="utf-8")
+    (factor_root / "monthly_raw/extra").symlink_to(outside, target_is_directory=True)
+
+    run_factor_pipeline(config_path, "evaluate")
+
+    assert not (factor_root / "monthly_raw/extra").exists()
+    assert secret.stat().st_ino not in {
+        path.stat().st_ino
+        for path in factor_root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+
+
+def test_clone_stage_root_rejects_duplicate_retained_file(tmp_path: Path) -> None:
+    factor_root = tmp_path / "factor_research"
+    factor_root.mkdir()
+    retained = factor_root / "upstream.json"
+    retained.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate retained file"):
+        clone_stage_root(factor_root, (retained, retained))
+
+
+def test_clone_stage_root_rejects_retained_file_outside_root(tmp_path: Path) -> None:
+    factor_root = tmp_path / "factor_research"
+    factor_root.mkdir()
+    outside = tmp_path / "outside.json"
+    outside.write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="escapes factor research root"):
+        clone_stage_root(factor_root, (outside,))
+
+    assert not list(tmp_path.glob(".factor_research-*.stage.tmp"))
+
+
+def test_clone_stage_root_rejects_retained_file_with_symlink_parent(
+    tmp_path: Path,
+) -> None:
+    factor_root = tmp_path / "factor_research"
+    factor_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    retained = outside / "upstream.json"
+    retained.write_text("{}", encoding="utf-8")
+    (factor_root / "linked").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="retained file path uses symlink"):
+        clone_stage_root(factor_root, (factor_root / "linked/upstream.json",))
+
+    assert not list(tmp_path.glob(".factor_research-*.stage.tmp"))

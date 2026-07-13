@@ -87,6 +87,10 @@ def _partition_path(root: Path, relative_path: object) -> tuple[str, PurePosixPa
 def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
     """Validate a daily panel without trusting paths or declared partition statistics."""
     manifest_path = root / "manifest.json"
+    if manifest_path.is_symlink():
+        raise ValueError(f"daily panel manifest uses symlink: {manifest_path}")
+    if not manifest_path.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"daily panel manifest escapes daily panel root: {manifest_path}")
     manifest, manifest_bytes = _read_manifest(manifest_path)
     minimum = _manifest_date(manifest, "min_date", manifest_path)
     maximum = _manifest_date(manifest, "max_date", manifest_path)

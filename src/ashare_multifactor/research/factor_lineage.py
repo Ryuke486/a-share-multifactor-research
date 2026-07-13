@@ -68,6 +68,10 @@ def load_and_validate_lineage(
     required_stages: Iterable[str],
     expected_outputs: Mapping[str, Iterable[Path]],
 ) -> dict[str, object]:
+    if path.is_symlink():
+        raise ValueError(f"factor research lineage uses symlink: {path}")
+    if not path.resolve().is_relative_to(factor_root.resolve()):
+        raise ValueError(f"factor research lineage escapes factor root: {path}")
     if not path.is_file():
         raise ValueError("factor research lineage is missing; run audit first")
     payload = json.loads(path.read_text(encoding="utf-8"))

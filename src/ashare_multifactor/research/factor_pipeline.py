@@ -187,7 +187,10 @@ def _run_factors(
 ) -> None:
     lineage = _validated_lineage(source, factor_root, settings, evidence, definitions, ("audit",))
     _prepare_stage(lineage, "factors", factor_root, artifact_root)
-    stage_root = clone_stage_root(factor_root, "factors")
+    stage_root = clone_stage_root(
+        factor_root,
+        _stage_retained_files(factor_root, source),
+    )
     try:
         readiness_path = stage_root / "data_readiness.json"
         readiness = FieldReadiness(**json.loads(readiness_path.read_text(encoding="utf-8")))
@@ -241,7 +244,13 @@ def _run_evaluate(
         source, factor_root, settings, evidence, definitions, ("audit", "factors")
     )
     _prepare_stage(lineage, "evaluate", factor_root, artifact_root)
-    stage_root = clone_stage_root(factor_root, "evaluate")
+    stage_root = clone_stage_root(
+        factor_root,
+        (
+            *_stage_retained_files(factor_root, source),
+            *expected_stage_outputs(factor_root, "factors", definitions),
+        ),
+    )
     try:
         panel_path = stage_root / "factor_panel.parquet"
         features_path = stage_root / "factor_features.parquet"
@@ -346,6 +355,18 @@ def _validate_source(factor_root: Path, settings: FactorResearchSettings) -> Dai
         min(settings.analysis_end, date(2016, 12, 31)),
     )
     return validate_panel_source(factor_root / "daily_panel", allowed)
+
+
+def _stage_retained_files(
+    factor_root: Path,
+    source: DailyPanelSource,
+) -> tuple[Path, ...]:
+    return (
+        factor_root / "daily_panel/manifest.json",
+        *source.files,
+        factor_root / "data_readiness.json",
+        factor_root / "lineage.json",
+    )
 
 
 def _validated_lineage(
