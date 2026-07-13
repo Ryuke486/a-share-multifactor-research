@@ -64,6 +64,8 @@ def test_clean_panel_has_no_issues() -> None:
         ({"low_adj": [22.0]}, "invalid_ohlc"),
         ({"close_raw": [None]}, "missing_price"),
         ({"close_adj": [None]}, "missing_price"),
+        ({"volume": [None]}, "missing_trade_data"),
+        ({"amount": [None]}, "missing_trade_data"),
         ({"volume": [-1.0]}, "negative_volume_amount"),
         ({"amount": [-1.0]}, "negative_volume_amount"),
     ],

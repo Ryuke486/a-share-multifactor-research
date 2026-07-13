@@ -68,6 +68,20 @@ def validate_daily_panel(frame: pl.DataFrame, expected_date: date) -> list[Quali
     if invalid_ohlc_count:
         issues.append(QualityIssue("error", "invalid_ohlc", invalid_ohlc_count, "OHLC values are non-positive or inconsistent"))
 
+    missing_trade_count = _row_count(
+        frame,
+        pl.any_horizontal(pl.col("volume").is_null(), pl.col("amount").is_null()),
+    )
+    if missing_trade_count:
+        issues.append(
+            QualityIssue(
+                "error",
+                "missing_trade_data",
+                missing_trade_count,
+                "volume or amount is missing",
+            )
+        )
+
     negative_count = _row_count(frame, pl.any_horizontal(pl.col("volume") < 0, pl.col("amount") < 0))
     if negative_count:
         issues.append(QualityIssue("error", "negative_volume_amount", negative_count, "volume or amount is negative"))

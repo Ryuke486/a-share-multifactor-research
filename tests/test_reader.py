@@ -98,6 +98,14 @@ def test_reader_preserves_six_digit_symbol_and_canonical_column_order(tmp_path: 
     assert frame.columns == list(CANONICAL_COLUMNS)
 
 
+def test_reader_zero_pads_one_to_six_digit_numeric_symbols(tmp_path: Path):
+    from ashare_multifactor.data.reader import read_daily_pair
+
+    frame = read_daily_pair(_pair(tmp_path, [_raw_row("1")], [_adj_row("1")]))
+
+    assert frame.get_column("symbol").to_list() == ["000001"]
+
+
 def test_reader_converts_chinese_yes_no_flags_to_booleans(tmp_path: Path):
     from ashare_multifactor.data.reader import read_daily_pair
 
@@ -148,6 +156,16 @@ def test_reader_rejects_mismatched_symbol_sets(tmp_path: Path):
     pair = _pair(tmp_path, [_raw_row("000001")], [_adj_row("000002")])
 
     with pytest.raises(ValueError, match="symbol sets differ"):
+        read_daily_pair(pair)
+
+
+@pytest.mark.parametrize("symbol", ["", "ABC", "1234567"])
+def test_reader_rejects_invalid_symbols_on_both_sides(tmp_path: Path, symbol: str):
+    from ashare_multifactor.data.reader import read_daily_pair
+
+    pair = _pair(tmp_path, [_raw_row(symbol)], [_adj_row(symbol)])
+
+    with pytest.raises(ValueError, match=r"^invalid symbol in unadjusted CSV: expected 1-6 digits$"):
         read_daily_pair(pair)
 
 

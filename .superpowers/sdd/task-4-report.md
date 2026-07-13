@@ -78,3 +78,14 @@ An Important review finding identified that deleting an existing target before p
 - Anchored the rule as `/Data/`: root raw data remains ignored, while the source `data` package is no longer ignored.
 - Post-change evidence: root `Data/每天一个文件/不复权` matched `/Data/`; `src/ashare_multifactor/data/build.py` returned not ignored.
 - Final verification: full pytest 44 passed, Ruff passed, and `git diff --check` passed.
+
+## Final review integrity fixes
+
+- RED: null, alphabetic, and over-six-digit symbols on both CSV sides were silently accepted; null trade data produced no issue, and invalid numeric CSV text could publish.
+- GREEN: each side now rejects null/non-digit/over-six-digit symbols before joining, accepts and zero-pads 1-6 digits, retains the 1:1 join, and asserts joined row counts match both inputs.
+- Added blocking `missing_trade_data` errors for null volume or amount. Negative values retain `negative_volume_amount`; zero values remain `zero_volume_amount` warnings.
+- Build regressions use minimal real CSV files and prove invalid volume or amount text parses to null, blocks the build, and leaves no official dataset.
+- Reader/validation/build专项: 42 passed; full suite: 52 passed; Ruff and diff check passed.
+- The real 2012-2015 smoke build was rerun from scratch: 970 pairs, 2,272,248 rows, max date 2015-12-31, and partition rows 566,386 / 564,815 / 570,677 / 570,370.
+- Quality output contains no errors: `missing_prev_close`=2 records/2 rows and `missing_valuation`=768 records/4,905 affected-row counts.
+- No staging, temporary, or backup paths remained; root `Data/` and `processed/` stayed ignored and untracked.

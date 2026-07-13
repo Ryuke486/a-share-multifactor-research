@@ -76,7 +76,6 @@ def _read_selected(path: Path, rename: dict[str, str]) -> pl.DataFrame:
         .rename(rename)
         .with_columns(
             pl.col("date").str.to_date(),
-            pl.col("symbol").str.zfill(6),
         )
     )
 
@@ -87,15 +86,24 @@ def _parse_boolean(column: str) -> pl.Expr:
     )
 
 
+def _normalize_symbols(frame: pl.DataFrame, label: str) -> pl.DataFrame:
+    invalid = pl.col("symbol").is_null() | ~pl.col("symbol").str.contains(r"^[0-9]{1,6}$")
+    if frame.select(invalid.fill_null(True).any()).item():
+        raise ValueError(f"invalid symbol in {label} CSV: expected 1-6 digits")
+    return frame.with_columns(pl.col("symbol").str.zfill(6))
+
+
 def read_daily_pair(pair: DailyFilePair) -> pl.DataFrame:
-    raw = _read_selected(pair.unadjusted, RAW_RENAME).with_columns(
+    raw = _normalize_symbols(_read_selected(pair.unadjusted, RAW_RENAME), "unadjusted").with_columns(
         _parse_boolean("is_st"),
         _parse_boolean("is_limit_up"),
         _parse_boolean("is_margin"),
         pl.col("list_date").str.to_date("%Y-%m-%d", strict=False),
         pl.col("delist_date").str.to_date("%Y-%m-%d", strict=False),
     )
-    adj = _read_selected(pair.backward_adjusted, ADJ_RENAME)
+    adj = _normalize_symbols(
+        _read_selected(pair.backward_adjusted, ADJ_RENAME), "backward-adjusted"
+    )
     expected_dates = {pair.trading_date}
     for label, frame in (("unadjusted", raw), ("backward-adjusted", adj)):
         dates = set(frame.get_column("date"))
@@ -112,4 +120,6 @@ def read_daily_pair(pair: DailyFilePair) -> pl.DataFrame:
     joined = raw.join(adj, on=["date", "symbol"], how="inner", validate="1:1").cast(
         NUMERIC_SCHEMA, strict=False
     )
+    if joined.height != raw.height or joined.height != adj.height:
+        raise ValueError("joined row count differs from input row counts")
     return joined.select(CANONICAL_COLUMNS).sort(["date", "symbol"])

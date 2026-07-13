@@ -57,13 +57,20 @@ def _config(tmp_path: Path) -> ResearchConfig:
     )
 
 
-def _write_pair(config: ResearchConfig, day: date, *, open_raw: str = "10.0") -> None:
+def _write_pair(
+    config: ResearchConfig,
+    day: date,
+    *,
+    open_raw: str = "10.0",
+    volume: str = "1000",
+    amount: str = "10000",
+) -> None:
     config.paths.raw_unadjusted.mkdir(parents=True, exist_ok=True)
     config.paths.raw_backward_adjusted.mkdir(parents=True, exist_ok=True)
     name = f"{day.isoformat()}_金玥数据.csv"
     raw_row = (
         day.isoformat(), "000001", "平安银行", "银行", open_raw, "10.5", "9.8", "10.2",
-        "9.9", "1000", "10000", "1.5", "否", "是", "100000", "80000", "1020000",
+        "9.9", volume, amount, "1.5", "否", "是", "100000", "80000", "1020000",
         "816000", "8.0", "1.1", "2.0", "1991-04-03", "-", "是",
     )
     adj_row = (day.isoformat(), "000001", "20.0", "21.0", "19.6", "20.4", "19.8")
@@ -99,6 +106,19 @@ def test_quality_error_leaves_no_official_dataset(tmp_path: Path) -> None:
     _write_pair(config, date(2014, 1, 2), open_raw="-1.0")
 
     with pytest.raises(ValueError, match="invalid_ohlc:1"):
+        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+
+    assert not (config.paths.processed / "daily_panel").exists()
+
+
+@pytest.mark.parametrize("field", ["volume", "amount"])
+def test_unparseable_trade_data_blocks_publish(tmp_path: Path, field: str) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2), **{field: "invalid"})
+
+    with pytest.raises(ValueError, match="missing_trade_data:1"):
         build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
 
     assert not (config.paths.processed / "daily_panel").exists()

@@ -276,7 +276,8 @@ RAW_RENAME = {
 }
 ~~~
 
-读取代码必须给“代码”指定String类型；缺少“是否融资融券”时添加空布尔列；日期列转pl.Date；symbol执行str.zfill(6)。
+读取代码必须给“代码”指定String类型；连接前拒绝空值、非纯数字或超过6位的symbol，
+允许1至6位数字并执行str.zfill(6)；缺少“是否融资融券”时添加空布尔列；日期列转pl.Date。
 
 - [x] **Step 3: 实现后复权读取规则**
 
@@ -296,7 +297,8 @@ ADJ_RENAME = {
 
 - [x] **Step 4: 实现严格一对一连接**
 
-read_daily_pair必须在连接前比较两侧symbol集合，随后执行：
+read_daily_pair必须在连接前比较两侧symbol集合，随后执行1:1连接，并防御性确认
+连接行数与两侧输入行数一致：
 
 ~~~python
 joined = raw.join(adj, on=["date", "symbol"], how="inner", validate="1:1")
@@ -349,6 +351,7 @@ git commit -m "feat: normalize and join daily market data"
 - high低于open或close；
 - low高于open或close；
 - volume或amount为负；
+- volume或amount缺失（包括非法文本解析为空）；
 - raw与adj的OHLC价格缺失；
 - raw或adj前收盘价缺失（warning，保留空值）；
 - date与文件日期不一致。
@@ -381,7 +384,7 @@ class QualityIssue:
 
 validate_daily_panel(frame, expected_date)必须返回稳定排序的问题列表，严重级别规则为：
 
-- error：重复主键、日期错误、无效OHLC、raw/adj的OHLC缺失；
+- error：重复主键、日期错误、无效OHLC、raw/adj的OHLC缺失、volume/amount缺失；
 - warning：前收盘价、行业、估值、两融缺失，成交量额为零。前收盘价缺失使用 `missing_prev_close`，不填补原值。
 
 2026-07-13经用户批准调整：真实 smoke 构建在 2015-09-14、symbol 832317 发现
@@ -527,7 +530,7 @@ git commit -m "feat: build audited yearly parquet dataset"
 - [x] 每日文件严格按(date, symbol)一对一连接。
 - [x] symbol保留六位字符串。
 - [x] 37/38列文件均可读取。
-- [x] OHLC、重复主键和负成交量额有自动测试。
+- [x] OHLC、重复主键、成交量额缺失/负值和非法symbol有自动测试。
 - [x] 2012–2015四个年份分区生成成功。
 - [x] manifest和quality_issues.json存在且可读。
 - [x] manifest最大日期不超过2015-12-31。
