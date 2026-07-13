@@ -1,4 +1,5 @@
 from datetime import date
+import hashlib
 import json
 from pathlib import Path
 
@@ -94,6 +95,18 @@ def test_builds_two_days_into_audited_year_partition(tmp_path: Path) -> None:
     saved = json.loads((config.paths.processed / "daily_panel/manifest.json").read_text())
     assert saved["min_date"] == "2014-01-02"
     assert saved["max_date"] == "2014-01-03"
+    partition_path = config.paths.processed / "daily_panel/year=2014/part-000.parquet"
+    assert saved["partitions"] == [
+        {
+            "max_date": "2014-01-03",
+            "min_date": "2014-01-02",
+            "relative_path": "year=2014/part-000.parquet",
+            "rows": 2,
+            "sha256": hashlib.sha256(partition_path.read_bytes()).hexdigest(),
+            "size_bytes": partition_path.stat().st_size,
+            "year": 2014,
+        }
+    ]
     assert json.loads(
         (config.paths.processed / "daily_panel/quality_issues.json").read_text()
     ) == []

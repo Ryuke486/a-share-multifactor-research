@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import math
 from pathlib import Path
 
 import yaml
@@ -61,6 +62,37 @@ def _period(value: list[str | date]) -> Period:
     return period
 
 
+def _validate_mvp(settings: MvpSettings) -> None:
+    positive_integer_fields = (
+        "universe_size",
+        "momentum_lookback",
+        "forward_horizon",
+        "portfolio_size",
+    )
+    for field in positive_integer_fields:
+        value = getattr(settings, field)
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"mvp.{field} must be a positive integer")
+
+    initial_cash = settings.initial_cash
+    if (
+        isinstance(initial_cash, bool)
+        or not isinstance(initial_cash, (int, float))
+        or not math.isfinite(initial_cash)
+        or initial_cash <= 0
+    ):
+        raise ValueError("mvp.initial_cash must be positive and finite")
+
+    transaction_cost_bps = settings.transaction_cost_bps
+    if (
+        isinstance(transaction_cost_bps, bool)
+        or not isinstance(transaction_cost_bps, (int, float))
+        or not math.isfinite(transaction_cost_bps)
+        or transaction_cost_bps < 0
+    ):
+        raise ValueError("mvp.transaction_cost_bps must be non-negative and finite")
+
+
 def load_config(path: Path) -> ResearchConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     periods = raw["periods"]
@@ -85,6 +117,7 @@ def load_config(path: Path) -> ResearchConfig:
         raise ValueError("research period must contain smoke data period")
     if not config.smoke_data.contains(config.smoke_analysis):
         raise ValueError("smoke data period must contain smoke analysis period")
+    _validate_mvp(config.mvp)
     if config.mvp.portfolio_size > config.mvp.universe_size:
         raise ValueError("portfolio size exceeds universe size")
     return config

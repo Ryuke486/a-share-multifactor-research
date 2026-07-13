@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -19,6 +20,23 @@ from ashare_multifactor.data.validation import raise_on_errors, validate_daily_p
 
 
 @dataclass(frozen=True)
+class PartitionManifest:
+    relative_path: str
+    year: int
+    rows: int
+    min_date: date
+    max_date: date
+    size_bytes: int
+    sha256: str
+
+    def to_dict(self) -> dict[str, object]:
+        payload = asdict(self)
+        payload["min_date"] = self.min_date.isoformat()
+        payload["max_date"] = self.max_date.isoformat()
+        return payload
+
+
+@dataclass(frozen=True)
 class BuildManifest:
     schema_version: str
     file_pairs: int
@@ -26,12 +44,14 @@ class BuildManifest:
     min_date: date
     max_date: date
     years: tuple[int, ...]
+    partitions: tuple[PartitionManifest, ...]
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
         payload["min_date"] = self.min_date.isoformat()
         payload["max_date"] = self.max_date.isoformat()
         payload["years"] = list(self.years)
+        payload["partitions"] = [partition.to_dict() for partition in self.partitions]
         return payload
 
 
@@ -44,14 +64,31 @@ def _write_json(path: Path, payload: object) -> None:
     os.replace(temporary, path)
 
 
-def _write_year(root: Path, year: int, frames: list[pl.DataFrame]) -> int:
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        while chunk := source.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _write_year(root: Path, year: int, frames: list[pl.DataFrame]) -> PartitionManifest:
     frame = pl.concat(frames).sort(["date", "symbol"])
     partition = root / f"year={year}"
     partition.mkdir(parents=True)
     temporary = partition / "part-000.parquet.tmp"
     frame.write_parquet(temporary)
-    os.replace(temporary, partition / "part-000.parquet")
-    return frame.height
+    output = partition / "part-000.parquet"
+    os.replace(temporary, output)
+    return PartitionManifest(
+        relative_path=output.relative_to(root).as_posix(),
+        year=year,
+        rows=frame.height,
+        min_date=frame.get_column("date").min(),
+        max_date=frame.get_column("date").max(),
+        size_bytes=output.stat().st_size,
+        sha256=_file_sha256(output),
+    )
 
 
 def _publish_staging(staging: Path, target: Path) -> None:
@@ -88,13 +125,16 @@ def build_parquet_dataset(config: ResearchConfig, start: date, end: date) -> Bui
     staging = processed / f".daily_panel-{uuid4().hex}.tmp"
     quality_records: list[dict[str, object]] = []
     rows = 0
+    partitions: list[PartitionManifest] = []
     try:
         staging.mkdir(parents=True)
         current_year: int | None = None
         year_frames: list[pl.DataFrame] = []
         for pair in pairs:
             if current_year is not None and pair.trading_date.year != current_year:
-                rows += _write_year(staging, current_year, year_frames)
+                partition = _write_year(staging, current_year, year_frames)
+                partitions.append(partition)
+                rows += partition.rows
                 year_frames = []
             current_year = pair.trading_date.year
             frame = read_daily_pair(pair)
@@ -105,7 +145,9 @@ def build_parquet_dataset(config: ResearchConfig, start: date, end: date) -> Bui
             )
             year_frames.append(frame)
         if current_year is not None:
-            rows += _write_year(staging, current_year, year_frames)
+            partition = _write_year(staging, current_year, year_frames)
+            partitions.append(partition)
+            rows += partition.rows
 
         manifest = BuildManifest(
             schema_version=SCHEMA_VERSION,
@@ -114,6 +156,7 @@ def build_parquet_dataset(config: ResearchConfig, start: date, end: date) -> Bui
             min_date=pairs[0].trading_date,
             max_date=pairs[-1].trading_date,
             years=tuple(sorted({pair.trading_date.year for pair in pairs})),
+            partitions=tuple(partitions),
         )
         _write_json(staging / "manifest.json", manifest.to_dict())
         _write_json(staging / "quality_issues.json", quality_records)

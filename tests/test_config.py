@@ -83,3 +83,65 @@ def test_portfolio_cannot_exceed_universe(tmp_path: Path):
 
     with pytest.raises(ValueError, match="portfolio size exceeds universe size"):
         load_config(config)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["universe_size", "momentum_lookback", "forward_horizon", "portfolio_size"],
+)
+@pytest.mark.parametrize("invalid_value", [0, -1])
+def test_mvp_integer_settings_must_be_positive(
+    tmp_path: Path, field: str, invalid_value: int
+) -> None:
+    config = tmp_path / "bad.yaml"
+    config.write_text(
+        BASE_CONFIG.replace(
+            f"{field}: {dict(universe_size=200, momentum_lookback=60, forward_horizon=20, portfolio_size=20)[field]}",
+            f"{field}: {invalid_value}",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=rf"mvp\.{field} must be a positive integer"):
+        load_config(config)
+
+
+@pytest.mark.parametrize("invalid_value", ["60.5", "'60'", "true"])
+def test_mvp_window_setting_rejects_non_integers(tmp_path: Path, invalid_value: str) -> None:
+    config = tmp_path / "bad.yaml"
+    config.write_text(
+        BASE_CONFIG.replace("momentum_lookback: 60", f"momentum_lookback: {invalid_value}"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"mvp\.momentum_lookback must be a positive integer"):
+        load_config(config)
+
+
+@pytest.mark.parametrize("invalid_value", ["0", "-1", ".inf", ".nan"])
+def test_initial_cash_must_be_positive_and_finite(tmp_path: Path, invalid_value: str) -> None:
+    config = tmp_path / "bad.yaml"
+    config.write_text(
+        BASE_CONFIG.replace("initial_cash: 1000000.0", f"initial_cash: {invalid_value}"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=r"mvp\.initial_cash must be positive and finite"):
+        load_config(config)
+
+
+@pytest.mark.parametrize("invalid_value", ["-1", ".inf", ".nan"])
+def test_transaction_cost_must_be_non_negative_and_finite(
+    tmp_path: Path, invalid_value: str
+) -> None:
+    config = tmp_path / "bad.yaml"
+    config.write_text(
+        BASE_CONFIG.replace("transaction_cost_bps: 10.0", f"transaction_cost_bps: {invalid_value}"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"mvp\.transaction_cost_bps must be non-negative and finite",
+    ):
+        load_config(config)
