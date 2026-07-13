@@ -108,12 +108,17 @@ def _validate_inputs(
     ]
     if wrong_types:
         raise ValueError("factor redundancy panel has invalid schema: " + ", ".join(wrong_types))
+    keys = panel.select("date", "symbol", "factor_name")
+    if any(keys.get_column(column).null_count() for column in keys.columns):
+        raise ValueError("factor redundancy keys must be non-null")
+    if panel.filter(pl.col("symbol").str.strip_chars() == "").height:
+        raise ValueError("factor redundancy symbol must be non-blank")
+    if panel.filter(pl.col("factor_name").str.strip_chars() == "").height:
+        raise ValueError("factor redundancy factor_name must be non-blank")
     if panel.select("date", "symbol", "factor_name").is_duplicated().any():
         raise ValueError("duplicate date, symbol, and factor_name keys are not allowed")
     if panel.is_empty():
         return
-    if panel.get_column("date").null_count():
-        raise ValueError("factor redundancy dates must be non-null")
     outside = panel.filter(
         (pl.col("date") < settings.analysis_start) | (pl.col("date") > settings.analysis_end)
     )
@@ -129,6 +134,15 @@ def _validate_inputs(
     )
     if panel.get_column("family").ne_missing(expected_families).any():
         raise ValueError("panel factor families do not match factor definitions")
+    signal_dates = (
+        panel.select("factor_name", "date")
+        .unique()
+        .with_columns(pl.col("date").dt.truncate("1mo").alias("month"))
+        .group_by("factor_name", "month")
+        .agg(pl.col("date").n_unique().alias("signal_dates"))
+    )
+    if not signal_dates.filter(pl.col("signal_dates") > 1).is_empty():
+        raise ValueError("each factor must have one signal date per natural month")
 
 
 def _partition_primary_scores(

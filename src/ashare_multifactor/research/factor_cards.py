@@ -12,6 +12,7 @@ import polars as pl
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.factors.definitions import FactorDefinition
 from ashare_multifactor.research.factor_card_plots import write_factor_figures
+from ashare_multifactor.research.factor_card_validation import validate_factor_card_inputs
 from ashare_multifactor.research.factor_evaluation import FactorEvaluationBundle
 from ashare_multifactor.research.factor_metrics import SUBPERIODS
 from ashare_multifactor.research.factor_redundancy import FactorRedundancyBundle
@@ -28,6 +29,13 @@ def write_factor_cards(
     """Write one Markdown card and four figures per registered definition."""
     definitions = tuple(definitions)
     _validate_definitions(definitions)
+    validate_factor_card_inputs(
+        evaluation,
+        classifications,
+        redundancy,
+        definitions,
+        settings,
+    )
     cards_dir = output_dir / "cards"
     figures_dir = output_dir / "figures"
     cards_dir.mkdir(parents=True, exist_ok=True)

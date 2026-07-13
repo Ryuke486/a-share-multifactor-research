@@ -3,225 +3,21 @@ from datetime import date
 import inspect
 from pathlib import Path
 
+from matplotlib import image as mpimg
 import polars as pl
 import pytest
 
-from ashare_multifactor.config import FactorResearchSettings
+from factor_card_fixtures import (
+    SUMMARY_SCHEMA,
+    complete_empty_card_inputs,
+    factor_settings,
+    replace_keyed_rows,
+)
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 from ashare_multifactor.research.factor_cards import write_factor_cards
-from ashare_multifactor.research.factor_evaluation import FactorEvaluationBundle
-from ashare_multifactor.research.factor_redundancy import FactorRedundancyBundle
 
 
 NEUTRAL = FactorDefinition("neutral", "test", (), 0, 1)
-
-
-def _settings(**overrides: object) -> FactorResearchSettings:
-    settings = FactorResearchSettings(
-        data_start=date(2003, 1, 1),
-        analysis_start=date(2005, 1, 1),
-        analysis_end=date(2016, 12, 31),
-        universe_size=1_000,
-        minimum_history=252,
-        liquidity_lookback=20,
-        require_valid_trade_observation=True,
-        signal_frequency="month_end",
-        forward_horizons=(5, 20, 60),
-        primary_horizon=20,
-        winsor_lower=0.01,
-        winsor_upper=0.99,
-        quantile_count=5,
-        minimum_coverage=0.8,
-        minimum_valid_months=120,
-        fdr_q_threshold=0.1,
-        redundancy_threshold=0.7,
-    )
-    return replace(settings, **overrides)
-
-
-def _panel(rows: list[dict[str, object]]) -> pl.DataFrame:
-    return pl.DataFrame(
-        rows,
-        schema={
-            "date": pl.Date,
-            "symbol": pl.String,
-            "factor_name": pl.String,
-            "family": pl.String,
-            "score": pl.Float64,
-            "score_size_neutral": pl.Float64,
-        },
-    )
-
-
-def _evaluation_bundle(
-    *,
-    factor_summary: pl.DataFrame | None = None,
-    rank_ic: pl.DataFrame | None = None,
-    quantile_returns: pl.DataFrame | None = None,
-    subperiod_metrics: pl.DataFrame | None = None,
-    factor_turnover: pl.DataFrame | None = None,
-) -> FactorEvaluationBundle:
-    return FactorEvaluationBundle(
-        rank_ic=rank_ic if rank_ic is not None else _empty_rank_ic(),
-        quantile_returns=(
-            quantile_returns if quantile_returns is not None else _empty_quantile_returns()
-        ),
-        subperiod_metrics=(
-            subperiod_metrics if subperiod_metrics is not None else _empty_subperiod_metrics()
-        ),
-        factor_turnover=(
-            factor_turnover if factor_turnover is not None else _empty_factor_turnover()
-        ),
-        factor_summary=factor_summary if factor_summary is not None else _empty_factor_summary(),
-    )
-
-
-def _empty_factor_summary() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={
-            "factor_name": pl.String,
-            "family": pl.String,
-            "score_variant": pl.String,
-            "horizon": pl.Int64,
-            "coverage": pl.Float64,
-            "valid_months": pl.Int64,
-            "mean_ic": pl.Float64,
-            "ic_std": pl.Float64,
-            "icir": pl.Float64,
-            "positive_ic_rate": pl.Float64,
-            "nw_lag": pl.Int64,
-            "nw_se": pl.Float64,
-            "nw_t": pl.Float64,
-            "nw_p": pl.Float64,
-            "bh_q": pl.Float64,
-            "q5_q1": pl.Float64,
-            "monotonicity": pl.Float64,
-            "avg_turnover": pl.Float64,
-            "point_in_time_status": pl.String,
-            "nw_reason": pl.String,
-            "summary_reason": pl.String,
-        }
-    )
-
-
-def _missing_factor_summary() -> pl.DataFrame:
-    return pl.DataFrame(
-        [
-            {
-                "factor_name": definition.name,
-                "family": definition.family,
-                "score_variant": ("score_size_neutral" if definition.size_neutralize else "score"),
-                "horizon": 20,
-                "coverage": None,
-                "valid_months": 0,
-                "point_in_time_status": "unverified"
-                if definition.requires_verified_pit
-                else "ready",
-                "summary_reason": "no_eligible_rows",
-            }
-            for definition in FACTOR_DEFINITIONS
-        ],
-        schema=_empty_factor_summary().schema,
-        strict=False,
-    )
-
-
-def _empty_rank_ic() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={
-            "date": pl.Date,
-            "factor_name": pl.String,
-            "family": pl.String,
-            "score_variant": pl.String,
-            "horizon": pl.Int64,
-            "n_obs": pl.Int64,
-            "rank_ic": pl.Float64,
-            "reason": pl.String,
-        }
-    )
-
-
-def _empty_quantile_returns() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={
-            "date": pl.Date,
-            "factor_name": pl.String,
-            "family": pl.String,
-            "score_variant": pl.String,
-            "quantile": pl.Int64,
-            "n_obs": pl.Int64,
-            "mean_forward_return_20": pl.Float64,
-        }
-    )
-
-
-def _empty_subperiod_metrics() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={
-            "factor_name": pl.String,
-            "family": pl.String,
-            "score_variant": pl.String,
-            "subperiod": pl.String,
-            "start": pl.Date,
-            "end": pl.Date,
-            "valid_months": pl.Int64,
-            "mean_ic": pl.Float64,
-        }
-    )
-
-
-def _empty_factor_turnover() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={
-            "date": pl.Date,
-            "factor_name": pl.String,
-            "family": pl.String,
-            "score_variant": pl.String,
-            "previous_date": pl.Date,
-            "top_count": pl.Int64,
-            "previous_top_count": pl.Int64,
-            "turnover": pl.Float64,
-        }
-    )
-
-
-def _empty_classifications() -> pl.DataFrame:
-    return pl.DataFrame(
-        schema={
-            "factor_name": pl.String,
-            "primary_score_variant": pl.String,
-            "classification": pl.String,
-            "reason": pl.String,
-        }
-    )
-
-
-def _empty_redundancy_bundle() -> FactorRedundancyBundle:
-    return FactorRedundancyBundle(
-        factor_correlations=pl.DataFrame(
-            schema={
-                "factor_a": pl.String,
-                "factor_b": pl.String,
-                "primary_variant_a": pl.String,
-                "primary_variant_b": pl.String,
-                "mean_correlation": pl.Float64,
-                "common_months": pl.Int64,
-                "reason": pl.String,
-            }
-        ),
-        redundancy_flags=pl.DataFrame(
-            schema={
-                "factor_a": pl.String,
-                "factor_b": pl.String,
-                "primary_variant_a": pl.String,
-                "primary_variant_b": pl.String,
-                "mean_correlation": pl.Float64,
-                "absolute_correlation": pl.Float64,
-                "correlation_direction": pl.String,
-                "common_months": pl.Int64,
-            }
-        ),
-    )
 
 
 def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
@@ -241,6 +37,10 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
         0,
         -1,
         size_neutralize=False,
+    )
+    settings = factor_settings()
+    base_evaluation, base_classifications, base_redundancy = complete_empty_card_inputs(
+        [trend, size], settings
     )
     summary_rows = []
     for horizon, mean_ic in ((5, 0.04), (20, 0.031234), (60, 0.01)):
@@ -269,7 +69,7 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
                 "summary_reason": None,
             }
         )
-    summary = pl.DataFrame(summary_rows, schema=_empty_factor_summary().schema)
+    summary = pl.DataFrame(summary_rows, schema=SUMMARY_SCHEMA)
     rank_ic = pl.DataFrame(
         [
             {
@@ -293,7 +93,7 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
                 "reason": None,
             },
         ],
-        schema=_empty_rank_ic().schema,
+        schema=base_evaluation.rank_ic.schema,
     )
     quantiles = pl.DataFrame(
         [
@@ -308,7 +108,7 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
             }
             for quantile, value in enumerate((-0.01, -0.005, 0.0, 0.005, 0.01), start=1)
         ],
-        schema=_empty_quantile_returns().schema,
+        schema=base_evaluation.quantile_returns.schema,
     )
     subperiods = pl.DataFrame(
         [
@@ -328,7 +128,7 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
                 ("2013-2016", date(2013, 1, 1), date(2016, 12, 31), 0.03),
             )
         ],
-        schema=_empty_subperiod_metrics().schema,
+        schema=base_evaluation.subperiod_metrics.schema,
     )
     turnover = pl.DataFrame(
         [
@@ -353,21 +153,20 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
                 "turnover": 0.4,
             },
         ],
-        schema=_empty_factor_turnover().schema,
+        schema=base_evaluation.factor_turnover.schema,
     )
-    classifications = pl.DataFrame(
-        [
-            {
-                "factor_name": "trend_60",
-                "primary_score_variant": "score_size_neutral",
-                "classification": "candidate",
-                "reason": "candidate:all_thresholds_passed",
-            }
-        ],
-        schema=_empty_classifications().schema,
+    classifications = base_classifications.with_columns(
+        pl.when(pl.col("factor_name") == "trend_60")
+        .then(pl.lit("candidate"))
+        .otherwise(pl.col("classification"))
+        .alias("classification"),
+        pl.when(pl.col("factor_name") == "trend_60")
+        .then(pl.lit("candidate:all_thresholds_passed"))
+        .otherwise(pl.col("reason"))
+        .alias("reason"),
     )
-    redundancy = FactorRedundancyBundle(
-        factor_correlations=_empty_redundancy_bundle().factor_correlations,
+    redundancy = replace(
+        base_redundancy,
         redundancy_flags=pl.DataFrame(
             [
                 {
@@ -381,22 +180,32 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
                     "common_months": 144,
                 }
             ],
-            schema=_empty_redundancy_bundle().redundancy_flags.schema,
+            schema=base_redundancy.redundancy_flags.schema,
         ),
+    )
+    evaluation = replace(
+        base_evaluation,
+        factor_summary=replace_keyed_rows(
+            base_evaluation.factor_summary,
+            summary,
+            ("factor_name", "score_variant", "horizon"),
+        ),
+        rank_ic=rank_ic,
+        quantile_returns=quantiles,
+        subperiod_metrics=replace_keyed_rows(
+            base_evaluation.subperiod_metrics,
+            subperiods,
+            ("factor_name", "score_variant", "subperiod"),
+        ),
+        factor_turnover=turnover,
     )
 
     write_factor_cards(
-        _evaluation_bundle(
-            factor_summary=summary,
-            rank_ic=rank_ic,
-            quantile_returns=quantiles,
-            subperiod_metrics=subperiods,
-            factor_turnover=turnover,
-        ),
+        evaluation,
         classifications,
         redundancy,
         [trend, size],
-        _settings(),
+        settings,
         tmp_path,
     )
 
@@ -483,12 +292,16 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
 def test_cards_and_four_nonempty_figures_are_written_for_all_fourteen_missing_factors(
     tmp_path: Path,
 ) -> None:
+    settings = factor_settings()
+    evaluation, classifications, redundancy = complete_empty_card_inputs(
+        FACTOR_DEFINITIONS, settings
+    )
     paths = write_factor_cards(
-        _evaluation_bundle(factor_summary=_missing_factor_summary()),
-        _empty_classifications(),
-        _empty_redundancy_bundle(),
+        evaluation,
+        classifications,
+        redundancy,
         FACTOR_DEFINITIONS,
-        _settings(),
+        settings,
         tmp_path,
     )
 
@@ -496,26 +309,35 @@ def test_cards_and_four_nonempty_figures_are_written_for_all_fourteen_missing_fa
     assert [path.name for path in paths] == [
         f"{definition.name}.md" for definition in FACTOR_DEFINITIONS
     ]
+    expected_figures = {
+        tmp_path / "figures" / definition.name / filename
+        for definition in FACTOR_DEFINITIONS
+        for filename in ("ic.png", "quantiles.png", "decay.png", "subperiods.png")
+    }
+    assert set((tmp_path / "figures").glob("*/*.png")) == expected_figures
     for definition in FACTOR_DEFINITIONS:
         card = tmp_path / "cards" / f"{definition.name}.md"
         assert card.is_file()
         card_text = card.read_text(encoding="utf-8")
         assert "机器评价缺失原因：`no_eligible_rows`" in card_text
-        for filename in ("ic.png", "quantiles.png", "decay.png", "subperiods.png"):
-            figure = tmp_path / "figures" / definition.name / filename
-            assert figure.is_file()
-            assert figure.stat().st_size > 100
+    for figure in sorted(expected_figures):
+        assert figure.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        pixels = mpimg.imread(figure)
+        assert pixels.shape[:2] == (480, 840)
+        assert pixels.size > 0
 
 
 def test_card_writer_has_no_raw_panel_or_file_reader_interface(tmp_path: Path) -> None:
     assert "panel" not in inspect.signature(write_factor_cards).parameters
+    settings = factor_settings()
+    evaluation, classifications, redundancy = complete_empty_card_inputs([NEUTRAL], settings)
     with pytest.raises(TypeError, match="panel"):
         write_factor_cards(
-            _evaluation_bundle(),
-            _empty_classifications(),
-            _empty_redundancy_bundle(),
+            evaluation,
+            classifications,
+            redundancy,
             [NEUTRAL],
-            _settings(),
+            settings,
             tmp_path,
-            panel=_panel([]),
+            panel=pl.DataFrame(),
         )

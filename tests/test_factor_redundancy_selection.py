@@ -214,3 +214,41 @@ def test_redundancy_rejects_duplicate_keys_unknown_names_labels_and_out_of_perio
             [NEUTRAL],
             _settings(),
         )
+
+
+def test_redundancy_rejects_two_signal_dates_for_one_factor_in_the_same_month() -> None:
+    scores = [float(value) for value in range(20)]
+    panel = _panel(
+        _factor_rows(date(2005, 1, 28), NEUTRAL, scores)
+        + _factor_rows(date(2005, 1, 31), NEUTRAL, scores)
+    )
+
+    with pytest.raises(ValueError, match="one signal date per natural month"):
+        analyze_factor_redundancy(panel, [NEUTRAL], _settings())
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    [
+        ("date", None, "keys must be non-null"),
+        ("symbol", None, "keys must be non-null"),
+        ("factor_name", None, "keys must be non-null"),
+        ("symbol", "   ", "symbol must be non-blank"),
+        ("factor_name", "", "factor_name must be non-blank"),
+    ],
+)
+def test_redundancy_rejects_null_or_blank_keys(
+    column: str,
+    value: object,
+    message: str,
+) -> None:
+    panel = _panel(
+        _factor_rows(date(2005, 1, 31), NEUTRAL, [float(value) for value in range(20)])
+    ).with_columns(pl.lit(value).cast(_panel_dtype(column)).alias(column))
+
+    with pytest.raises(ValueError, match=message):
+        analyze_factor_redundancy(panel, [NEUTRAL], _settings())
+
+
+def _panel_dtype(column: str) -> pl.DataType:
+    return {"date": pl.Date, "symbol": pl.String, "factor_name": pl.String}[column]
