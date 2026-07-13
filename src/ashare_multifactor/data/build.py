@@ -148,17 +148,33 @@ def _validated_output_root(
     if output_root is None:
         return config.paths.processed / "daily_panel"
 
-    expected = config.paths.processed / "factor_research/daily_panel"
-    expected_resolved = expected.resolve()
-    if not expected_resolved.is_relative_to(processed):
-        raise ValueError(
-            "configured factor research daily panel escapes configured processed root"
-        )
-    if output_root.resolve() != expected_resolved:
+    processed_logical = Path(os.path.abspath(config.paths.processed))
+    expected_logical = processed_logical / "factor_research/daily_panel"
+    if Path(os.path.abspath(output_root)) != expected_logical:
         raise ValueError(
             "output_root must equal configured factor research daily panel"
         )
-    return expected
+
+    factor_root = config.paths.processed / "factor_research"
+    expected_factor_root = processed / "factor_research"
+    resolved_factor_root = factor_root.resolve()
+    if resolved_factor_root != expected_factor_root:
+        if resolved_factor_root.is_relative_to(processed):
+            raise ValueError("configured factor_research path uses a symlink alias")
+        raise ValueError(
+            "configured factor research daily panel escapes configured processed root"
+        )
+
+    target = factor_root / "daily_panel"
+    expected_target = expected_factor_root / "daily_panel"
+    resolved_target = target.resolve()
+    if resolved_target != expected_target:
+        if resolved_target.is_relative_to(processed):
+            raise ValueError("configured daily_panel path uses a symlink alias")
+        raise ValueError(
+            "configured factor research daily panel escapes configured processed root"
+        )
+    return target
 
 
 def build_parquet_dataset(

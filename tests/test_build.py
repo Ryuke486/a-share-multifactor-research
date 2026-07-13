@@ -286,6 +286,91 @@ def test_explicit_output_root_rejects_symlink_escape_before_discovery(
     assert _tree_hashes(outside_target) == outside_before
 
 
+def test_explicit_output_root_rejects_factor_research_alias_to_processed_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ashare_multifactor.data.build as build_module
+
+    config = _config(tmp_path)
+    mvp_root = config.paths.processed / "daily_panel"
+    mvp_root.mkdir(parents=True)
+    (mvp_root / "old-marker").write_text("mvp", encoding="utf-8")
+    factor_link = config.paths.processed / "factor_research"
+    factor_link.symlink_to(config.paths.processed.resolve(), target_is_directory=True)
+    before = _tree_hashes(mvp_root)
+    monkeypatch.setattr(
+        build_module,
+        "discover_daily_pairs",
+        lambda *args, **kwargs: pytest.fail("internal factor alias reached raw discovery"),
+    )
+
+    with pytest.raises(ValueError, match="factor_research path uses a symlink alias"):
+        build_module.build_parquet_dataset(
+            config,
+            date(2005, 1, 4),
+            date(2005, 1, 4),
+            output_root=factor_link / "daily_panel",
+        )
+
+    assert _tree_hashes(mvp_root) == before
+
+
+def test_explicit_output_root_rejects_daily_panel_alias_to_mvp(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import ashare_multifactor.data.build as build_module
+
+    config = _config(tmp_path)
+    mvp_root = config.paths.processed / "daily_panel"
+    mvp_root.mkdir(parents=True)
+    (mvp_root / "old-marker").write_text("mvp", encoding="utf-8")
+    factor_root = config.paths.processed / "factor_research"
+    factor_root.mkdir()
+    research_link = factor_root / "daily_panel"
+    research_link.symlink_to(mvp_root.resolve(), target_is_directory=True)
+    before = _tree_hashes(mvp_root)
+    monkeypatch.setattr(
+        build_module,
+        "discover_daily_pairs",
+        lambda *args, **kwargs: pytest.fail("internal panel alias reached raw discovery"),
+    )
+
+    with pytest.raises(ValueError, match="daily_panel path uses a symlink alias"):
+        build_module.build_parquet_dataset(
+            config,
+            date(2005, 1, 4),
+            date(2005, 1, 4),
+            output_root=research_link,
+        )
+
+    assert _tree_hashes(mvp_root) == before
+
+
+def test_explicit_output_root_allows_configured_processed_root_symlink(
+    tmp_path: Path,
+) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    external_processed = tmp_path / "external-processed"
+    external_processed.mkdir()
+    config.paths.processed.symlink_to(external_processed, target_is_directory=True)
+    _write_pair(config, date(2005, 1, 4))
+    research_root = config.paths.processed / "factor_research/daily_panel"
+
+    manifest = build_parquet_dataset(
+        config,
+        date(2005, 1, 4),
+        date(2005, 1, 4),
+        output_root=research_root,
+    )
+
+    assert manifest.rows == 1
+    assert (external_processed / "factor_research/daily_panel/manifest.json").exists()
+
+
 @pytest.mark.parametrize(
     "overlap",
     ("same", "processed_inside_raw", "raw_inside_processed"),
