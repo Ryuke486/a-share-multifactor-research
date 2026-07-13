@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+from dataclasses import asdict, dataclass
+from datetime import date
+from pathlib import Path
+from uuid import uuid4
+
+import polars as pl
+
+from ashare_multifactor.config import ResearchConfig, load_config
+from ashare_multifactor.data.discovery import discover_daily_pairs
+from ashare_multifactor.data.reader import read_daily_pair
+from ashare_multifactor.data.schema import SCHEMA_VERSION
+from ashare_multifactor.data.validation import raise_on_errors, validate_daily_panel
+
+
+@dataclass(frozen=True)
+class BuildManifest:
+    schema_version: str
+    file_pairs: int
+    rows: int
+    min_date: date
+    max_date: date
+    years: tuple[int, ...]
+
+    def to_dict(self) -> dict[str, object]:
+        payload = asdict(self)
+        payload["min_date"] = self.min_date.isoformat()
+        payload["max_date"] = self.max_date.isoformat()
+        payload["years"] = list(self.years)
+        return payload
+
+
+def _write_json(path: Path, payload: object) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, path)
+
+
+def _write_year(root: Path, year: int, frames: list[pl.DataFrame]) -> int:
+    frame = pl.concat(frames).sort(["date", "symbol"])
+    partition = root / f"year={year}"
+    partition.mkdir(parents=True)
+    temporary = partition / "part-000.parquet.tmp"
+    frame.write_parquet(temporary)
+    os.replace(temporary, partition / "part-000.parquet")
+    return frame.height
+
+
+def build_parquet_dataset(config: ResearchConfig, start: date, end: date) -> BuildManifest:
+    if end < start:
+        raise ValueError("build end precedes start")
+    if start < config.smoke_data.start or end > config.smoke_data.end:
+        raise ValueError("build dates must stay inside configured smoke_data period")
+    pairs = discover_daily_pairs(
+        config.paths.raw_unadjusted,
+        config.paths.raw_backward_adjusted,
+        start,
+        end,
+    )
+    if not pairs:
+        raise ValueError("no paired daily files found")
+
+    processed = config.paths.processed
+    target = processed / "daily_panel"
+    staging = processed / f".daily_panel-{uuid4().hex}.tmp"
+    quality_records: list[dict[str, object]] = []
+    rows = 0
+    try:
+        staging.mkdir(parents=True)
+        current_year: int | None = None
+        year_frames: list[pl.DataFrame] = []
+        for pair in pairs:
+            if current_year is not None and pair.trading_date.year != current_year:
+                rows += _write_year(staging, current_year, year_frames)
+                year_frames = []
+            current_year = pair.trading_date.year
+            frame = read_daily_pair(pair)
+            issues = validate_daily_panel(frame, pair.trading_date)
+            raise_on_errors(issues)
+            quality_records.extend(
+                {"date": pair.trading_date.isoformat(), **issue.to_dict()} for issue in issues
+            )
+            year_frames.append(frame)
+        if current_year is not None:
+            rows += _write_year(staging, current_year, year_frames)
+
+        manifest = BuildManifest(
+            schema_version=SCHEMA_VERSION,
+            file_pairs=len(pairs),
+            rows=rows,
+            min_date=pairs[0].trading_date,
+            max_date=pairs[-1].trading_date,
+            years=tuple(sorted({pair.trading_date.year for pair in pairs})),
+        )
+        _write_json(staging / "manifest.json", manifest.to_dict())
+        _write_json(staging / "quality_issues.json", quality_records)
+        if target.exists():
+            shutil.rmtree(target)
+        os.replace(staging, target)
+        return manifest
+    except BaseException:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--mode", choices=("smoke",), required=True)
+    args = parser.parse_args(argv)
+    config = load_config(args.config)
+    build_parquet_dataset(config, config.smoke_data.start, config.smoke_data.end)
+
+
+if __name__ == "__main__":
+    main()

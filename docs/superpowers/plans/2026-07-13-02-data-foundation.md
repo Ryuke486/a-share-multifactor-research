@@ -349,7 +349,8 @@ git commit -m "feat: normalize and join daily market data"
 - high低于open或close；
 - low高于open或close；
 - volume或amount为负；
-- raw与adj价格缺失；
+- raw与adj的OHLC价格缺失；
+- raw或adj前收盘价缺失（warning，保留空值）；
 - date与文件日期不一致。
 
 ~~~python
@@ -380,8 +381,12 @@ class QualityIssue:
 
 validate_daily_panel(frame, expected_date)必须返回稳定排序的问题列表，严重级别规则为：
 
-- error：重复主键、日期错误、无效OHLC、raw/adj关键价格缺失；
-- warning：行业、估值、两融缺失，成交量额为零。
+- error：重复主键、日期错误、无效OHLC、raw/adj的OHLC缺失；
+- warning：前收盘价、行业、估值、两融缺失，成交量额为零。前收盘价缺失使用 `missing_prev_close`，不填补原值。
+
+2026-07-13经用户批准调整：真实 smoke 构建在 2015-09-14、symbol 832317 发现 `prev_close_adj`
+缺失。该字段不是当日 OHLC，因此从泛化的 `missing_price` error 拆分为独立 warning；
+当日 raw/adj OHLC 任一缺失仍为 error。此变更不使用 `list_date` 或任何未来信息。
 
 - [x] **Step 4: 增加阻断函数**
 
@@ -429,7 +434,7 @@ git commit -m "feat: validate canonical daily panel"
 - Consumes: ResearchConfig、日期范围、DailyFilePair列表。
 - Produces: processed/daily_panel/year=YYYY/part-000.parquet、manifest.json、quality_issues.json。
 
-- [ ] **Step 1: 写两日构建测试**
+- [x] **Step 1: 写两日构建测试**
 
 测试使用tmp_path中的两对CSV，运行build_parquet_dataset后断言：
 
@@ -441,7 +446,7 @@ assert manifest.max_date == date(2014, 1, 3)
 assert (config.paths.processed / "daily_panel/year=2014/part-000.parquet").exists()
 ~~~
 
-- [ ] **Step 2: 定义构建清单**
+- [x] **Step 2: 定义构建清单**
 
 ~~~python
 @dataclass(frozen=True)
@@ -454,7 +459,7 @@ class BuildManifest:
     years: tuple[int, ...]
 ~~~
 
-- [ ] **Step 3: 实现按年份写入**
+- [x] **Step 3: 实现按年份写入**
 
 构建逻辑必须：
 
@@ -468,7 +473,7 @@ class BuildManifest:
 
 每个年份写完即释放内存，不跨年份累积。
 
-- [ ] **Step 4: 提供命令行入口**
+- [x] **Step 4: 提供命令行入口**
 
 build.py必须支持：
 
@@ -478,13 +483,13 @@ python -m ashare_multifactor.data.build --config configs/research_protocol.yaml 
 
 mode=smoke只能读取smoke_data日期；不得提供会隐式读取test日期的默认值。
 
-- [ ] **Step 5: 运行单元测试**
+- [x] **Step 5: 运行单元测试**
 
 ~~~bash
 .venv/bin/pytest tests/test_build.py -v
 ~~~
 
-- [ ] **Step 6: 构建真实小闭环Parquet**
+- [x] **Step 6: 构建真实小闭环Parquet**
 
 Run:
 
@@ -499,7 +504,7 @@ Expected:
 - manifest不包含2022或之后日期；
 - quality_issues.json记录字段缺失warning但没有未解释error。
 
-- [ ] **Step 7: 提交构建模块，不提交生成数据**
+- [x] **Step 7: 提交构建模块，不提交生成数据**
 
 ~~~bash
 git add src/ashare_multifactor/data/build.py tests/test_build.py
@@ -508,24 +513,24 @@ git commit -m "feat: build audited yearly parquet dataset"
 
 **Task 6 Acceptance Checklist**
 
-- [ ] 每个年份单独写入，内存使用有界。
-- [ ] 失败不会留下看似完整的正式Parquet。
-- [ ] manifest能证明小闭环没有读取最终测试期。
-- [ ] processed目录保持Git忽略。
+- [x] 每个年份单独写入，内存使用有界。
+- [x] 失败不会留下看似完整的正式Parquet。
+- [x] manifest能证明小闭环没有读取最终测试期。
+- [x] processed目录保持Git忽略。
 
 ---
 
 ## Data Foundation Acceptance Checklist
 
-- [ ] 2014年发现245对不复权/后复权日文件。
-- [ ] 每日文件严格按(date, symbol)一对一连接。
-- [ ] symbol保留六位字符串。
-- [ ] 37/38列文件均可读取。
-- [ ] OHLC、重复主键和负成交量额有自动测试。
-- [ ] 2012–2015四个年份分区生成成功。
-- [ ] manifest和quality_issues.json存在且可读。
-- [ ] manifest最大日期不超过2015-12-31。
-- [ ] Data与processed均未进入Git。
+- [x] 2014年发现245对不复权/后复权日文件。
+- [x] 每日文件严格按(date, symbol)一对一连接。
+- [x] symbol保留六位字符串。
+- [x] 37/38列文件均可读取。
+- [x] OHLC、重复主键和负成交量额有自动测试。
+- [x] 2012–2015四个年份分区生成成功。
+- [x] manifest和quality_issues.json存在且可读。
+- [x] manifest最大日期不超过2015-12-31。
+- [x] Data与processed均未进入Git。
 
 ## Estimated Effort
 

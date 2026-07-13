@@ -109,6 +109,19 @@ def test_warnings_are_reported_in_stable_code_order() -> None:
     assert all(issue.severity == "warning" for issue in issues)
 
 
+@pytest.mark.parametrize("column", ["prev_close_raw", "prev_close_adj"])
+def test_missing_previous_close_is_a_non_blocking_warning(column: str) -> None:
+    frame = _clean_frame().with_columns(pl.lit(None, dtype=pl.Float64).alias(column))
+
+    issues = validate_daily_panel(frame, date(2014, 1, 2))
+
+    assert [(issue.severity, issue.code, issue.count) for issue in issues] == [
+        ("warning", "missing_prev_close", 1)
+    ]
+    assert frame[column].item() is None
+    raise_on_errors(issues)
+
+
 def test_raise_on_errors_raises_with_stable_detail() -> None:
     issues = [
         QualityIssue("warning", "missing_industry", 1, "missing industry"),

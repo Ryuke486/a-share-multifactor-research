@@ -20,13 +20,13 @@ _PRICE_COLUMNS = (
     "high_raw",
     "low_raw",
     "close_raw",
-    "prev_close_raw",
     "open_adj",
     "high_adj",
     "low_adj",
     "close_adj",
-    "prev_close_adj",
 )
+
+_PREVIOUS_CLOSE_COLUMNS = ("prev_close_raw", "prev_close_adj")
 
 
 def _row_count(frame: pl.DataFrame, condition: pl.Expr) -> int:
@@ -75,6 +75,11 @@ def validate_daily_panel(frame: pl.DataFrame, expected_date: date) -> list[Quali
     warning_checks = (
         ("missing_industry", pl.col("industry").is_null(), "industry is missing"),
         ("missing_margin", pl.col("is_margin").is_null(), "margin eligibility is missing"),
+        (
+            "missing_prev_close",
+            pl.any_horizontal(pl.col(column).is_null() for column in _PREVIOUS_CLOSE_COLUMNS),
+            "raw or adjusted previous close is missing",
+        ),
         (
             "missing_valuation",
             pl.any_horizontal(pl.col("pe_ttm").is_null(), pl.col("pb").is_null(), pl.col("ps_ttm").is_null()),
