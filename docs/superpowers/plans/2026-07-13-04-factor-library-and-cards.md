@@ -818,29 +818,29 @@ git commit -m "feat: evaluate and classify single factors"
 **Interfaces:**
 - Produces: factor_correlations、redundancy_flags、cards/FACTOR.md和标准图表。
 
-- [ ] **Step 1: 写相关矩阵测试**
+- [x] **Step 1: 写相关矩阵测试**
 
 按月计算截面Spearman后再跨月平均；不能把所有date-symbol行直接堆叠求一次相关。缺共同样本时记录reason。
 
-- [ ] **Step 2: 实现冗余标记**
+- [x] **Step 2: 实现冗余标记**
 
 abs(correlation)>=0.70时列出因子对、共同月份和相关方向，但不自动删除因子。
 
-- [ ] **Step 3: 写因子卡片快照测试**
+- [x] **Step 3: 写因子卡片快照测试**
 
 卡片必须含公式、方向、数据状态、经济解释、覆盖率、IC、q值、五分组、衰减、换手、子区间、冗余关系、分类和限制。
 
-- [ ] **Step 4: 实现卡片和图表**
+- [x] **Step 4: 实现卡片和图表**
 
 每个因子单独目录，报告模块只读机器可读评价产物，不重新计算指标。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: .venv/bin/pytest tests/test_factor_redundancy_selection.py -v
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交本任务**
+- [x] **Step 6: 提交本任务**
 
 ~~~bash
 git add src/ashare_multifactor/research/factor_redundancy.py src/ashare_multifactor/research/factor_cards.py tests/test_factor_redundancy_selection.py
@@ -849,9 +849,9 @@ git commit -m "feat: generate factor cards and redundancy report"
 
 **验收：**
 
-- [ ] 14个因子各有独立卡片。
-- [ ] 高相关因子有证据但不被静默删除。
-- [ ] 图表数字与CSV/Parquet一致。
+- [x] 14个因子各有独立卡片。
+- [x] 高相关因子有证据但不被静默删除。
+- [x] 图表数字与CSV/Parquet一致。
 
 ---
 
