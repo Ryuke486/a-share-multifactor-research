@@ -384,8 +384,9 @@ validate_daily_panel(frame, expected_date)必须返回稳定排序的问题列�
 - error：重复主键、日期错误、无效OHLC、raw/adj的OHLC缺失；
 - warning：前收盘价、行业、估值、两融缺失，成交量额为零。前收盘价缺失使用 `missing_prev_close`，不填补原值。
 
-2026-07-13经用户批准调整：真实 smoke 构建在 2015-09-14、symbol 832317 发现 `prev_close_adj`
-缺失。该字段不是当日 OHLC，因此从泛化的 `missing_price` error 拆分为独立 warning；
+2026-07-13经用户批准调整：真实 smoke 构建在 2015-09-14、symbol 832317 发现
+`prev_close_raw` 和 `prev_close_adj` 均缺失。这两个字段不是当日 OHLC，因此从泛化的
+`missing_price` error 拆分为独立 warning；
 当日 raw/adj OHLC 任一缺失仍为 error。此变更不使用 `list_date` 或任何未来信息。
 
 - [x] **Step 4: 增加阻断函数**

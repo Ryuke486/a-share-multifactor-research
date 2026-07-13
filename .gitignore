@@ -6,7 +6,7 @@ __pycache__/
 .ruff_cache/
 *.py[cod]
 *.egg-info/
-Data/
+/Data/
 data/raw/
 processed/
 artifacts/

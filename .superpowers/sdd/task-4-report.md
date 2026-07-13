@@ -70,3 +70,11 @@ An Important review finding identified that deleting an existing target before p
 - A backup is never pre-emptively deleted at startup; if rollback itself is interrupted, its unique sibling path remains explicitly recoverable.
 - Build/validation专项 after the fix: 25 passed; full suite: 44 passed; Ruff and diff check passed.
 - Existing real artifacts were checked read-only: all four partitions remain readable with 2,272,248 total manifest rows, and no staging or temporary paths exist.
+
+## Final consistency cleanup
+
+- Corrected the plan to record that symbol 832317 lacked both `prev_close_raw` and `prev_close_adj` on 2015-09-14.
+- Before the ignore-rule change, `git check-ignore --no-index` showed that non-anchored `Data/` matched both the root raw-data path and `src/ashare_multifactor/data/build.py` on the case-insensitive filesystem.
+- Anchored the rule as `/Data/`: root raw data remains ignored, while the source `data` package is no longer ignored.
+- Post-change evidence: root `Data/每天一个文件/不复权` matched `/Data/`; `src/ashare_multifactor/data/build.py` returned not ignored.
+- Final verification: full pytest 44 passed, Ruff passed, and `git diff --check` passed.
