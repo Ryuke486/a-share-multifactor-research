@@ -221,7 +221,7 @@ git commit -m "feat: discover paired daily market files"
 - Consumes: DailyFilePair。
 - Produces: 只包含CANONICAL_COLUMNS的单日Polars DataFrame。
 
-- [ ] **Step 1: 创建两个最小CSV夹具测试**
+- [x] **Step 1: 创建两个最小CSV夹具测试**
 
 test_reader.py必须覆盖：
 
@@ -243,7 +243,7 @@ assert row["delist_date"] is None
 assert frame.columns == list(CANONICAL_COLUMNS)
 ~~~
 
-- [ ] **Step 2: 实现不复权读取规则**
+- [x] **Step 2: 实现不复权读取规则**
 
 reader.py使用pl.read_csv，并明确：
 
@@ -278,7 +278,7 @@ RAW_RENAME = {
 
 读取代码必须给“代码”指定String类型；缺少“是否融资融券”时添加空布尔列；日期列转pl.Date；symbol执行str.zfill(6)。
 
-- [ ] **Step 3: 实现后复权读取规则**
+- [x] **Step 3: 实现后复权读取规则**
 
 后复权只保留并重命名：
 
@@ -294,7 +294,7 @@ ADJ_RENAME = {
 }
 ~~~
 
-- [ ] **Step 4: 实现严格一对一连接**
+- [x] **Step 4: 实现严格一对一连接**
 
 read_daily_pair必须在连接前比较两侧symbol集合，随后执行：
 
@@ -303,7 +303,7 @@ joined = raw.join(adj, on=["date", "symbol"], how="inner", validate="1:1")
 return joined.select(CANONICAL_COLUMNS).sort(["date", "symbol"])
 ~~~
 
-- [ ] **Step 5: 运行单元测试和真实单日抽查**
+- [x] **Step 5: 运行单元测试和真实单日抽查**
 
 Run:
 
@@ -314,7 +314,7 @@ Run:
 
 Expected: 测试通过；真实单日行数大于1000；首个代码保留前导零。
 
-- [ ] **Step 6: 提交读取模块**
+- [x] **Step 6: 提交读取模块**
 
 ~~~bash
 git add src/ashare_multifactor/data/reader.py tests/test_reader.py
@@ -323,10 +323,10 @@ git commit -m "feat: normalize and join daily market data"
 
 **Task 4 Acceptance Checklist**
 
-- [ ] 37列和38列原始文件都能读取。
-- [ ] symbol始终为六位字符串。
-- [ ] 连接后没有丢失证券。
-- [ ] 输出列名、顺序和类型稳定。
+- [x] 37列和38列原始文件都能读取。
+- [x] symbol始终为六位字符串。
+- [x] 连接后没有丢失证券。
+- [x] 输出列名、顺序和类型稳定。
 
 ---
 
