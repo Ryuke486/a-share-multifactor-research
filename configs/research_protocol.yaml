@@ -1,0 +1,20 @@
+paths:
+  raw_unadjusted: Data/每天一个文件/不复权
+  raw_backward_adjusted: Data/每天一个文件/后复权
+  processed: processed
+  artifacts: artifacts
+
+periods:
+  research: [2005-01-01, 2016-12-31]
+  validation: [2017-01-01, 2021-12-31]
+  test: [2022-01-01, 2025-12-31]
+  smoke_data: [2012-01-01, 2015-12-31]
+  smoke_analysis: [2014-01-01, 2015-12-31]
+
+mvp:
+  universe_size: 200
+  momentum_lookback: 60
+  forward_horizon: 20
+  portfolio_size: 20
+  transaction_cost_bps: 10.0
+  initial_cash: 1000000.0
