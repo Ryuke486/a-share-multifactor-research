@@ -8,6 +8,7 @@ import pytest
 from polars.testing import assert_frame_equal
 
 from ashare_multifactor.factors import low_volatility, momentum, reversal
+from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
 
 
 PRICE_FACTOR_COLUMNS = (
@@ -38,6 +39,34 @@ def _compute_reversal(frame: pl.DataFrame) -> pl.DataFrame:
 
 def _compute_low_volatility(frame: pl.DataFrame) -> pl.DataFrame:
     return _factor_function(low_volatility, "compute_low_volatility_factors")(frame)
+
+
+PRICE_FAMILY_CASES = (
+    (
+        "momentum",
+        momentum,
+        _compute_momentum,
+        ("momentum_60", "momentum_120", "momentum_12_1"),
+    ),
+    ("reversal", reversal, _compute_reversal, ("reversal_5", "reversal_20")),
+    (
+        "low_volatility",
+        low_volatility,
+        _compute_low_volatility,
+        ("volatility_20", "volatility_60", "downside_volatility_60"),
+    ),
+)
+
+
+def _registered_source_columns(factor_names: Sequence[str]) -> tuple[str, ...]:
+    definitions_by_name = {definition.name: definition for definition in FACTOR_DEFINITIONS}
+    return tuple(
+        dict.fromkeys(
+            column
+            for factor_name in factor_names
+            for column in definitions_by_name[factor_name].source_columns
+        )
+    )
 
 
 def _prices_from_returns(returns: Sequence[float], initial: float = 100.0) -> list[float]:
@@ -248,6 +277,50 @@ def test_each_factor_family_returns_only_keys_and_its_raw_columns() -> None:
         "volatility_60",
         "downside_volatility_60",
     ]
+
+
+@pytest.mark.parametrize(
+    ("family", "module", "compute", "factor_names"),
+    PRICE_FAMILY_CASES,
+    ids=[case[0] for case in PRICE_FAMILY_CASES],
+)
+def test_registered_source_projection_is_sufficient_for_each_price_family(
+    family: str,
+    module: object,
+    compute: Callable[[pl.DataFrame], pl.DataFrame],
+    factor_names: tuple[str, ...],
+) -> None:
+    del family, module
+    frame = _panel([100.0 + index for index in range(253)])
+    source_columns = _registered_source_columns(factor_names)
+    projected = frame.select("date", "symbol", *source_columns)
+    expected = _expected_factors(frame, 252)
+
+    try:
+        target = compute(projected).row(252, named=True)
+    except pl.exceptions.ColumnNotFoundError as error:
+        pytest.fail(f"registered source projection is incomplete: {error}")
+
+    for factor_name in factor_names:
+        assert target[factor_name] == pytest.approx(expected[factor_name])
+
+
+@pytest.mark.parametrize(
+    ("family", "module", "compute", "factor_names"),
+    PRICE_FAMILY_CASES,
+    ids=[case[0] for case in PRICE_FAMILY_CASES],
+)
+def test_runtime_source_columns_are_declared_by_the_factor_registry(
+    family: str,
+    module: object,
+    compute: Callable[[pl.DataFrame], pl.DataFrame],
+    factor_names: tuple[str, ...],
+) -> None:
+    del family, compute
+    runtime_source_columns = getattr(module, "_SOURCE_COLUMNS", None)
+
+    assert runtime_source_columns is not None
+    assert set(runtime_source_columns) <= set(_registered_source_columns(factor_names))
 
 
 @pytest.mark.parametrize(

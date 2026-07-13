@@ -9,19 +9,75 @@ EXPECTED_DEFINITIONS = (
     ("ep_ttm", "value", ("pe_ttm",), 0, 1, True, True),
     ("bp", "value", ("pb",), 0, 1, True, True),
     ("sp_ttm", "value", ("ps_ttm",), 0, 1, True, True),
-    ("momentum_60", "momentum", ("close_adj",), 60, 1, False, True),
-    ("momentum_120", "momentum", ("close_adj",), 120, 1, False, True),
-    ("momentum_12_1", "momentum", ("close_adj",), 252, 1, False, True),
-    ("reversal_5", "reversal", ("close_adj",), 5, -1, False, True),
-    ("reversal_20", "reversal", ("close_adj",), 20, -1, False, True),
+    (
+        "momentum_60",
+        "momentum",
+        ("close_adj", "volume", "amount"),
+        60,
+        1,
+        False,
+        True,
+    ),
+    (
+        "momentum_120",
+        "momentum",
+        ("close_adj", "volume", "amount"),
+        120,
+        1,
+        False,
+        True,
+    ),
+    (
+        "momentum_12_1",
+        "momentum",
+        ("close_adj", "volume", "amount"),
+        252,
+        1,
+        False,
+        True,
+    ),
+    (
+        "reversal_5",
+        "reversal",
+        ("close_adj", "volume", "amount"),
+        5,
+        -1,
+        False,
+        True,
+    ),
+    (
+        "reversal_20",
+        "reversal",
+        ("close_adj", "volume", "amount"),
+        20,
+        -1,
+        False,
+        True,
+    ),
     ("turnover_20", "liquidity", ("turnover",), 20, -1, False, True),
     ("amihud_20", "liquidity", ("close_adj", "amount"), 20, 1, False, True),
-    ("volatility_20", "low_volatility", ("close_adj",), 20, -1, False, True),
-    ("volatility_60", "low_volatility", ("close_adj",), 60, -1, False, True),
+    (
+        "volatility_20",
+        "low_volatility",
+        ("close_adj", "prev_close_adj", "volume", "amount"),
+        20,
+        -1,
+        False,
+        True,
+    ),
+    (
+        "volatility_60",
+        "low_volatility",
+        ("close_adj", "prev_close_adj", "volume", "amount"),
+        60,
+        -1,
+        False,
+        True,
+    ),
     (
         "downside_volatility_60",
         "low_volatility",
-        ("close_adj",),
+        ("close_adj", "prev_close_adj", "volume", "amount"),
         60,
         -1,
         False,
@@ -73,9 +129,7 @@ def test_registry_freezes_complete_preregistered_metadata_matrix() -> None:
 def test_valuation_requires_verified_point_in_time_evidence() -> None:
     by_name = {definition.name: definition for definition in FACTOR_DEFINITIONS}
 
-    assert all(
-        by_name[name].requires_verified_pit for name in ("ep_ttm", "bp", "sp_ttm")
-    )
+    assert all(by_name[name].requires_verified_pit for name in ("ep_ttm", "bp", "sp_ttm"))
     assert not any(
         definition.requires_verified_pit
         for definition in FACTOR_DEFINITIONS
