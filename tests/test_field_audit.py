@@ -21,7 +21,7 @@ def _frame_with_audited_fields() -> pl.DataFrame:
             "prev_close_adj": [7.9, 8.0, 8.2, 8.1],
             "volume": [10.0, 11.0, 12.0, 13.0],
             "amount": [100.0, 110.0, 120.0, 130.0],
-            "turnover_rate": [0.01, 0.02, 0.03, 0.04],
+            "turnover": [0.01, 0.02, 0.03, 0.04],
             "total_market_cap": [1000.0, 1100.0, 1200.0, 1300.0],
             "industry": ["A", None, "B", "B"],
             "is_st": [False, False, None, True],
@@ -46,7 +46,7 @@ def test_verified_valuation_is_ready_when_source_columns_exist() -> None:
 
 
 def test_missing_required_field_is_reported_per_factor() -> None:
-    readiness = audit_factor_fields(_frame_with_audited_fields().drop("turnover_rate"))
+    readiness = audit_factor_fields(_frame_with_audited_fields().drop("turnover"))
 
     assert readiness.factor_status["turnover_20"] == "missing"
 

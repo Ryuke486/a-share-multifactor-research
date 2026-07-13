@@ -57,7 +57,7 @@ EXPECTED_DEFINITIONS = (
     (
         "turnover_20",
         "liquidity",
-        ("turnover_rate", "close_adj", "volume", "amount"),
+        ("turnover", "close_adj", "volume", "amount"),
         20,
         -1,
         False,

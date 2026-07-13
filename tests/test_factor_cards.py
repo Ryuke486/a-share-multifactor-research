@@ -22,6 +22,27 @@ from ashare_multifactor.research.factor_cards import write_factor_cards
 NEUTRAL = FactorDefinition("neutral", "test", (), 0, 1)
 
 
+def test_turnover_card_uses_the_canonical_daily_panel_field(tmp_path: Path) -> None:
+    turnover = next(
+        definition for definition in FACTOR_DEFINITIONS if definition.name == "turnover_20"
+    )
+    settings = factor_settings()
+    evaluation, classifications, redundancy = complete_empty_card_inputs([turnover], settings)
+
+    write_factor_cards(
+        evaluation,
+        classifications,
+        redundancy,
+        [turnover],
+        settings,
+        tmp_path,
+    )
+
+    card = (tmp_path / "cards/turnover_20.md").read_text(encoding="utf-8")
+    assert "mean(turnover, 20 valid observations)" in card
+    assert "turnover_rate" not in card
+
+
 def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
     tmp_path: Path,
 ) -> None:

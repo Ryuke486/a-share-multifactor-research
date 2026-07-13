@@ -22,6 +22,7 @@ dev = [
 
 [project.scripts]
 ashare-mvp = "ashare_multifactor.research.mvp:main"
+ashare-factors = "ashare_multifactor.cli.factors:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

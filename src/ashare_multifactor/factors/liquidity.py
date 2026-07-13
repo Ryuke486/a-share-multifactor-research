@@ -18,11 +18,11 @@ def compute_liquidity_factors(frame: pl.DataFrame) -> pl.DataFrame:
     """Compute complete-window turnover and Amihud factors while retaining all rows."""
     inputs = prepare_factor_inputs(frame, _FACTOR_NAMES)
     valid_observations = inputs.filter(is_valid_trade_observation()).with_columns(
-        _valid_turnover_rate().alias("_turnover_rate"),
+        _valid_turnover().alias("_turnover"),
         _daily_amihud().alias("_daily_amihud"),
     )
     factors = valid_observations.with_columns(
-        pl.col("_turnover_rate")
+        pl.col("_turnover")
         .rolling_mean(window_size=_WINDOW_SIZE, min_samples=_WINDOW_SIZE)
         .over("symbol")
         .alias("turnover_20"),
@@ -38,8 +38,8 @@ def compute_liquidity_factors(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _valid_turnover_rate() -> pl.Expr:
-    turnover = pl.col("turnover_rate")
+def _valid_turnover() -> pl.Expr:
+    turnover = pl.col("turnover")
     valid = turnover.is_not_null() & turnover.is_finite() & (turnover >= 0)
     return pl.when(valid).then(turnover)
 

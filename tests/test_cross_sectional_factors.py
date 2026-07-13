@@ -50,7 +50,7 @@ def _liquidity_panel(
         {
             "date": [start + timedelta(days=index) for index in range(count)],
             "symbol": [symbol] * count,
-            "turnover_rate": [index / 100.0 for index in range(count)],
+            "turnover": [index / 100.0 for index in range(count)],
             "close_adj": [101.0] * count,
             "prev_close_adj": [100.0] * count,
             "volume": [100.0] * count,
@@ -160,8 +160,8 @@ def test_invalid_factor_values_remain_inside_valid_trade_windows_as_nulls() -> N
     frame = _liquidity_panel(20).with_columns(
         pl.when(pl.int_range(pl.len()) == 3)
         .then(None)
-        .otherwise(pl.col("turnover_rate"))
-        .alias("turnover_rate"),
+        .otherwise(pl.col("turnover"))
+        .alias("turnover"),
         pl.when(pl.int_range(pl.len()) == 4)
         .then(0.0)
         .otherwise(pl.col("prev_close_adj"))
@@ -177,14 +177,14 @@ def test_invalid_factor_values_remain_inside_valid_trade_windows_as_nulls() -> N
     "invalid_turnover",
     [-0.01, float("nan"), float("inf"), -float("inf")],
 )
-def test_invalid_turnover_rate_nulls_the_complete_window_without_compressing_it(
+def test_invalid_turnover_nulls_the_complete_window_without_compressing_it(
     invalid_turnover: float,
 ) -> None:
     frame = _liquidity_panel(20).with_columns(
         pl.when(pl.int_range(pl.len()) == 3)
         .then(invalid_turnover)
-        .otherwise(pl.col("turnover_rate"))
-        .alias("turnover_rate")
+        .otherwise(pl.col("turnover"))
+        .alias("turnover")
     )
 
     target = _compute_liquidity(frame).row(19, named=True)
@@ -352,7 +352,7 @@ def test_liquidity_registry_declares_exact_runtime_dependencies() -> None:
     definitions = {definition.name: definition for definition in FACTOR_DEFINITIONS}
 
     assert definitions["turnover_20"].source_columns == (
-        "turnover_rate",
+        "turnover",
         "close_adj",
         "volume",
         "amount",

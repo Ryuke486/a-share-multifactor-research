@@ -158,8 +158,8 @@ def _formula(definition: FactorDefinition) -> str:
         return f"close_adj[t] / close_adj[t-{definition.lookback}] - 1"
     if definition.family == "reversal":
         return f"close_adj[t] / close_adj[t-{definition.lookback}] - 1"
-    if definition.family == "liquidity" and "turnover_rate" in definition.source_columns:
-        return f"mean(turnover_rate, {definition.lookback} valid observations)"
+    if definition.family == "liquidity" and "turnover" in definition.source_columns:
+        return f"mean(turnover, {definition.lookback} valid observations)"
     if definition.family == "liquidity":
         return f"mean(abs(adjusted_return) / amount, {definition.lookback} valid observations)"
     if definition.family == "low_volatility" and definition.name.startswith("downside_"):

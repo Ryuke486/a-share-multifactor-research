@@ -68,7 +68,7 @@ def _daily_row(day: date, symbol: str, seed: float) -> dict[str, object]:
         "prev_close_adj": close - 0.5,
         "volume": 1_000.0,
         "amount": 100_000.0 + seed,
-        "turnover_rate": 0.01 + seed / 100_000.0,
+        "turnover": 0.01 + seed / 100_000.0,
         "total_market_cap": 1_000_000.0 + seed,
         "pe_ttm": 10.0 + seed / 100.0,
         "pb": 2.0 + seed / 1_000.0,
