@@ -96,10 +96,19 @@ def read_daily_pair(pair: DailyFilePair) -> pl.DataFrame:
         pl.col("delist_date").str.to_date("%Y-%m-%d", strict=False),
     )
     adj = _read_selected(pair.backward_adjusted, ADJ_RENAME)
+    expected_dates = {pair.trading_date}
+    for label, frame in (("unadjusted", raw), ("backward-adjusted", adj)):
+        dates = set(frame.get_column("date"))
+        if dates != expected_dates:
+            raise ValueError(f"{label} CSV date must be {pair.trading_date.isoformat()}")
     raw_symbols = set(raw.get_column("symbol"))
     adj_symbols = set(adj.get_column("symbol"))
     if raw_symbols != adj_symbols:
         raise ValueError("unadjusted and backward-adjusted symbol sets differ")
+    raw_keys = set(raw.select("date", "symbol").iter_rows())
+    adj_keys = set(adj.select("date", "symbol").iter_rows())
+    if raw_keys != adj_keys:
+        raise ValueError("unadjusted and backward-adjusted (date, symbol) key sets differ")
     joined = raw.join(adj, on=["date", "symbol"], how="inner", validate="1:1").cast(
         NUMERIC_SCHEMA, strict=False
     )

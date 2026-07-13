@@ -70,6 +70,10 @@ def _adj_row(symbol: str = "000001", open_price: str = "20.0") -> tuple[str, ...
     return ("2014-01-02", symbol, open_price, "21.0", "19.6", "20.4", "19.8")
 
 
+def _with_date(row: tuple[str, ...], value: str) -> tuple[str, ...]:
+    return (value, *row[1:])
+
+
 def _write_csv(path: Path, columns: tuple[str, ...], rows: list[tuple[str, ...]]) -> None:
     lines = [",".join(columns), *(",".join(row) for row in rows)]
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -144,6 +148,32 @@ def test_reader_rejects_mismatched_symbol_sets(tmp_path: Path):
     pair = _pair(tmp_path, [_raw_row("000001")], [_adj_row("000002")])
 
     with pytest.raises(ValueError, match="symbol sets differ"):
+        read_daily_pair(pair)
+
+
+def test_reader_rejects_different_dates_for_the_same_symbol(tmp_path: Path):
+    from ashare_multifactor.data.reader import read_daily_pair
+
+    pair = _pair(
+        tmp_path,
+        [_raw_row()],
+        [_with_date(_adj_row(), "2014-01-03")],
+    )
+
+    with pytest.raises(ValueError, match="backward-adjusted CSV date must be 2014-01-02"):
+        read_daily_pair(pair)
+
+
+def test_reader_rejects_csv_date_that_differs_from_file_pair(tmp_path: Path):
+    from ashare_multifactor.data.reader import read_daily_pair
+
+    pair = _pair(
+        tmp_path,
+        [_with_date(_raw_row(), "2014-01-03")],
+        [_with_date(_adj_row(), "2014-01-03")],
+    )
+
+    with pytest.raises(ValueError, match="unadjusted CSV date must be 2014-01-02"):
         read_daily_pair(pair)
 
 
