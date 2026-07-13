@@ -287,10 +287,32 @@ def test_classification_uses_status_not_factor_name_for_unverified_cap() -> None
     ]
 
 
+@pytest.mark.parametrize("point_in_time_status", ["missing", "unknown", None])
+def test_classification_caps_every_non_ready_point_in_time_status_at_watch(
+    point_in_time_status: str | None,
+) -> None:
+    summary = _selection_summary(
+        [_selection_row("factor", point_in_time_status=point_in_time_status)]
+    )
+    subperiods = pl.DataFrame(_subperiods("factor", "score_size_neutral"))
+
+    selected = classify_factors(
+        summary,
+        subperiods,
+        [_definition("factor")],
+        _settings(),
+    ).row(0, named=True)
+
+    assert selected["point_in_time_verified"] is False
+    assert selected["classification"] == "watch"
+    assert selected["reason"] == "watch:point_in_time_unverified"
+
+
 def test_classification_ignores_non_preregistered_subperiod_rows() -> None:
     summary = _selection_summary([_selection_row("factor")])
     subperiods = pl.DataFrame(
-        [
+        _subperiods("factor", "score_size_neutral", (0.0, 0.0, 0.0))
+        + [
             {
                 "factor_name": "factor",
                 "score_variant": "score_size_neutral",
@@ -298,7 +320,7 @@ def test_classification_ignores_non_preregistered_subperiod_rows() -> None:
                 "mean_ic": 0.5,
             }
             for name in ("extra-period-a", "extra-period-b")
-        ]
+        ],
     )
 
     selected = classify_factors(
@@ -312,6 +334,22 @@ def test_classification_ignores_non_preregistered_subperiod_rows() -> None:
     assert selected["subperiod_stability_pass"] is False
     assert selected["classification"] == "watch"
     assert selected["reason"] == "watch:subperiod_stability_not_met"
+
+
+def test_classification_rejects_missing_preregistered_subperiod_metrics() -> None:
+    summary = _selection_summary([_selection_row("factor")])
+    subperiods = pl.DataFrame(_subperiods("factor", "score_size_neutral")[:-1])
+
+    with pytest.raises(
+        ValueError,
+        match="missing preregistered subperiod metrics.*2013-2016",
+    ):
+        classify_factors(
+            summary,
+            subperiods,
+            [_definition("factor")],
+            _settings(),
+        )
 
 
 def test_classification_rejects_a_summary_that_omits_a_factor_primary_row() -> None:

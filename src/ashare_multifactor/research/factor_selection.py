@@ -122,6 +122,14 @@ def _classify_row(
     )
     if subperiods.select("subperiod").is_duplicated().any():
         raise ValueError(f"factor {factor_name} has duplicate subperiod metrics")
+    missing_subperiods = sorted(
+        _PREREGISTERED_SUBPERIODS - set(subperiods.get_column("subperiod").to_list())
+    )
+    if missing_subperiods:
+        raise ValueError(
+            f"factor {factor_name} is missing preregistered subperiod metrics: "
+            + ", ".join(missing_subperiods)
+        )
     positive_subperiods = sum(
         _finite(mean_ic) and float(mean_ic) > 0.0 for mean_ic in subperiods.get_column("mean_ic")
     )
@@ -136,10 +144,7 @@ def _classify_row(
     fdr_pass = _finite(primary["bh_q"]) and (float(primary["bh_q"]) <= settings.fdr_q_threshold)
     q5_q1_positive = _finite(primary["q5_q1"]) and float(primary["q5_q1"]) > 0.0
     stability_pass = positive_subperiods >= 2
-    point_in_time_verified = (
-        primary["point_in_time_status"] is not None
-        and primary["point_in_time_status"] != "unverified"
-    )
+    point_in_time_verified = primary["point_in_time_status"] == "ready"
     core_pass = coverage_pass and valid_months_pass and mean_ic_positive
     candidate_metrics_pass = fdr_pass and q5_q1_positive and stability_pass
     classification, reason = _classification(
