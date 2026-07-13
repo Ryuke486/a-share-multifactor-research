@@ -39,6 +39,26 @@ class MvpSettings:
 
 
 @dataclass(frozen=True)
+class FactorResearchSettings:
+    data_start: date
+    analysis_start: date
+    analysis_end: date
+    universe_size: int
+    minimum_history: int
+    liquidity_lookback: int
+    signal_frequency: str
+    forward_horizons: tuple[int, ...]
+    primary_horizon: int
+    winsor_lower: float
+    winsor_upper: float
+    quantile_count: int
+    minimum_coverage: float
+    minimum_valid_months: int
+    fdr_q_threshold: float
+    redundancy_threshold: float
+
+
+@dataclass(frozen=True)
 class ResearchConfig:
     paths: Paths
     research: Period
@@ -47,10 +67,15 @@ class ResearchConfig:
     smoke_data: Period
     smoke_analysis: Period
     mvp: MvpSettings
+    factor_research: FactorResearchSettings | None = None
 
 
-def _as_date(value: str | date) -> date:
-    return value if isinstance(value, date) else date.fromisoformat(value)
+def _as_date(value: object) -> date:
+    if isinstance(value, date):
+        return value
+    if isinstance(value, str):
+        return date.fromisoformat(value)
+    raise ValueError("date value must be an ISO date string")
 
 
 def _period(value: list[str | date]) -> Period:
@@ -60,6 +85,30 @@ def _period(value: list[str | date]) -> Period:
     if period.end < period.start:
         raise ValueError("period end precedes start")
     return period
+
+
+def _factor_research(value: dict[str, object]) -> FactorResearchSettings:
+    horizons = value["forward_horizons"]
+    if not isinstance(horizons, (list, tuple)):
+        raise ValueError("factor_research.forward_horizons must be a non-empty sequence")
+    return FactorResearchSettings(
+        data_start=_as_date(value["data_start"]),
+        analysis_start=_as_date(value["analysis_start"]),
+        analysis_end=_as_date(value["analysis_end"]),
+        universe_size=value["universe_size"],
+        minimum_history=value["minimum_history"],
+        liquidity_lookback=value["liquidity_lookback"],
+        signal_frequency=value["signal_frequency"],
+        forward_horizons=tuple(horizons),
+        primary_horizon=value["primary_horizon"],
+        winsor_lower=value["winsor_lower"],
+        winsor_upper=value["winsor_upper"],
+        quantile_count=value["quantile_count"],
+        minimum_coverage=value["minimum_coverage"],
+        minimum_valid_months=value["minimum_valid_months"],
+        fdr_q_threshold=value["fdr_q_threshold"],
+        redundancy_threshold=value["redundancy_threshold"],
+    )
 
 
 def _validate_mvp(settings: MvpSettings) -> None:
@@ -93,9 +142,69 @@ def _validate_mvp(settings: MvpSettings) -> None:
         raise ValueError("mvp.transaction_cost_bps must be non-negative and finite")
 
 
+def _is_finite_number(value: object) -> bool:
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, (int, float))
+        and math.isfinite(value)
+    )
+
+
+def _validate_factor_research(
+    settings: FactorResearchSettings,
+    research: Period,
+    validation: Period,
+) -> None:
+    analysis = Period(settings.analysis_start, settings.analysis_end)
+    if analysis.end < analysis.start or not research.contains(analysis):
+        raise ValueError("factor research analysis must stay inside research")
+    if settings.data_start >= validation.start:
+        raise ValueError("factor research data must stay before validation and test periods")
+    if settings.analysis_start >= validation.start or settings.analysis_end >= validation.start:
+        raise ValueError("factor research analysis must stay before validation and test periods")
+    if settings.data_start >= settings.analysis_start:
+        raise ValueError("factor research data_start must precede analysis_start")
+
+    positive_integer_fields = (
+        "universe_size",
+        "minimum_history",
+        "liquidity_lookback",
+        "minimum_valid_months",
+    )
+    for field in positive_integer_fields:
+        value = getattr(settings, field)
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"factor_research.{field} must be a positive integer")
+
+    if type(settings.quantile_count) is not int or settings.quantile_count < 2:
+        raise ValueError("factor_research.quantile_count must be an integer of at least two")
+    if not settings.forward_horizons or any(
+        type(horizon) is not int or horizon <= 0 for horizon in settings.forward_horizons
+    ):
+        raise ValueError("factor_research.forward_horizons must contain positive integers")
+    if type(settings.primary_horizon) is not int or settings.primary_horizon <= 0:
+        raise ValueError("factor_research.primary_horizon must be a positive integer")
+    if settings.primary_horizon not in settings.forward_horizons:
+        raise ValueError("factor research primary_horizon must belong to forward_horizons")
+    if settings.signal_frequency != "month_end":
+        raise ValueError("factor research signal_frequency must be month_end")
+
+    if not (
+        _is_finite_number(settings.winsor_lower)
+        and _is_finite_number(settings.winsor_upper)
+        and 0.0 <= settings.winsor_lower < settings.winsor_upper <= 1.0
+    ):
+        raise ValueError("factor research winsor bounds must satisfy 0 <= lower < upper <= 1")
+    for field in ("minimum_coverage", "fdr_q_threshold", "redundancy_threshold"):
+        value = getattr(settings, field)
+        if not _is_finite_number(value) or not 0.0 <= value <= 1.0:
+            raise ValueError(f"factor_research.{field} must be finite and inside [0, 1]")
+
+
 def load_config(path: Path) -> ResearchConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     periods = raw["periods"]
+    factor_research = raw.get("factor_research")
     config = ResearchConfig(
         paths=Paths(**{key: Path(value) for key, value in raw["paths"].items()}),
         research=_period(periods["research"]),
@@ -104,6 +213,9 @@ def load_config(path: Path) -> ResearchConfig:
         smoke_data=_period(periods["smoke_data"]),
         smoke_analysis=_period(periods["smoke_analysis"]),
         mvp=MvpSettings(**raw["mvp"]),
+        factor_research=(
+            _factor_research(factor_research) if factor_research is not None else None
+        ),
     )
     if config.research.overlaps(config.validation):
         raise ValueError("research and validation periods overlap")
@@ -120,4 +232,6 @@ def load_config(path: Path) -> ResearchConfig:
     _validate_mvp(config.mvp)
     if config.mvp.portfolio_size > config.mvp.universe_size:
         raise ValueError("portfolio size exceeds universe size")
+    if config.factor_research is not None:
+        _validate_factor_research(config.factor_research, config.research, config.validation)
     return config

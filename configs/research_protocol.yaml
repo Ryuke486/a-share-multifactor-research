@@ -18,3 +18,21 @@ mvp:
   portfolio_size: 20
   transaction_cost_bps: 10.0
   initial_cash: 1000000.0
+
+factor_research:
+  data_start: 2003-01-01
+  analysis_start: 2005-01-01
+  analysis_end: 2016-12-31
+  universe_size: 1000
+  minimum_history: 252
+  liquidity_lookback: 20
+  signal_frequency: month_end
+  forward_horizons: [5, 20, 60]
+  primary_horizon: 20
+  winsor_lower: 0.01
+  winsor_upper: 0.99
+  quantile_count: 5
+  minimum_coverage: 0.80
+  minimum_valid_months: 120
+  fdr_q_threshold: 0.10
+  redundancy_threshold: 0.70

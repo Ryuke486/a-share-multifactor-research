@@ -298,7 +298,7 @@ point_in_time_status: String
 - Consumes: 现有ResearchConfig、Period和MvpSettings。
 - Produces: ResearchConfig.factor_research: FactorResearchSettings。
 
-- [ ] **Step 1: 写失败测试，拒绝验证期和测试期**
+- [x] **Step 1: 写失败测试，拒绝验证期和测试期**
 
 测试必须使用临时YAML覆盖非法值，避免修改正式配置：
 
@@ -327,13 +327,13 @@ def test_factor_research_warmup_cannot_reach_validation_or_test(tmp_path: Path) 
         load_config(config)
 ~~~
 
-- [ ] **Step 2: 运行配置测试并确认失败**
+- [x] **Step 2: 运行配置测试并确认失败**
 
 Run: .venv/bin/pytest tests/test_factor_config.py -v
 
 Expected: FAIL，因为FactorResearchSettings尚不存在。
 
-- [ ] **Step 3: 实现固定配置**
+- [x] **Step 3: 实现固定配置**
 
 YAML固定值：
 
@@ -359,17 +359,17 @@ factor_research:
 
 校验analysis区间完全位于research；data_start早于analysis_start；所有日期早于validation.start；分位数、覆盖率和阈值在合法区间；primary_horizon属于forward_horizons。
 
-- [ ] **Step 4: 写研究协议文档**
+- [x] **Step 4: 写研究协议文档**
 
 文档必须逐项写明本计划第2节的股票池、14个因子、方向、标签、预处理、统计校正、分类规则和禁止事项。
 
-- [ ] **Step 5: 运行配置与现有回归测试**
+- [x] **Step 5: 运行配置与现有回归测试**
 
 Run: .venv/bin/pytest tests/test_config.py tests/test_factor_config.py -v
 
 Expected: PASS，且现有MVP配置仍可加载。
 
-- [ ] **Step 6: 提交本任务**
+- [x] **Step 6: 提交本任务**
 
 ~~~bash
 git add configs/research_protocol.yaml src/ashare_multifactor/config.py docs/factor_research_protocol.md tests/test_factor_config.py
@@ -378,9 +378,9 @@ git commit -m "feat: freeze factor research protocol"
 
 **验收：**
 
-- [ ] 所有阶段四参数只在YAML定义一次。
-- [ ] 代码拒绝任何2017年及以后日期。
-- [ ] 因子方向和分类阈值在结果生成前冻结。
+- [x] 所有阶段四参数只在YAML定义一次。
+- [x] 代码拒绝任何2017年及以后日期。
+- [x] 因子方向和分类阈值在结果生成前冻结。
 
 ---
 
