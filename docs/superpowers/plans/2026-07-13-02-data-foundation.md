@@ -340,7 +340,7 @@ git commit -m "feat: normalize and join daily market data"
 - Consumes: 规范单日或多日面板。
 - Produces: QualityIssue列表；严重错误阻止Parquet写入。
 
-- [ ] **Step 1: 写质量问题测试**
+- [x] **Step 1: 写质量问题测试**
 
 测试必须构造并识别：
 
@@ -359,7 +359,7 @@ assert "duplicate_key" in codes
 assert "invalid_ohlc" in codes
 ~~~
 
-- [ ] **Step 2: 定义问题结构**
+- [x] **Step 2: 定义问题结构**
 
 ~~~python
 from dataclasses import asdict, dataclass
@@ -376,14 +376,14 @@ class QualityIssue:
         return asdict(self)
 ~~~
 
-- [ ] **Step 3: 实现逐项检查**
+- [x] **Step 3: 实现逐项检查**
 
 validate_daily_panel(frame, expected_date)必须返回稳定排序的问题列表，严重级别规则为：
 
 - error：重复主键、日期错误、无效OHLC、raw/adj关键价格缺失；
 - warning：行业、估值、两融缺失，成交量额为零。
 
-- [ ] **Step 4: 增加阻断函数**
+- [x] **Step 4: 增加阻断函数**
 
 ~~~python
 def raise_on_errors(issues: list[QualityIssue]) -> None:
@@ -393,7 +393,7 @@ def raise_on_errors(issues: list[QualityIssue]) -> None:
         raise ValueError(f"data quality errors: {detail}")
 ~~~
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run:
 
@@ -403,7 +403,7 @@ Run:
 
 Expected: 所有人工错误均被识别，干净夹具返回零个error。
 
-- [ ] **Step 6: 提交质量模块**
+- [x] **Step 6: 提交质量模块**
 
 ~~~bash
 git add src/ashare_multifactor/data/validation.py tests/test_validation.py
@@ -412,10 +412,10 @@ git commit -m "feat: validate canonical daily panel"
 
 **Task 5 Acceptance Checklist**
 
-- [ ] 严重质量问题会阻止构建。
-- [ ] warning不会静默消失。
-- [ ] 报告包含问题代码、数量和解释。
-- [ ] 所有检查均有人工构造的反例测试。
+- [x] 严重质量问题会阻止构建。
+- [x] warning不会静默消失。
+- [x] 报告包含问题代码、数量和解释。
+- [x] 所有检查均有人工构造的反例测试。
 
 ---
 
