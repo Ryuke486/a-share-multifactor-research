@@ -2,7 +2,7 @@
 
 ## Status
 
-BLOCKED by a real-data quality error. The error was not bypassed or downgraded, and no official `daily_panel` dataset was published.
+DONE. The initial real-data blocker was resolved through an explicitly approved validation-policy change, and the audited smoke dataset was published successfully.
 
 ## Implemented before the blocker
 
@@ -25,7 +25,7 @@ BLOCKED by a real-data quality error. The error was not bypassed or downgraded, 
 - Discovered 970 paired trading days: 2012=243, 2013=238, 2014=245, 2015=244.
 - Source CSV size: 1,379,069,081 bytes (1.284 GiB).
 - Blocking issue: date `2015-09-14`, symbol `832317`, code `missing_price`, count `1`.
-- Missing field observed: `prev_close_adj`.
+- Missing fields observed: `prev_close_raw` and `prev_close_adj`.
 - Exception: `ValueError: data quality errors: missing_price:1`.
 - No `processed/daily_panel` or staging directory remained after failure.
 
@@ -58,3 +58,15 @@ Verification after the policy change:
 - Full suite: 42 passed.
 - Ruff: all checks passed.
 - `git diff --check`: passed.
+
+## Transactional publish review fix
+
+An Important review finding identified that deleting an existing target before publishing staging could lose the last successful dataset if `os.replace(staging, target)` failed.
+
+- RED: a simulated staging publish failure removed the existing target marker.
+- GREEN: publishing now atomically renames the existing target to a unique sibling backup, promotes staging, restores the backup on failure, and deletes the backup only after success.
+- Tests cover both successful replacement and failed-publish rollback.
+- A handled failure leaves the old target intact with no staging or backup residue.
+- A backup is never pre-emptively deleted at startup; if rollback itself is interrupted, its unique sibling path remains explicitly recoverable.
+- Build/validation专项 after the fix: 25 passed; full suite: 44 passed; Ruff and diff check passed.
+- Existing real artifacts were checked read-only: all four partitions remain readable with 2,272,248 total manifest rows, and no staging or temporary paths exist.

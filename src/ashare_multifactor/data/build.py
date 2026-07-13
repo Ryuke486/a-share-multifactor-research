@@ -54,6 +54,21 @@ def _write_year(root: Path, year: int, frames: list[pl.DataFrame]) -> int:
     return frame.height
 
 
+def _publish_staging(staging: Path, target: Path) -> None:
+    if not target.exists():
+        os.replace(staging, target)
+        return
+
+    backup = staging.with_suffix(".backup")
+    os.replace(target, backup)
+    try:
+        os.replace(staging, target)
+    except BaseException:
+        os.replace(backup, target)
+        raise
+    shutil.rmtree(backup)
+
+
 def build_parquet_dataset(config: ResearchConfig, start: date, end: date) -> BuildManifest:
     if end < start:
         raise ValueError("build end precedes start")
@@ -102,9 +117,7 @@ def build_parquet_dataset(config: ResearchConfig, start: date, end: date) -> Bui
         )
         _write_json(staging / "manifest.json", manifest.to_dict())
         _write_json(staging / "quality_issues.json", quality_records)
-        if target.exists():
-            shutil.rmtree(target)
-        os.replace(staging, target)
+        _publish_staging(staging, target)
         return manifest
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)

@@ -111,3 +111,50 @@ def test_build_rejects_dates_outside_configured_smoke_period(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="inside configured smoke_data period"):
         build_parquet_dataset(config, date(2015, 12, 31), date(2016, 1, 4))
+
+
+def test_successful_publish_replaces_existing_dataset(tmp_path: Path) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2))
+    target = config.paths.processed / "daily_panel"
+    target.mkdir(parents=True)
+    (target / "old-marker").write_text("old", encoding="utf-8")
+
+    build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+
+    assert not (target / "old-marker").exists()
+    assert (target / "manifest.json").exists()
+    assert not list(config.paths.processed.glob(".daily_panel-*.tmp"))
+    assert not list(config.paths.processed.glob(".daily_panel-*.backup"))
+
+
+def test_publish_failure_restores_existing_dataset(tmp_path: Path, monkeypatch) -> None:
+    import os
+
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2))
+    target = config.paths.processed / "daily_panel"
+    target.mkdir(parents=True)
+    marker = target / "old-marker"
+    marker.write_text("old", encoding="utf-8")
+    real_replace = os.replace
+
+    def fail_staging_publish(source: Path, destination: Path) -> None:
+        source_path = Path(source)
+        if destination == target and source_path.name.endswith(".tmp"):
+            raise OSError("simulated publish failure")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_staging_publish)
+
+    with pytest.raises(OSError, match="simulated publish failure"):
+        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+
+    assert marker.read_text(encoding="utf-8") == "old"
+    assert list(target.iterdir()) == [marker]
+    assert not list(config.paths.processed.glob(".daily_panel-*.tmp"))
+    assert not list(config.paths.processed.glob(".daily_panel-*.backup"))
