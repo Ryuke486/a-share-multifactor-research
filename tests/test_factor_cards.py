@@ -12,6 +12,8 @@ from factor_card_fixtures import (
     complete_empty_card_inputs,
     factor_settings,
     replace_keyed_rows,
+    set_correlation_pair,
+    set_redundancy_flag,
 )
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 from ashare_multifactor.research.factor_cards import write_factor_cards
@@ -165,23 +167,19 @@ def test_factor_card_snapshot_contains_all_sections_and_exact_machine_values(
         .otherwise(pl.col("reason"))
         .alias("reason"),
     )
-    redundancy = replace(
+    redundancy = set_correlation_pair(
         base_redundancy,
-        redundancy_flags=pl.DataFrame(
-            [
-                {
-                    "factor_a": "trend_60",
-                    "factor_b": "size_proxy",
-                    "primary_variant_a": "score_size_neutral",
-                    "primary_variant_b": "score",
-                    "mean_correlation": -0.75,
-                    "absolute_correlation": 0.75,
-                    "correlation_direction": "negative",
-                    "common_months": 144,
-                }
-            ],
-            schema=base_redundancy.redundancy_flags.schema,
-        ),
+        trend,
+        size,
+        mean_correlation=-0.75,
+        common_months=144,
+    )
+    redundancy = set_redundancy_flag(
+        redundancy,
+        trend,
+        size,
+        mean_correlation=-0.75,
+        common_months=144,
     )
     evaluation = replace(
         base_evaluation,

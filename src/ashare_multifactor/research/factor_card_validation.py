@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+import math
 
 import polars as pl
 
@@ -151,7 +152,12 @@ def validate_factor_card_inputs(
     _validate_complete_subperiods(evaluation.subperiod_metrics, definitions, variants)
     _validate_classifications(classifications, definitions, settings)
     _validate_correlations(redundancy.factor_correlations, definitions)
-    _validate_flags(redundancy.redundancy_flags, definitions)
+    _validate_flags(
+        redundancy.redundancy_flags,
+        redundancy.factor_correlations,
+        definitions,
+        settings,
+    )
 
 
 def _require_schema(
@@ -314,9 +320,25 @@ def _validate_correlations(
             "primary_variant_b"
         ] != _primary_variant(right):
             raise ValueError("factor_correlations primary variants do not match definitions")
+    rows = {(row["factor_a"], row["factor_b"]): row for row in frame.iter_rows(named=True)}
+    for left_index, left in enumerate(definitions):
+        for right in definitions[left_index + 1 :]:
+            forward = rows[(left.name, right.name)]
+            reverse = rows[(right.name, left.name)]
+            if (
+                not _optional_float_equal(forward["mean_correlation"], reverse["mean_correlation"])
+                or forward["common_months"] != reverse["common_months"]
+                or forward["reason"] != reverse["reason"]
+            ):
+                raise ValueError("factor_correlations mirrored rows are inconsistent")
 
 
-def _validate_flags(frame: pl.DataFrame, definitions: Sequence[FactorDefinition]) -> None:
+def _validate_flags(
+    frame: pl.DataFrame,
+    correlations: pl.DataFrame,
+    definitions: Sequence[FactorDefinition],
+    settings: FactorResearchSettings,
+) -> None:
     _reject_duplicate_keys(frame, ("factor_a", "factor_b"), "redundancy_flags")
     by_name = {definition.name: definition for definition in definitions}
     order = {definition.name: index for index, definition in enumerate(definitions)}
@@ -334,6 +356,36 @@ def _validate_flags(frame: pl.DataFrame, definitions: Sequence[FactorDefinition]
             "primary_variant_b"
         ] != _primary_variant(by_name[right_name]):
             raise ValueError("redundancy_flags primary variants do not match definitions")
+    correlation_rows = {
+        (row["factor_a"], row["factor_b"]): row for row in correlations.iter_rows(named=True)
+    }
+    expected = {
+        (left.name, right.name): correlation_rows[(left.name, right.name)]
+        for left_index, left in enumerate(definitions)
+        for right in definitions[left_index + 1 :]
+        if _is_expected_flag(
+            correlation_rows[(left.name, right.name)]["mean_correlation"],
+            settings.redundancy_threshold,
+        )
+    }
+    actual = {(row["factor_a"], row["factor_b"]): row for row in frame.iter_rows(named=True)}
+    if expected.keys() - actual.keys():
+        raise ValueError("redundancy_flags is missing expected threshold pairs")
+    if actual.keys() - expected.keys():
+        raise ValueError("redundancy_flags contains unexpected below-threshold pairs")
+    for pair, correlation in expected.items():
+        flag = actual[pair]
+        mean = float(correlation["mean_correlation"])
+        expected_direction = "positive" if mean >= 0.0 else "negative"
+        if (
+            not _optional_float_equal(flag["mean_correlation"], mean)
+            or not _optional_float_equal(flag["absolute_correlation"], abs(mean))
+            or flag["correlation_direction"] != expected_direction
+            or flag["common_months"] != correlation["common_months"]
+            or flag["primary_variant_a"] != correlation["primary_variant_a"]
+            or flag["primary_variant_b"] != correlation["primary_variant_b"]
+        ):
+            raise ValueError("redundancy_flags row does not match factor_correlations")
 
 
 def _reject_duplicate_keys(frame: pl.DataFrame, keys: Sequence[str], name: str) -> None:
@@ -347,3 +399,19 @@ def _score_variants(definition: FactorDefinition) -> tuple[str, ...]:
 
 def _primary_variant(definition: FactorDefinition) -> str:
     return "score_size_neutral" if definition.size_neutralize else "score"
+
+
+def _is_expected_flag(value: object, threshold: float) -> bool:
+    return _finite_number(value) and abs(float(value)) >= threshold
+
+
+def _optional_float_equal(left: object, right: object) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    if not _finite_number(left) or not _finite_number(right):
+        return False
+    return math.isclose(float(left), float(right), rel_tol=0.0, abs_tol=1e-12)
+
+
+def _finite_number(value: object) -> bool:
+    return value is not None and not isinstance(value, bool) and math.isfinite(float(value))
