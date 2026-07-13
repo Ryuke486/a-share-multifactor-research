@@ -1,11 +1,17 @@
-from datetime import date
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
-from ashare_multifactor.config import MvpSettings, Paths, Period, ResearchConfig
+from ashare_multifactor.config import (
+    FactorResearchSettings,
+    MvpSettings,
+    Paths,
+    Period,
+    ResearchConfig,
+)
 
 
 RAW_COLUMNS = (
@@ -55,6 +61,24 @@ def _config(tmp_path: Path) -> ResearchConfig:
         smoke_data=Period(date(2012, 1, 1), date(2015, 12, 31)),
         smoke_analysis=Period(date(2014, 1, 1), date(2015, 12, 31)),
         mvp=MvpSettings(200, 60, 20, 20, 10.0, 1_000_000.0),
+        factor_research=FactorResearchSettings(
+            data_start=date(2003, 1, 1),
+            analysis_start=date(2005, 1, 1),
+            analysis_end=date(2016, 12, 31),
+            universe_size=1000,
+            minimum_history=252,
+            liquidity_lookback=20,
+            signal_frequency="month_end",
+            forward_horizons=(5, 20, 60),
+            primary_horizon=20,
+            winsor_lower=0.01,
+            winsor_upper=0.99,
+            quantile_count=5,
+            minimum_coverage=0.8,
+            minimum_valid_months=120,
+            fdr_q_threshold=0.1,
+            redundancy_threshold=0.7,
+        ),
     )
 
 
@@ -77,6 +101,14 @@ def _write_pair(
     adj_row = (day.isoformat(), "000001", "20.0", "21.0", "19.6", "20.4", "19.8")
     _write_csv(config.paths.raw_unadjusted / name, RAW_COLUMNS, raw_row)
     _write_csv(config.paths.raw_backward_adjusted / name, ADJ_COLUMNS, adj_row)
+
+
+def _tree_hashes(root: Path) -> dict[str, str]:
+    return {
+        path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
 def test_builds_two_days_into_audited_year_partition(tmp_path: Path) -> None:
@@ -144,6 +176,54 @@ def test_build_rejects_dates_outside_configured_smoke_period(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="inside configured smoke_data period"):
         build_parquet_dataset(config, date(2015, 12, 31), date(2016, 1, 4))
+
+
+def test_explicit_output_root_isolates_research_panel_from_mvp(tmp_path: Path) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2005, 1, 4))
+    mvp_root = config.paths.processed / "daily_panel"
+    mvp_root.mkdir(parents=True)
+    (mvp_root / "manifest.json").write_text('{"stage": "mvp"}\n', encoding="utf-8")
+    before = _tree_hashes(mvp_root)
+    research_root = config.paths.processed / "factor_research/daily_panel"
+
+    manifest = build_parquet_dataset(
+        config,
+        date(2005, 1, 4),
+        date(2005, 1, 4),
+        output_root=research_root,
+    )
+
+    assert manifest.min_date == date(2005, 1, 4)
+    assert (research_root / "year=2005/part-000.parquet").exists()
+    assert _tree_hashes(mvp_root) == before
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [
+        (date(2002, 12, 31), date(2003, 1, 2)),
+        (date(2016, 12, 30), date(2017, 1, 3)),
+    ],
+)
+def test_explicit_output_root_rejects_dates_outside_factor_research_data(
+    tmp_path: Path,
+    start: date,
+    end: date,
+) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+
+    with pytest.raises(ValueError, match="inside configured factor_research data period"):
+        build_parquet_dataset(
+            config,
+            start,
+            end,
+            output_root=config.paths.processed / "factor_research/daily_panel",
+        )
 
 
 def test_successful_publish_replaces_existing_dataset(tmp_path: Path) -> None:

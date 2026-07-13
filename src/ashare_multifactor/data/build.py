@@ -106,11 +106,28 @@ def _publish_staging(staging: Path, target: Path) -> None:
     shutil.rmtree(backup)
 
 
-def build_parquet_dataset(config: ResearchConfig, start: date, end: date) -> BuildManifest:
+def build_parquet_dataset(
+    config: ResearchConfig,
+    start: date,
+    end: date,
+    output_root: Path | None = None,
+) -> BuildManifest:
     if end < start:
         raise ValueError("build end precedes start")
-    if start < config.smoke_data.start or end > config.smoke_data.end:
-        raise ValueError("build dates must stay inside configured smoke_data period")
+    if output_root is None:
+        allowed_start = config.smoke_data.start
+        allowed_end = config.smoke_data.end
+        target = config.paths.processed / "daily_panel"
+        period_name = "smoke_data"
+    else:
+        if config.factor_research is None:
+            raise ValueError("explicit output_root requires factor_research settings")
+        allowed_start = config.factor_research.data_start
+        allowed_end = config.factor_research.analysis_end
+        target = output_root
+        period_name = "factor_research data"
+    if start < allowed_start or end > allowed_end:
+        raise ValueError(f"build dates must stay inside configured {period_name} period")
     pairs = discover_daily_pairs(
         config.paths.raw_unadjusted,
         config.paths.raw_backward_adjusted,
@@ -120,9 +137,7 @@ def build_parquet_dataset(config: ResearchConfig, start: date, end: date) -> Bui
     if not pairs:
         raise ValueError("no paired daily files found")
 
-    processed = config.paths.processed
-    target = processed / "daily_panel"
-    staging = processed / f".daily_panel-{uuid4().hex}.tmp"
+    staging = target.parent / f".{target.name}-{uuid4().hex}.tmp"
     quality_records: list[dict[str, object]] = []
     rows = 0
     partitions: list[PartitionManifest] = []

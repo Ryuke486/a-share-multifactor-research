@@ -460,33 +460,33 @@ git commit -m "feat: register factors and data readiness gates"
 - Produces: validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource。
 - Extends: build_parquet_dataset(config: ResearchConfig, start: date, end: date, output_root: Path | None = None) -> BuildManifest。
 
-- [ ] **Step 1: 写隔离输出测试**
+- [x] **Step 1: 写隔离输出测试**
 
 测试显式output_root时写入临时research目录，并断言原MVP daily_panel目录内容和哈希不变。
 
-- [ ] **Step 2: 写通用manifest验证反例**
+- [x] **Step 2: 写通用manifest验证反例**
 
 覆盖缺分区、多分区、路径穿越、年份错配、行数不符、哈希不符、日期越界和包含2017年日期。
 
-- [ ] **Step 3: 提取通用清单验证**
+- [x] **Step 3: 提取通用清单验证**
 
 将research/lineage.py中的通用DailyPanelSource和分区验证移到data/manifest.py；MVP原函数保留兼容包装，现有调用签名不变。
 
-- [ ] **Step 4: 增加显式output_root**
+- [x] **Step 4: 增加显式output_root**
 
 默认None仍写processed/daily_panel；阶段四明确写processed/factor_research/daily_panel。失败时原已发布数据集不被破坏。
 
-- [ ] **Step 5: 在人工数据和小年份范围验证**
+- [x] **Step 5: 在人工数据和小年份范围验证**
 
 Run: .venv/bin/pytest tests/test_build.py tests/test_data_manifest.py tests/test_mvp_integration.py -v
 
 Expected: PASS。
 
-- [ ] **Step 6: 只读构建2003–2005试运行**
+- [x] **Step 6: 只读构建2003–2005试运行**
 
 先计时、记录峰值内存和产物大小；只有试运行通过后，才允许Task 10构建完整2003–2016。
 
-- [ ] **Step 7: 提交本任务**
+- [x] **Step 7: 提交本任务**
 
 ~~~bash
 git add src/ashare_multifactor/data/manifest.py src/ashare_multifactor/data/build.py src/ashare_multifactor/research/lineage.py tests/test_data_manifest.py tests/test_build.py
@@ -495,9 +495,9 @@ git commit -m "refactor: isolate research panel manifests"
 
 **验收：**
 
-- [ ] 阶段三数据和血缘不被覆盖。
-- [ ] 研究数据最多到2016-12-31。
-- [ ] 通用清单逻辑不继续扩大现有lineage.py。
+- [x] 阶段三数据和血缘不被覆盖。
+- [x] 研究数据最多到2016-12-31。
+- [x] 通用清单逻辑不继续扩大现有lineage.py。
 
 ---
 
