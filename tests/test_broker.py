@@ -349,3 +349,46 @@ def test_pending_buy_is_rebuilt_after_share_bonus() -> None:
     assert result["orders"].filter(pl.col("order_id") == old_order_id).item(0, "status") == "cancelled"
     replacement = result["orders"].filter(pl.col("order_id") != old_order_id).sort("signal_date")
     assert replacement.tail(1).item(0, "quantity") == 19_700
+
+
+def test_corporate_action_without_affected_pending_does_not_rebalance() -> None:
+    panel = pl.DataFrame(
+        {
+            "date": [date(2010, 1, 4), date(2010, 1, 5)],
+            "symbol": ["000001", "000001"],
+            "open_raw": [10.0, 10.0],
+            "close_raw": [10.0, 10.0],
+            "prev_close_raw": [10.0, 10.0],
+            "adv20": [10_000_000.0, 10_000_000.0],
+            "limit_rate": [0.10, 0.10],
+            "is_suspended_proxy": [False, False],
+        }
+    )
+    targets = pl.DataFrame(
+        {"date": [date(2009, 12, 31)], "symbol": ["000001"], "target_weight": [0.5]}
+    )
+    actions = normalize_corporate_actions(
+        pl.DataFrame(
+            {
+                "symbol": ["000001"],
+                "ex_date": [date(2010, 1, 5)],
+                "effective_date": [date(2010, 1, 6)],
+                "cash_per_share": [10.0],
+                "share_ratio": [0.0],
+                "source": ["fixture"],
+            }
+        )
+    )
+
+    result = run_backtest(
+        panel,
+        targets,
+        actions,
+        load_market_rules(RULES),
+        BacktestSettings(initial_cash=100_000.0, fixed_slippage_bps=0.0, reference_impact_bps=0.0),
+    )
+
+    assert result["order_events"].filter(
+        pl.col("reason") == "corporate_action_rebase"
+    ).is_empty()
+    assert result["orders"].height == 1

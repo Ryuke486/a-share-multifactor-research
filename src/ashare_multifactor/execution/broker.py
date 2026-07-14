@@ -257,6 +257,7 @@ def _run_backtest_once(
             and trade_date not in execution_targets
             and active_target_weights is not None
             and active_signal_date is not None
+            and any(item.symbol in action_symbols for item in pending)
         ):
             affected_pending = [item for item in pending if item.symbol in action_symbols]
             for order in affected_pending:
