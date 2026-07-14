@@ -871,19 +871,19 @@ git commit -m "feat: generate factor cards and redundancy report"
 - Produces: ashare-factors --config configs/research_protocol.yaml --stage {build,audit,factors,evaluate,report,all}。
 - Produces: 本计划第3节全部机器可读产物和报告。
 
-- [ ] **Step 1: 写端到端人工数据测试**
+- [x] **Step 1: 写端到端人工数据测试**
 
 生成至少320个交易观测、25只股票和多个因子方向；运行all后检查清单、血缘、14个因子、三种标签、评价表、卡片和报告。
 
-- [ ] **Step 2: 写泄漏和断点续跑测试**
+- [x] **Step 2: 写泄漏和断点续跑测试**
 
 人为把manifest最大日期改为2017或2022，必须在扫描数据前失败；替换上游文件后下游stage必须拒绝复用。
 
-- [ ] **Step 3: 实现薄编排层和CLI**
+- [x] **Step 3: 实现薄编排层和CLI**
 
 factor_pipeline.py只调用各模块和记录输入输出统计；命令行解析放在cli/factors.py，避免形成第二个超大mvp.py。
 
-- [ ] **Step 4: 运行集成测试和全部检查**
+- [x] **Step 4: 运行集成测试和全部检查**
 
 Run: .venv/bin/pytest -v
 
@@ -893,27 +893,27 @@ Run: .venv/bin/ruff check src tests
 
 Expected: All checks passed。
 
-- [ ] **Step 5: 构建完整2003–2016研究数据**
+- [x] **Step 5: 构建完整2003–2016研究数据**
 
 Run: .venv/bin/ashare-factors --config configs/research_protocol.yaml --stage build
 
 检查manifest最小日期不早于2003-01-01、最大日期不晚于2016-12-31；研究期外预热不进入评价。
 
-- [ ] **Step 6: 运行完整阶段四**
+- [x] **Step 6: 运行完整阶段四**
 
 Run: .venv/bin/ashare-factors --config configs/research_protocol.yaml --stage all
 
 检查14个因子全部出现在factor_summary.csv；每个因子有分类或明确失败原因；所有产物最大日期不超过2016-12-31。
 
-- [ ] **Step 7: 重跑并核对可复现性**
+- [x] **Step 7: 重跑并核对可复现性**
 
 再次运行all；比较机器可读产物SHA-256。除manifest中明确允许变化的运行时间外，研究结果哈希必须一致。
 
-- [ ] **Step 8: 更新README、数据说明和AGENTS**
+- [x] **Step 8: 更新README、数据说明和AGENTS**
 
 README写运行方法和阶段边界；docs/data记录完整研究期字段覆盖；AGENTS只写已经证实的阶段四结果，不预先宣称因子有效。
 
-- [ ] **Step 9: Git安全检查**
+- [x] **Step 9: Git安全检查**
 
 Run: git status --short
 
@@ -930,9 +930,9 @@ git commit -m "feat: complete single factor research stage"
 
 **验收：**
 
-- [ ] 一条命令可从只读原始数据生成全部阶段四结果。
-- [ ] 验证期和最终测试期未被读取。
-- [ ] 结果可重复、可审计，并保留负结果。
+- [x] 一条命令可从只读原始数据生成全部阶段四结果。
+- [x] 验证期和最终测试期未被读取。
+- [x] 结果可重复、可审计，并保留负结果。
 
 ---
 
@@ -940,42 +940,42 @@ git commit -m "feat: complete single factor research stage"
 
 ### 研究边界
 
-- [ ] phase3-mvp-closed-loop已先合并到执行分支。
-- [ ] 2003–2004只作预热，2005–2016才进入统计。
-- [ ] 2017–2021和2022–2025没有被读取、统计或绘图。
-- [ ] 因子定义、方向、窗口和门槛在完整结果生成前冻结。
-- [ ] 60日动量没有因MVP负IC被翻转。
+- [x] phase3-mvp-closed-loop已先合并到执行分支。
+- [x] 2003–2004只作预热，2005–2016才进入统计。
+- [x] 2017–2021和2022–2025没有被读取、统计或绘图。
+- [x] 因子定义、方向、窗口和门槛在完整结果生成前冻结。
+- [x] 60日动量没有因MVP负IC被翻转。
 
 ### 数据与工程
 
-- [ ] 阶段四研究面板不覆盖阶段三面板和MVP产物。
-- [ ] 价值、行业和ST字段的数据状态有机器可读门禁。
-- [ ] 未核验行业不参与中性化。
-- [ ] 14个因子分族实现，没有超大因子文件。
-- [ ] factor_panel主键(date, symbol, factor_name)唯一。
-- [ ] forward return与因子计算模块隔离。
-- [ ] 所有中间产物有清单、哈希和血缘。
+- [x] 阶段四研究面板不覆盖阶段三面板和MVP产物。
+- [x] 价值、行业和ST字段的数据状态有机器可读门禁。
+- [x] 未核验行业不参与中性化。
+- [x] 14个因子分族实现，没有超大因子文件。
+- [x] factor_panel主键(date, symbol, factor_name)唯一。
+- [x] forward return与因子计算模块隔离。
+- [x] 所有中间产物有清单、哈希和血缘。
 
 ### 单因子证据
 
-- [ ] 每个因子都有原始值、定向score和适用时的市值中性score。
-- [ ] 每个因子报告5/20/60日Rank IC。
-- [ ] 主评价报告IC均值、年化ICIR、Newey-West t值、p值和BH q值。
-- [ ] 报告五分组、Q5-Q1、单调性、覆盖率、正IC占比和Top 20%换手。
-- [ ] 报告三个预注册子区间。
-- [ ] 报告平均截面相关矩阵和冗余标记。
-- [ ] 价值因子在数据口径未核验前不会成为candidate。
-- [ ] 没有因子因表现差而从报告中消失。
+- [x] 每个因子都有原始值、定向score和适用时的市值中性score。
+- [x] 每个因子报告5/20/60日Rank IC。
+- [x] 主评价报告IC均值、年化ICIR、Newey-West t值、p值和BH q值。
+- [x] 报告五分组、Q5-Q1、单调性、覆盖率、正IC占比和Top 20%换手。
+- [x] 报告三个预注册子区间。
+- [x] 报告平均截面相关矩阵和冗余标记。
+- [x] 价值因子在数据口径未核验前不会成为candidate。
+- [x] 没有因子因表现差而从报告中消失。
 
 ### 交付
 
-- [ ] factor_summary.csv包含全部14个因子。
-- [ ] 每个因子有独立Markdown卡片和四张标准图。
-- [ ] report.md总结candidate、watch、reject和数据限制。
-- [ ] README提供阶段四复现命令。
-- [ ] pytest和ruff全部通过。
-- [ ] 重跑机器可读结果一致。
-- [ ] Git不含Data、processed或artifacts。
+- [x] factor_summary.csv包含全部14个因子。
+- [x] 每个因子有独立Markdown卡片和四张标准图。
+- [x] report.md总结candidate、watch、reject和数据限制。
+- [x] README提供阶段四复现命令。
+- [x] pytest和ruff全部通过。
+- [x] 重跑机器可读结果一致。
+- [x] Git不含Data、processed或artifacts。
 
 ## 6. 预计目标与工作量
 
