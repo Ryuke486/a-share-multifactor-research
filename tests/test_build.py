@@ -5,6 +5,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import polars as pl
 
 from ashare_multifactor.config import (
     FactorResearchSettings,
@@ -152,10 +153,99 @@ def test_quality_error_leaves_no_official_dataset(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _write_pair(config, date(2014, 1, 2), open_raw="-1.0")
 
-    with pytest.raises(ValueError, match="invalid_ohlc:1"):
+    with pytest.raises(ValueError, match="all rows quarantined for 2014-01-02"):
         build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
 
     assert not (config.paths.processed / "daily_panel").exists()
+
+
+def test_build_quarantines_only_invalid_ohlc_and_records_stable_warning(tmp_path: Path) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    day = date(2014, 1, 2)
+    _write_pair(config, day)
+    raw_path = next(config.paths.raw_unadjusted.glob("*.csv"))
+    adj_path = next(config.paths.raw_backward_adjusted.glob("*.csv"))
+    raw = raw_path.read_text(encoding="utf-8").splitlines()
+    adj = adj_path.read_text(encoding="utf-8").splitlines()
+    raw_bad = raw[1].replace("000001", "000002", 1).replace("10.5,9.8,10.2", "9.0,9.8,10.2", 1)
+    adj_bad = adj[1].replace("000001", "000002", 1)
+    raw_path.write_text("\n".join([raw[0], raw_bad, raw[1]]) + "\n", encoding="utf-8")
+    adj_path.write_text("\n".join([adj[0], adj_bad, adj[1]]) + "\n", encoding="utf-8")
+
+    manifest = build_parquet_dataset(config, day, day)
+
+    panel = pl.read_parquet(config.paths.processed / "daily_panel/year=2014/part-000.parquet")
+    assert manifest.rows == 1
+    assert panel["symbol"].to_list() == ["000001"]
+    assert json.loads((config.paths.processed / "daily_panel/quality_issues.json").read_text()) == [
+        {
+            "code": "invalid_ohlc_quarantined",
+            "count": 1,
+            "date": "2014-01-02",
+            "message": "rows with non-positive or inconsistent raw/adjusted OHLC were quarantined",
+            "severity": "warning",
+            "symbols": ["000002"],
+        }
+    ]
+    first_hashes = _tree_hashes(config.paths.processed / "daily_panel")
+
+    build_parquet_dataset(config, day, day)
+
+    assert _tree_hashes(config.paths.processed / "daily_panel") == first_hashes
+
+
+def test_quarantine_does_not_allow_other_quality_errors(tmp_path: Path) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2), volume="invalid")
+
+    with pytest.raises(ValueError, match="missing_trade_data:1"):
+        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+
+    assert not (config.paths.processed / "daily_panel").exists()
+
+
+def test_invalid_ohlc_row_with_negative_trade_data_still_blocks(tmp_path: Path) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2), open_raw="-1.0", volume="-1")
+
+    with pytest.raises(ValueError, match="negative_volume_amount:1"):
+        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+
+
+def test_duplicate_invalid_ohlc_rows_still_block(tmp_path: Path) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2), open_raw="-1.0")
+    for root in (config.paths.raw_unadjusted, config.paths.raw_backward_adjusted):
+        path = next(root.glob("*.csv"))
+        lines = path.read_text(encoding="utf-8").splitlines()
+        path.write_text("\n".join([lines[0], lines[1], lines[1]]) + "\n", encoding="utf-8")
+
+    with pytest.raises(pl.exceptions.ComputeError, match="join keys did not fulfill 1:1 validation"):
+        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+
+
+def test_invalid_ohlc_row_with_date_mismatch_still_blocks(tmp_path: Path) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2), open_raw="-1.0")
+    for root in (config.paths.raw_unadjusted, config.paths.raw_backward_adjusted):
+        path = next(root.glob("*.csv"))
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("2014-01-02", "2014-01-03"),
+            encoding="utf-8",
+        )
+
+    with pytest.raises(ValueError, match="unadjusted CSV date must be 2014-01-02"):
+        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
 
 
 @pytest.mark.parametrize("field", ["volume", "amount"])

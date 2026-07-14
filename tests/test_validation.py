@@ -5,6 +5,7 @@ import pytest
 
 from ashare_multifactor.data.validation import (
     QualityIssue,
+    invalid_ohlc_expression,
     raise_on_errors,
     validate_daily_panel,
 )
@@ -49,6 +50,30 @@ def test_quality_issue_serializes_to_dict() -> None:
 
 def test_clean_panel_has_no_issues() -> None:
     assert validate_daily_panel(_clean_frame(), date(2014, 1, 2)) == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        {"open_raw": [0.0]},
+        {"high_raw": [10.0]},
+        {"low_raw": [10.6]},
+        {"open_adj": [0.0]},
+        {"high_adj": [20.0]},
+        {"low_adj": [21.1]},
+    ],
+)
+def test_authoritative_invalid_ohlc_expression_covers_raw_and_adjusted_inconsistency(
+    mutation: dict[str, list[float]],
+) -> None:
+    frame = _clean_frame().with_columns(
+        [pl.Series(name, values) for name, values in mutation.items()]
+    )
+
+    assert frame.select(invalid_ohlc_expression()).item() is True
+    assert [issue.code for issue in validate_daily_panel(frame, date(2014, 1, 2))] == [
+        "invalid_ohlc"
+    ]
 
 
 @pytest.mark.parametrize(

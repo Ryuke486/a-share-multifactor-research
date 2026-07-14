@@ -16,7 +16,11 @@ from ashare_multifactor.config import ResearchConfig, load_config
 from ashare_multifactor.data.discovery import discover_daily_pairs
 from ashare_multifactor.data.reader import read_daily_pair
 from ashare_multifactor.data.schema import SCHEMA_VERSION
-from ashare_multifactor.data.validation import raise_on_errors, validate_daily_panel
+from ashare_multifactor.data.validation import (
+    invalid_ohlc_expression,
+    raise_on_errors,
+    validate_daily_panel,
+)
 
 
 @dataclass(frozen=True)
@@ -223,6 +227,28 @@ def build_parquet_dataset(
                 year_frames = []
             current_year = pair.trading_date.year
             frame = read_daily_pair(pair)
+            original_issues = validate_daily_panel(frame, pair.trading_date)
+            raise_on_errors(
+                [issue for issue in original_issues if issue.code != "invalid_ohlc"]
+            )
+            invalid_rows = frame.filter(invalid_ohlc_expression())
+            if invalid_rows.height:
+                quality_records.append(
+                    {
+                        "date": pair.trading_date.isoformat(),
+                        "severity": "warning",
+                        "code": "invalid_ohlc_quarantined",
+                        "count": invalid_rows.height,
+                        "message": (
+                            "rows with non-positive or inconsistent raw/adjusted OHLC "
+                            "were quarantined"
+                        ),
+                        "symbols": sorted(invalid_rows["symbol"].unique().to_list()),
+                    }
+                )
+                frame = frame.filter(~invalid_ohlc_expression())
+            if frame.is_empty():
+                raise ValueError(f"all rows quarantined for {pair.trading_date.isoformat()}")
             issues = validate_daily_panel(frame, pair.trading_date)
             raise_on_errors(issues)
             quality_records.extend(

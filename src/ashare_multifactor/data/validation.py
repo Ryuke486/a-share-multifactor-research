@@ -33,6 +33,24 @@ def _row_count(frame: pl.DataFrame, condition: pl.Expr) -> int:
     return frame.select(condition.fill_null(False).sum()).item()
 
 
+def invalid_ohlc_expression() -> pl.Expr:
+    """Return the single authoritative row-level invalid-OHLC predicate."""
+    invalid_conditions: list[pl.Expr] = []
+    for suffix in ("raw", "adj"):
+        open_ = pl.col(f"open_{suffix}")
+        high = pl.col(f"high_{suffix}")
+        low = pl.col(f"low_{suffix}")
+        close = pl.col(f"close_{suffix}")
+        invalid_conditions.extend(
+            (
+                pl.any_horizontal(open_ <= 0, high <= 0, low <= 0, close <= 0),
+                high < pl.max_horizontal(open_, close),
+                low > pl.min_horizontal(open_, close),
+            )
+        )
+    return pl.any_horizontal(invalid_conditions).fill_null(False).alias("invalid_ohlc")
+
+
 def validate_daily_panel(frame: pl.DataFrame, expected_date: date) -> list[QualityIssue]:
     issues: list[QualityIssue] = []
 
@@ -51,20 +69,7 @@ def validate_daily_panel(frame: pl.DataFrame, expected_date: date) -> list[Quali
     if missing_price_count:
         issues.append(QualityIssue("error", "missing_price", missing_price_count, "raw or adjusted key price is missing"))
 
-    invalid_ohlc = []
-    for suffix in ("raw", "adj"):
-        open_ = pl.col(f"open_{suffix}")
-        high = pl.col(f"high_{suffix}")
-        low = pl.col(f"low_{suffix}")
-        close = pl.col(f"close_{suffix}")
-        invalid_ohlc.extend(
-            [
-                pl.any_horizontal(open_ <= 0, high <= 0, low <= 0, close <= 0),
-                high < pl.max_horizontal(open_, close),
-                low > pl.min_horizontal(open_, close),
-            ]
-        )
-    invalid_ohlc_count = _row_count(frame, pl.any_horizontal(invalid_ohlc))
+    invalid_ohlc_count = _row_count(frame, invalid_ohlc_expression())
     if invalid_ohlc_count:
         issues.append(QualityIssue("error", "invalid_ohlc", invalid_ohlc_count, "OHLC values are non-positive or inconsistent"))
 
