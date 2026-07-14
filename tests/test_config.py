@@ -51,6 +51,10 @@ def test_official_config_loads_unquoted_yaml_dates():
 
     assert config.smoke_analysis.start == date(2014, 1, 1)
     assert config.smoke_analysis.end == date(2015, 12, 31)
+    assert config.formal_backtest is not None
+    assert config.formal_backtest.analysis_end == date(2016, 12, 31)
+    assert config.formal_backtest.maximum_participation == 0.10
+    assert config.formal_backtest.stale_review_days == 30
 
 
 def test_config_is_immutable():

@@ -1,6 +1,6 @@
 # A股横截面多因子研究
 
-本项目研究A股横截面因子的预测能力，并在严格控制前视偏差、幸存者偏差和交易时序的前提下，构建含交易成本的可审计组合。当前已完成60日动量MVP和阶段四完整单因子研究；后者只使用2005–2016研究期，不是正式组合回测，也不构成投资建议。
+本项目研究A股横截面因子的预测能力，并在严格控制前视偏差、幸存者偏差和交易时序的前提下，构建含交易成本的可审计组合。当前已完成阶段六2005–2016正式A股执行回测；验证期和最终测试期仍封存，结果不构成投资建议。
 
 ## 阶段四结果边界
 
@@ -55,6 +55,24 @@ python3.12 -m venv .venv
 ```
 
 阶段五只消费 `processed/factor_research/`，不读取原始CSV；滚动IC权重严格滞后一期。每次完整运行写入不可变release，`CURRENT.json`只在全部校验通过后切换。输出是阶段六的事前目标，不是真实成交回测。
+
+阶段六先审计免费公开数据，再运行正式执行回测：
+
+```bash
+.venv/bin/python -m ashare_multifactor.cli.formal_backtest audit
+.venv/bin/python -m ashare_multifactor.cli.formal_backtest all --publish
+```
+
+隔离工作树没有独立虚拟环境时，使用主仓库环境并显式指定源码路径：
+
+```bash
+PYTHONPATH=src /Users/mikasa/本科时期/Projects/repository1/.venv/bin/python -m pytest -q
+```
+
+阶段六权威状态只能从 `processed/formal_backtest/CURRENT.json` 解析到不可变release；
+`artifacts/formal_backtest/` 下的便利报告属于单次诊断快照，不得用于判断当前发布状态。
+
+执行器包含T+1、整手、涨跌停、pending、滞后ADV容量、历史费用、滑点/冲击、除权日应收股利与派息日现金。完整成本、仅显性费用和零成本使用三套独立账本，并以后复权收益和长停牌证据作为发布门禁。
 
 阶段三MVP仍可独立复现：
 
