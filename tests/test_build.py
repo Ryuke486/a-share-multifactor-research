@@ -153,7 +153,7 @@ def test_quality_error_leaves_no_official_dataset(tmp_path: Path) -> None:
     config = _config(tmp_path)
     _write_pair(config, date(2014, 1, 2), open_raw="-1.0")
 
-    with pytest.raises(ValueError, match="all rows quarantined for 2014-01-02"):
+    with pytest.raises(ValueError, match="invalid_ohlc:1"):
         build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
 
     assert not (config.paths.processed / "daily_panel").exists()
@@ -174,12 +174,13 @@ def test_build_quarantines_only_invalid_ohlc_and_records_stable_warning(tmp_path
     raw_path.write_text("\n".join([raw[0], raw_bad, raw[1]]) + "\n", encoding="utf-8")
     adj_path.write_text("\n".join([adj[0], adj_bad, adj[1]]) + "\n", encoding="utf-8")
 
-    manifest = build_parquet_dataset(config, day, day)
+    target = config.paths.processed / "factor_research/daily_panel"
+    manifest = build_parquet_dataset(config, day, day, output_root=target)
 
-    panel = pl.read_parquet(config.paths.processed / "daily_panel/year=2014/part-000.parquet")
+    panel = pl.read_parquet(target / "year=2014/part-000.parquet")
     assert manifest.rows == 1
     assert panel["symbol"].to_list() == ["000001"]
-    assert json.loads((config.paths.processed / "daily_panel/quality_issues.json").read_text()) == [
+    assert json.loads((target / "quality_issues.json").read_text()) == [
         {
             "code": "invalid_ohlc_quarantined",
             "count": 1,
@@ -189,11 +190,29 @@ def test_build_quarantines_only_invalid_ohlc_and_records_stable_warning(tmp_path
             "symbols": ["000002"],
         }
     ]
-    first_hashes = _tree_hashes(config.paths.processed / "daily_panel")
+    first_hashes = _tree_hashes(target)
 
-    build_parquet_dataset(config, day, day)
+    build_parquet_dataset(config, day, day, output_root=target)
 
-    assert _tree_hashes(config.paths.processed / "daily_panel") == first_hashes
+    assert _tree_hashes(target) == first_hashes
+
+
+def test_factor_research_build_blocks_when_every_row_has_invalid_ohlc(tmp_path: Path) -> None:
+    from ashare_multifactor.data.build import build_parquet_dataset
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2014, 1, 2), open_raw="-1.0")
+    target = config.paths.processed / "factor_research/daily_panel"
+
+    with pytest.raises(ValueError, match="all rows quarantined for 2014-01-02"):
+        build_parquet_dataset(
+            config,
+            date(2014, 1, 2),
+            date(2014, 1, 2),
+            output_root=target,
+        )
+
+    assert not target.exists()
 
 
 def test_quarantine_does_not_allow_other_quality_errors(tmp_path: Path) -> None:

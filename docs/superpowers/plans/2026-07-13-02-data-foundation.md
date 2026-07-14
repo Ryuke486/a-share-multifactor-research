@@ -393,11 +393,13 @@ validate_daily_panel(frame, expected_date)必须返回稳定排序的问题列�
 当日 raw/adj OHLC 任一缺失仍为 error。此变更不使用 `list_date` 或任何未来信息。
 
 2026-07-14经用户批准增加窄范围隔离规则：阶段四完整研究面板构建时发现
-2010-02-23、symbol 600313 的收盘价低于最低价。构建器仅隔离命中统一
+2010-02-23、symbol 600313 的收盘价低于最低价。仅阶段四通过显式
+`factor_research/daily_panel` 输出调用构建器时，隔离命中统一
 `invalid_ohlc` 判定的行，并写入 `invalid_ohlc_quarantined` warning（日期、数量、
 稳定排序代码）。隔离前先在原始规范帧上阻断除 `invalid_ohlc` 外的任何error，
 隔离后再对保留行执行全部原有质量门禁。缺失价格、重复键、日期错误、
-成交量额缺失或为负仍阻断发布，全日均被隔离也阻断。原始CSV保持只读，不猜测修价。
+成交量额缺失或为负仍阻断发布，全日均被隔离也阻断。默认数据底座构建
+继续将 `invalid_ohlc` 作为error阻断。原始CSV保持只读，不猜测修价。
 
 - [x] **Step 4: 增加阻断函数**
 

@@ -189,6 +189,7 @@ def build_parquet_dataset(
 ) -> BuildManifest:
     if end < start:
         raise ValueError("build end precedes start")
+    quarantine_invalid_ohlc = output_root is not None
     target = _validated_output_root(config, output_root)
     if output_root is None:
         allowed_start = config.smoke_data.start
@@ -228,27 +229,30 @@ def build_parquet_dataset(
             current_year = pair.trading_date.year
             frame = read_daily_pair(pair)
             original_issues = validate_daily_panel(frame, pair.trading_date)
-            raise_on_errors(
-                [issue for issue in original_issues if issue.code != "invalid_ohlc"]
-            )
-            invalid_rows = frame.filter(invalid_ohlc_expression())
-            if invalid_rows.height:
-                quality_records.append(
-                    {
-                        "date": pair.trading_date.isoformat(),
-                        "severity": "warning",
-                        "code": "invalid_ohlc_quarantined",
-                        "count": invalid_rows.height,
-                        "message": (
-                            "rows with non-positive or inconsistent raw/adjusted OHLC "
-                            "were quarantined"
-                        ),
-                        "symbols": sorted(invalid_rows["symbol"].unique().to_list()),
-                    }
+            if quarantine_invalid_ohlc:
+                raise_on_errors(
+                    [issue for issue in original_issues if issue.code != "invalid_ohlc"]
                 )
-                frame = frame.filter(~invalid_ohlc_expression())
-            if frame.is_empty():
-                raise ValueError(f"all rows quarantined for {pair.trading_date.isoformat()}")
+                invalid_rows = frame.filter(invalid_ohlc_expression())
+                if invalid_rows.height:
+                    quality_records.append(
+                        {
+                            "date": pair.trading_date.isoformat(),
+                            "severity": "warning",
+                            "code": "invalid_ohlc_quarantined",
+                            "count": invalid_rows.height,
+                            "message": (
+                                "rows with non-positive or inconsistent raw/adjusted OHLC "
+                                "were quarantined"
+                            ),
+                            "symbols": sorted(invalid_rows["symbol"].unique().to_list()),
+                        }
+                    )
+                    frame = frame.filter(~invalid_ohlc_expression())
+                if frame.is_empty():
+                    raise ValueError(
+                        f"all rows quarantined for {pair.trading_date.isoformat()}"
+                    )
             issues = validate_daily_panel(frame, pair.trading_date)
             raise_on_errors(issues)
             quality_records.extend(
