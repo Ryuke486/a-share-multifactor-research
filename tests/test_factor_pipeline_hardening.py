@@ -290,6 +290,21 @@ def test_factors_clone_ignores_unregistered_daily_directory_symlink(tmp_path: Pa
     }
 
 
+def test_factors_retains_registered_quality_file_but_drops_unregistered_extra(
+    tmp_path: Path,
+) -> None:
+    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    factor_root = daily_root.parent
+    extra = daily_root / "unregistered.txt"
+    extra.write_text("not part of manifest", encoding="utf-8")
+    run_factor_pipeline(config_path, "audit")
+
+    run_factor_pipeline(config_path, "factors")
+
+    assert (daily_root / "quality_issues.json").read_text(encoding="utf-8") == "[]\n"
+    assert not (factor_root / "daily_panel/unregistered.txt").exists()
+
+
 def test_evaluate_clone_ignores_unregistered_monthly_directory_symlink(
     tmp_path: Path,
 ) -> None:

@@ -361,8 +361,11 @@ def _stage_retained_files(
     factor_root: Path,
     source: DailyPanelSource,
 ) -> tuple[Path, ...]:
+    if source.quality_file is None:
+        raise ValueError("daily panel source lacks validated quality issues file")
     return (
         factor_root / "daily_panel/manifest.json",
+        source.quality_file,
         *source.files,
         factor_root / "data_readiness.json",
         factor_root / "lineage.json",

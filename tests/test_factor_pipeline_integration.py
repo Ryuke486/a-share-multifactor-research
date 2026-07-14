@@ -66,6 +66,7 @@ def test_all_stage_builds_complete_auditable_synthetic_research(tmp_path: Path) 
     processed = tmp_path / "processed" / "factor_research"
     artifacts = tmp_path / "artifacts" / "factor_research"
     assert daily_root.exists()
+    assert (daily_root / "quality_issues.json").read_text(encoding="utf-8") == "[]\n"
     assert mvp_sentinel.read_text(encoding="utf-8") == "untouched"
     expected_processed = {
         "data_readiness.json",
@@ -120,6 +121,10 @@ def test_all_stage_builds_complete_auditable_synthetic_research(tmp_path: Path) 
     lineage = json.loads((processed / "lineage.json").read_text(encoding="utf-8"))
     assert lineage["factor_config"]["sha256"]
     assert lineage["daily_panel"]["manifest"]["sha256"]
+    assert lineage["daily_panel"]["quality_issues"]["path"] == (
+        "daily_panel/quality_issues.json"
+    )
+    assert lineage["daily_panel"]["quality_issues"]["sha256"]
     assert len(lineage["daily_panel"]["partitions"]) == 2
     assert not [path for path in tmp_path.rglob("*") if path.name.endswith((".tmp", ".backup"))]
 

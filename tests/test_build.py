@@ -130,6 +130,14 @@ def test_builds_two_days_into_audited_year_partition(tmp_path: Path) -> None:
     saved = json.loads((config.paths.processed / "daily_panel/manifest.json").read_text())
     assert saved["min_date"] == "2014-01-02"
     assert saved["max_date"] == "2014-01-03"
+    quality_path = config.paths.processed / "daily_panel/quality_issues.json"
+    assert saved["quality_issues"] == {
+        "quarantined_rows": 0,
+        "records": 0,
+        "relative_path": "quality_issues.json",
+        "sha256": hashlib.sha256(quality_path.read_bytes()).hexdigest(),
+        "size_bytes": quality_path.stat().st_size,
+    }
     partition_path = config.paths.processed / "daily_panel/year=2014/part-000.parquet"
     assert saved["partitions"] == [
         {
@@ -190,6 +198,9 @@ def test_build_quarantines_only_invalid_ohlc_and_records_stable_warning(tmp_path
             "symbols": ["000002"],
         }
     ]
+    saved = json.loads((target / "manifest.json").read_text())
+    assert saved["quality_issues"]["records"] == 1
+    assert saved["quality_issues"]["quarantined_rows"] == 1
     first_hashes = _tree_hashes(target)
 
     build_parquet_dataset(config, day, day, output_root=target)

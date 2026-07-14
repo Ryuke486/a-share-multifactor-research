@@ -104,6 +104,8 @@ def write_prepared_daily_panel(tmp_path: Path) -> tuple[Path, Path, pl.DataFrame
             }
         )
     days = frame.get_column("date").unique().sort()
+    quality_path = root / "quality_issues.json"
+    quality_path.write_text("[]\n", encoding="utf-8")
     manifest = {
         "schema_version": "synthetic-1",
         "file_pairs": len(days),
@@ -112,6 +114,13 @@ def write_prepared_daily_panel(tmp_path: Path) -> tuple[Path, Path, pl.DataFrame
         "max_date": days.max().isoformat(),
         "years": sorted(frame.get_column("date").dt.year().unique().to_list()),
         "partitions": records,
+        "quality_issues": {
+            "relative_path": "quality_issues.json",
+            "records": 0,
+            "quarantined_rows": 0,
+            "size_bytes": quality_path.stat().st_size,
+            "sha256": hashlib.sha256(quality_path.read_bytes()).hexdigest(),
+        },
     }
     (root / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",

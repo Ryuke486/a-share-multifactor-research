@@ -244,6 +244,8 @@ def _daily_snapshot(source: DailyPanelSource) -> dict[str, object]:
     partitions = source.manifest.get("partitions")
     if not isinstance(partitions, list):
         raise ValueError("daily panel source lacks validated partition identity")
+    if source.quality_file is None or source.quality_record is None:
+        raise ValueError("daily panel source lacks validated quality issues identity")
     return {
         "manifest": {
             "path": "daily_panel/manifest.json",
@@ -259,6 +261,13 @@ def _daily_snapshot(source: DailyPanelSource) -> dict[str, object]:
             for record in sorted(partitions, key=lambda item: str(item["relative_path"]))
             if isinstance(record, Mapping)
         ],
+        "quality_issues": {
+            "path": "daily_panel/quality_issues.json",
+            "records": source.quality_record["records"],
+            "quarantined_rows": source.quality_record["quarantined_rows"],
+            "size_bytes": source.quality_record["size_bytes"],
+            "sha256": source.quality_record["sha256"],
+        },
     }
 
 

@@ -20,6 +20,8 @@ class DailyPanelSource:
     files: tuple[Path, ...]
     manifest_sha256: str | None = None
     manifest_size_bytes: int | None = None
+    quality_file: Path | None = None
+    quality_record: dict[str, object] | None = None
 
 
 def _manifest_date(
@@ -92,6 +94,62 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
     if not manifest_path.resolve().is_relative_to(root.resolve()):
         raise ValueError(f"daily panel manifest escapes daily panel root: {manifest_path}")
     manifest, manifest_bytes = _read_manifest(manifest_path)
+    quality_record = manifest.get("quality_issues")
+    if not isinstance(quality_record, dict):
+        raise ValueError("daily panel manifest must contain quality issues identity")
+    expected_quality_keys = {
+        "relative_path",
+        "records",
+        "quarantined_rows",
+        "size_bytes",
+        "sha256",
+    }
+    if set(quality_record) != expected_quality_keys:
+        raise ValueError("invalid daily panel quality issues identity")
+    if quality_record.get("relative_path") != "quality_issues.json":
+        raise ValueError("invalid daily panel quality issues relative_path")
+    quality_path = root / "quality_issues.json"
+    if quality_path.is_symlink():
+        raise ValueError(f"daily panel quality issues file uses symlink: {quality_path}")
+    if not quality_path.is_file():
+        raise ValueError(f"daily panel quality issues file is missing: {quality_path}")
+    if not quality_path.resolve().is_relative_to(root.resolve()):
+        raise ValueError(f"daily panel quality issues file escapes root: {quality_path}")
+    quality_bytes = quality_path.read_bytes()
+    try:
+        quality_payload = json.loads(quality_bytes)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid daily panel quality issues JSON: {quality_path}") from error
+    if not isinstance(quality_payload, list):
+        raise ValueError("daily panel quality issues must contain a JSON list")
+    records_count = quality_record.get("records")
+    quarantined_rows = quality_record.get("quarantined_rows")
+    if (
+        not isinstance(records_count, int)
+        or isinstance(records_count, bool)
+        or records_count != len(quality_payload)
+    ):
+        raise ValueError("daily panel quality issues record count mismatch")
+    actual_quarantined_rows = sum(
+        int(record.get("count", 0))
+        for record in quality_payload
+        if isinstance(record, dict)
+        and record.get("code") == "invalid_ohlc_quarantined"
+        and isinstance(record.get("count", 0), int)
+        and not isinstance(record.get("count", 0), bool)
+    )
+    if (
+        not isinstance(quarantined_rows, int)
+        or isinstance(quarantined_rows, bool)
+        or quarantined_rows < 0
+        or quarantined_rows != actual_quarantined_rows
+    ):
+        raise ValueError("daily panel quality issues quarantined row count mismatch")
+    quality_summary = _file_summary(quality_path)
+    if quality_record.get("sha256") != quality_summary["sha256"]:
+        raise ValueError("daily panel quality issues digest mismatch")
+    if quality_record.get("size_bytes") != quality_summary["size_bytes"]:
+        raise ValueError("daily panel quality issues size mismatch")
     minimum = _manifest_date(manifest, "min_date", manifest_path)
     maximum = _manifest_date(manifest, "max_date", manifest_path)
     if maximum < minimum:
@@ -247,4 +305,6 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
         files=tuple(path for _, path, _, _ in sorted(records, key=lambda item: str(item[1]))),
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         manifest_size_bytes=len(manifest_bytes),
+        quality_file=quality_path,
+        quality_record=dict(quality_record),
     )

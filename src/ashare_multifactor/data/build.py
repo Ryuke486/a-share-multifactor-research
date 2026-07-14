@@ -41,6 +41,15 @@ class PartitionManifest:
 
 
 @dataclass(frozen=True)
+class QualityIssuesManifest:
+    relative_path: str
+    records: int
+    quarantined_rows: int
+    size_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True)
 class BuildManifest:
     schema_version: str
     file_pairs: int
@@ -49,6 +58,7 @@ class BuildManifest:
     max_date: date
     years: tuple[int, ...]
     partitions: tuple[PartitionManifest, ...]
+    quality_issues: QualityIssuesManifest
 
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
@@ -264,6 +274,19 @@ def build_parquet_dataset(
             partitions.append(partition)
             rows += partition.rows
 
+        _write_json(staging / "quality_issues.json", quality_records)
+        quality_path = staging / "quality_issues.json"
+        quality_manifest = QualityIssuesManifest(
+            relative_path="quality_issues.json",
+            records=len(quality_records),
+            quarantined_rows=sum(
+                int(record["count"])
+                for record in quality_records
+                if record.get("code") == "invalid_ohlc_quarantined"
+            ),
+            size_bytes=quality_path.stat().st_size,
+            sha256=_file_sha256(quality_path),
+        )
         manifest = BuildManifest(
             schema_version=SCHEMA_VERSION,
             file_pairs=len(pairs),
@@ -272,9 +295,9 @@ def build_parquet_dataset(
             max_date=pairs[-1].trading_date,
             years=tuple(sorted({pair.trading_date.year for pair in pairs})),
             partitions=tuple(partitions),
+            quality_issues=quality_manifest,
         )
         _write_json(staging / "manifest.json", manifest.to_dict())
-        _write_json(staging / "quality_issues.json", quality_records)
         _publish_staging(staging, target)
         return manifest
     except BaseException:

@@ -31,6 +31,7 @@ def _write_source(root: Path, days: list[date] | None = None) -> dict[str, objec
         "size_bytes": partition.stat().st_size,
         "sha256": hashlib.sha256(partition.read_bytes()).hexdigest(),
     }
+    quality_record = _write_quality(root, [])
     manifest: dict[str, object] = {
         "schema_version": "1.0.0",
         "file_pairs": len(days),
@@ -39,6 +40,7 @@ def _write_source(root: Path, days: list[date] | None = None) -> dict[str, objec
         "max_date": max(days).isoformat(),
         "years": [year],
         "partitions": [record],
+        "quality_issues": quality_record,
     }
     _write_manifest(root, manifest)
     return manifest
@@ -46,6 +48,23 @@ def _write_source(root: Path, days: list[date] | None = None) -> dict[str, objec
 
 def _write_manifest(root: Path, manifest: dict[str, object]) -> None:
     (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _write_quality(root: Path, payload: list[dict[str, object]]) -> dict[str, object]:
+    path = root / "quality_issues.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    return {
+        "relative_path": "quality_issues.json",
+        "records": len(payload),
+        "quarantined_rows": sum(
+            int(record.get("count", 0))
+            for record in payload
+            if record.get("code") == "invalid_ohlc_quarantined"
+        ),
+        "size_bytes": path.stat().st_size,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }
 
 
 def _partition_record(manifest: dict[str, object]) -> dict[str, object]:
@@ -89,6 +108,7 @@ def _write_year_source(root: Path, years: tuple[int, ...]) -> dict[str, object]:
         "max_date": records[-1]["max_date"],
         "years": list(years),
         "partitions": records,
+        "quality_issues": _write_quality(root, []),
     }
     _write_manifest(root, manifest)
     return manifest
@@ -102,6 +122,48 @@ def test_validate_panel_source_returns_audited_partition_paths(tmp_path: Path) -
 
     assert source.manifest == manifest
     assert source.files == (root / "year=2005/part-000.parquet",)
+    assert source.quality_file == root / "quality_issues.json"
+    assert source.quality_record == manifest["quality_issues"]
+
+
+def test_validate_panel_source_rejects_missing_quality_file(tmp_path: Path) -> None:
+    root = tmp_path / "daily_panel"
+    _write_source(root)
+    (root / "quality_issues.json").unlink()
+
+    with pytest.raises(ValueError, match="quality issues file is missing"):
+        validate_panel_source(root, ALLOWED)
+
+
+def test_validate_panel_source_requires_manifest_quality_identity(tmp_path: Path) -> None:
+    root = tmp_path / "daily_panel"
+    manifest = _write_source(root)
+    manifest.pop("quality_issues")
+    _write_manifest(root, manifest)
+
+    with pytest.raises(ValueError, match="must contain quality issues identity"):
+        validate_panel_source(root, ALLOWED)
+
+
+def test_validate_panel_source_rejects_tampered_quality_file(tmp_path: Path) -> None:
+    root = tmp_path / "daily_panel"
+    _write_source(root)
+    (root / "quality_issues.json").write_text("[]\n ", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="quality issues (digest|size) mismatch"):
+        validate_panel_source(root, ALLOWED)
+
+
+def test_validate_panel_source_rejects_symlink_quality_file(tmp_path: Path) -> None:
+    root = tmp_path / "daily_panel"
+    _write_source(root)
+    quality = root / "quality_issues.json"
+    outside = tmp_path / "outside-quality.json"
+    quality.replace(outside)
+    quality.symlink_to(outside)
+
+    with pytest.raises(ValueError, match="quality issues file uses symlink"):
+        validate_panel_source(root, ALLOWED)
 
 
 def test_validate_panel_source_rejects_missing_partition_summary(tmp_path: Path) -> None:
