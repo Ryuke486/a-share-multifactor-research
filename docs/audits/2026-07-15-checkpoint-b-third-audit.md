@@ -140,3 +140,24 @@ if affected_pending:
 ## 7. 当前结论
 
 阶段六已经通过大部分工程、账务和研究封存门禁，但 `de57558_stage6_final` 仍包含由多证券同日公司行动引入的额外再平衡成交。该问题直接影响回测结果，因此本轮结论为 `blocked`，不得使用当前release开启板块7。
+
+---
+
+## 8. 复查结果（2026-07-15）
+
+**复查状态：** `passed_after_remediation_pending_merge`
+
+原始`blocked`结论保留。B-04已在隔离分支关闭，等待合并main及main环境复验。
+
+- 修复提交：`b995878`。重建前显式计算`affected_pending`与`affected_symbols`，撤单、pending过滤和目标重建均只作用于该集合。
+- 新增多证券混合买入、卖出和输入顺序反转反例；相关专项测试7项通过。
+- 全量测试：`590 passed`；`ruff check src tests`通过。
+- 双次run：`checkpoint_b3_repro_a_b995878`、`checkpoint_b3_repro_b_b995878`；31个核心文件哈希一致。
+- 第三次审计所列可疑订单降为0，对应trade为0、成交金额为0。
+- 新权威release：`b995878_stage6_authoritative`。
+- manifest SHA-256：`1a6f3cea593fa14cd7e687fae26b33e1da5f2df86c5616742aff0eb22697128e`。
+- 新lineage记录替代`de57558_stage6_final`，原因为`superseded_due_to_mixed_symbol_corporate_action_rebalance`。
+- 完整成本期末NAV：698,330,742.65元；三场景最大逐日对账差约`2.38e-7`元。
+- 影子最大单日绝对偏差约0.3741%，未解释长期stale证券为0；2017年及以后仍未读取。
+
+合并main并复验后，检查点B可恢复为`passed_after_remediation`。板块7仍需用户另行明确批准。

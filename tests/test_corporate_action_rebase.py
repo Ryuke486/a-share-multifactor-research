@@ -157,3 +157,103 @@ def test_rebuild_ignores_future_close_high_low_and_current_amount() -> None:
     left = _run(base, targets, actions)["orders"].select("side", "quantity")
     right = _run(changed, targets, actions)["orders"].select("side", "quantity")
     assert left.equals(right)
+
+
+def _mixed_panel(dates: list[date], *, reverse: bool = False) -> pl.DataFrame:
+    rows = []
+    for value in dates:
+        daily = [
+            {
+                "date": value, "symbol": "000001", "open_raw": 10.0,
+                "close_raw": 10.0, "prev_close_raw": 10.0,
+                "adv20": 10_000.0 if value == dates[0] else 10_000_000.0,
+                "limit_rate": 0.10, "is_suspended_proxy": False,
+            },
+            {
+                "date": value, "symbol": "000002", "open_raw": 10.0,
+                "close_raw": 10.0, "prev_close_raw": 10.0,
+                "adv20": 10_000_000.0, "limit_rate": 0.10,
+                "is_suspended_proxy": False,
+            },
+        ]
+        rows.extend(reversed(daily) if reverse else daily)
+    return pl.DataFrame(rows)
+
+
+def test_mixed_symbol_actions_rebuild_only_symbol_with_pending_buy() -> None:
+    dates = [date(2010, 1, 4), date(2010, 1, 5)]
+    targets = pl.DataFrame(
+        {
+            "date": [date(2009, 12, 31)] * 2,
+            "symbol": ["000001", "000002"],
+            "target_weight": [0.5, 0.5],
+        }
+    )
+    actions = _actions(
+        [
+            {"symbol": "000001", "ex_date": dates[1], "effective_date": dates[1], "cash_per_share": 0.0, "share_ratio": 1.0, "source": "fixture_a"},
+            {"symbol": "000002", "ex_date": dates[1], "effective_date": date(2010, 1, 6), "cash_per_share": 10.0, "share_ratio": 0.0, "source": "fixture_b"},
+        ]
+    )
+
+    normal = _run(_mixed_panel(dates), targets, actions)
+    reversed_result = _run(_mixed_panel(dates, reverse=True), targets, actions)
+
+    for result in (normal, reversed_result):
+        rebase_symbols = (
+            result["order_events"]
+            .filter(pl.col("reason") == "corporate_action_rebase")
+            .join(result["orders"].select("order_id", "symbol"), on="order_id")
+            ["symbol"]
+            .to_list()
+        )
+        assert rebase_symbols == ["000001"]
+        symbol_b_orders = result["orders"].filter(pl.col("symbol") == "000002")
+        assert symbol_b_orders.height == 1
+        assert result["trades"].filter(
+            (pl.col("symbol") == "000002") & (pl.col("date") == dates[1])
+        ).is_empty()
+    assert normal["orders"].sort("order_id").equals(
+        reversed_result["orders"].sort("order_id")
+    )
+
+
+def test_mixed_symbol_actions_rebuild_only_symbol_with_pending_sell() -> None:
+    dates = [date(2010, 1, 4), date(2010, 1, 5), date(2010, 1, 6)]
+    rows = []
+    for value in dates:
+        for symbol in ("000001", "000002"):
+            rows.append(
+                {
+                    "date": value, "symbol": symbol, "open_raw": 10.0,
+                    "close_raw": 10.0, "prev_close_raw": 10.0,
+                    "adv20": 10_000.0 if value == dates[1] and symbol == "000001" else 10_000_000.0,
+                    "limit_rate": 0.10, "is_suspended_proxy": False,
+                }
+            )
+    targets = pl.DataFrame(
+        {
+            "date": [date(2009, 12, 31)] * 2 + [dates[0]] * 2,
+            "symbol": ["000001", "000002"] * 2,
+            "target_weight": [0.5, 0.5, 0.0, 0.5],
+        }
+    )
+    actions = _actions(
+        [
+            {"symbol": "000001", "ex_date": dates[2], "effective_date": dates[2], "cash_per_share": 0.0, "share_ratio": 1.0, "source": "fixture_a"},
+            {"symbol": "000002", "ex_date": dates[2], "effective_date": date(2010, 1, 7), "cash_per_share": 10.0, "share_ratio": 0.0, "source": "fixture_b"},
+        ]
+    )
+
+    result = _run(pl.DataFrame(rows), targets, actions)
+
+    rebased = (
+        result["order_events"]
+        .filter(pl.col("reason") == "corporate_action_rebase")
+        .join(result["orders"].select("order_id", "symbol", "side"), on="order_id")
+    )
+    assert rebased.select("symbol", "side").row(0) == ("000001", "sell")
+    assert result["orders"].filter(pl.col("symbol") == "000002").height == 1
+    assert result["trades"].filter(
+        (pl.col("symbol") == "000002") & (pl.col("date") == dates[2])
+    ).is_empty()

@@ -252,24 +252,25 @@ def _run_backtest_once(
             else:
                 raise ValueError(f"unknown security event: {event['event_type']}")
 
+        affected_pending = [item for item in pending if item.symbol in action_symbols]
         if (
             action_symbols
             and trade_date not in execution_targets
             and active_target_weights is not None
             and active_signal_date is not None
-            and any(item.symbol in action_symbols for item in pending)
+            and affected_pending
         ):
-            affected_pending = [item for item in pending if item.symbol in action_symbols]
+            affected_symbols = {item.symbol for item in affected_pending}
             for order in affected_pending:
                 cancelled = transition(order, OrderStatus.CANCELLED)
                 record_event(cancelled, trade_date, "corporate_action_rebase")
-            pending = [item for item in pending if item.symbol not in action_symbols]
+            pending = [item for item in pending if item.symbol not in affected_symbols]
             order_specs = build_target_order_specs(
                 ledger,
                 active_target_weights,
                 market,
                 last_close,
-                symbols=action_symbols,
+                symbols=affected_symbols,
             )
             candidates: list[tuple[int, str, Order]] = []
             for priority, symbol, side, requested, _ in order_specs:

@@ -22,7 +22,7 @@
 - [x] 实现后复权影子门禁（0.5%）和超过30天陈旧估值证据门禁。
 - [x] 输出订单、成交、现金、应收、持仓、三账本NAV及执行质量。
 - [x] 完成全量pytest、ruff、双次内容复现和检查点B。
-- [x] 完成两轮公司行动pending修复并发布权威release `de57558_stage6_final`；旧release仅保留审计。
+- [x] 完成三轮公司行动pending边界修复并发布权威release `b995878_stage6_authoritative`；旧release仅保留审计。
 
 ## 验收门禁
 
