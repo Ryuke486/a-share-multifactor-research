@@ -921,7 +921,7 @@ Run: git ls-files Data processed artifacts
 
 Expected: Data、processed和artifacts没有被追踪。
 
-- [ ] **Step 10: 提交本任务**
+- [x] **Step 10: 提交本任务**
 
 ~~~bash
 git add pyproject.toml README.md AGENTS.md docs/data/README.md src/ashare_multifactor/research/factor_pipeline.py src/ashare_multifactor/cli tests/test_factor_pipeline_integration.py
