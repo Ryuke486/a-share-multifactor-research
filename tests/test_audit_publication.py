@@ -1,5 +1,7 @@
+import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -90,10 +92,36 @@ def test_release_manifest_preserves_dataset_contract_metadata(tmp_path: Path) ->
     assert manifest["datasets"] == [{"dataset": "target_weights", "rows": 10}]
 
 
-def test_code_identity_records_dirty_diff_and_source_hashes() -> None:
-    identity = code_identity(Path.cwd())
+def test_code_identity_records_dirty_diff_and_source_hashes(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "package" / "module.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    for args in (
+        ("init",),
+        ("config", "user.email", "test@example.invalid"),
+        ("config", "user.name", "Test User"),
+        ("add", "src/package/module.py"),
+        ("commit", "-m", "baseline"),
+    ):
+        subprocess.run(
+            ("git", *args),
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+
+    identity = code_identity(tmp_path)
 
     assert identity["commit"]
     assert identity["dirty"] is True
     assert len(identity["diff_sha256"]) == 64
-    assert any(item["path"].endswith("audit/publication.py") for item in identity["sources"])
+    assert identity["sources"] == [
+        {
+            "path": "src/package/module.py",
+            "role": "source",
+            "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "size_bytes": source.stat().st_size,
+        }
+    ]
