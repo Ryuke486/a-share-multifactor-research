@@ -220,11 +220,17 @@ def test_quarantine_does_not_allow_other_quality_errors(tmp_path: Path) -> None:
 
     config = _config(tmp_path)
     _write_pair(config, date(2014, 1, 2), volume="invalid")
+    target = config.paths.processed / "factor_research/daily_panel"
 
     with pytest.raises(ValueError, match="missing_trade_data:1"):
-        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+        build_parquet_dataset(
+            config,
+            date(2014, 1, 2),
+            date(2014, 1, 2),
+            output_root=target,
+        )
 
-    assert not (config.paths.processed / "daily_panel").exists()
+    assert not target.exists()
 
 
 def test_invalid_ohlc_row_with_negative_trade_data_still_blocks(tmp_path: Path) -> None:
@@ -232,9 +238,17 @@ def test_invalid_ohlc_row_with_negative_trade_data_still_blocks(tmp_path: Path) 
 
     config = _config(tmp_path)
     _write_pair(config, date(2014, 1, 2), open_raw="-1.0", volume="-1")
+    target = config.paths.processed / "factor_research/daily_panel"
 
     with pytest.raises(ValueError, match="negative_volume_amount:1"):
-        build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
+        build_parquet_dataset(
+            config,
+            date(2014, 1, 2),
+            date(2014, 1, 2),
+            output_root=target,
+        )
+
+    assert not target.exists()
 
 
 def test_duplicate_invalid_ohlc_rows_still_block(tmp_path: Path) -> None:
