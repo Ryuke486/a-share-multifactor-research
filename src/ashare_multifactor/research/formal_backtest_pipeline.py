@@ -147,8 +147,12 @@ def run_formal_pipeline(
     *,
     publish: bool,
     run_id: str | None = None,
+    superseded_run_id: str | None = None,
+    supersession_reason: str | None = None,
 ) -> Path | PublishedRelease:
     root = root.resolve()
+    if bool(superseded_run_id) != bool(supersession_reason):
+        raise ValueError("superseded run and reason must be supplied together")
     paths = formal_backtest_paths(root)
     upstream_root = _upstream_data_root(root)
     audit = audit_formal_backtest(root)
@@ -344,6 +348,14 @@ def run_formal_pipeline(
             ],
         },
         "research_period": ["2005-01-01", "2016-12-31"],
+        "supersedes": (
+            {
+                "run_id": superseded_run_id,
+                "reason": supersession_reason,
+            }
+            if superseded_run_id is not None
+            else None
+        ),
     }
     (work / "lineage.json").write_text(
         json.dumps(lineage, ensure_ascii=False, indent=2, sort_keys=True) + "\n",

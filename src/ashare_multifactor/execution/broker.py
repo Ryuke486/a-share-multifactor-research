@@ -10,9 +10,10 @@ import polars as pl
 from .fees import FeeSchedule
 from .ledger import Ledger
 from .orders import Order, OrderStatus, transition
+from .order_rebalancer import build_target_order_specs
 from .output_frames import build_output_frames
 from .price_limits import limit_prices
-from .sizing import proportional_buy_quantities, target_quantity
+from .sizing import proportional_buy_quantities
 from .slippage import execution_price
 
 
@@ -104,6 +105,8 @@ def _run_backtest_once(
     peak_nav = settings.initial_cash
     event_sequences: dict[str, int] = {}
     recognized_dividends: set[str] = set()
+    active_target_weights: dict[str, float] | None = None
+    active_signal_date: date | None = None
 
     def record_event(order: Order, event_date: date, reason: str | None = None) -> None:
         event_sequences[order.order_id] = event_sequences.get(order.order_id, 0) + 1
@@ -122,8 +125,10 @@ def _run_backtest_once(
     for trade_date in dates:
         market = by_date[trade_date]
         diagnostic_target: dict[str, float] | None = None
+        action_symbols: set[str] = set()
 
         for action in actions_by_ex_date.get(trade_date, []):
+            action_symbols.add(action["symbol"])
             quantity = ledger.quantity(action["symbol"])
             if quantity:
                 if action["cash_per_share"]:
@@ -247,42 +252,53 @@ def _run_backtest_once(
             else:
                 raise ValueError(f"unknown security event: {event['event_type']}")
 
+        if (
+            action_symbols
+            and trade_date not in execution_targets
+            and active_target_weights is not None
+            and active_signal_date is not None
+        ):
+            affected_pending = [item for item in pending if item.symbol in action_symbols]
+            for order in affected_pending:
+                cancelled = transition(order, OrderStatus.CANCELLED)
+                record_event(cancelled, trade_date, "corporate_action_rebase")
+            pending = [item for item in pending if item.symbol not in action_symbols]
+            order_specs = build_target_order_specs(
+                ledger,
+                active_target_weights,
+                market,
+                last_close,
+                symbols=action_symbols,
+            )
+            candidates: list[tuple[int, str, Order]] = []
+            for priority, symbol, side, requested, _ in order_specs:
+                order_sequence += 1
+                order = Order(
+                    _order_id(active_signal_date, symbol, side, order_sequence),
+                    active_signal_date,
+                    symbol,
+                    side,
+                    requested,
+                    requested,
+                )
+                record_event(order, trade_date)
+                order = transition(order, OrderStatus.PENDING)
+                record_event(order, trade_date)
+                candidates.append((priority, symbol, order))
+            pending.extend(item[2] for item in sorted(candidates))
+
         if trade_date in execution_targets:
             for order in pending:
                 cancelled = transition(order, OrderStatus.CANCELLED)
                 record_event(cancelled, trade_date, "new_signal")
             pending = []
             signal_date, weights = execution_targets[trade_date]
+            active_signal_date = signal_date
+            active_target_weights = weights
             diagnostic_target = weights
-            symbols = sorted(set(weights) | set(ledger._lots))
-            preopen_value = ledger.cash + ledger.receivables + sum(
-                ledger.quantity(symbol)
-                * float(market.get(symbol, {}).get("open_raw") or last_close.get(symbol, 0.0))
-                for symbol in ledger._lots
+            order_specs = build_target_order_specs(
+                ledger, weights, market, last_close
             )
-            order_specs: list[tuple[int, str, str, int, float]] = []
-            for symbol in symbols:
-                row = market.get(symbol)
-                estimate = (
-                    float(row["open_raw"])
-                    if row and row.get("open_raw") is not None
-                    else last_close.get(symbol)
-                )
-                if not estimate:
-                    continue
-                current = ledger.quantity(symbol)
-                target = target_quantity(
-                    preopen_value * weights.get(symbol, 0.0),
-                    estimate,
-                    current_quantity=current,
-                )
-                difference = target - current
-                if difference == 0:
-                    continue
-                side = "buy" if difference > 0 else "sell"
-                order_specs.append(
-                    (0 if side == "sell" else 1, symbol, side, abs(difference), estimate)
-                )
             candidates: list[tuple[int, str, Order]] = []
             for priority, symbol, side, requested, _ in order_specs:
                 quantity = requested

@@ -9,6 +9,7 @@ from ashare_multifactor.research.formal_backtest_pipeline import (
     _load_stale_evidence,
     _readiness_markdown,
     _validate_source_coverage,
+    run_formal_pipeline,
 )
 
 
@@ -67,3 +68,12 @@ def test_readiness_report_is_generated_from_structured_audit() -> None:
     )
     assert "**结论：** `ready`" in report
     assert "2,008" in report
+
+
+def test_superseded_release_requires_audit_reason(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="supplied together"):
+        run_formal_pipeline(
+            tmp_path,
+            publish=False,
+            superseded_run_id="old_release",
+        )

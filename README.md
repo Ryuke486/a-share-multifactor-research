@@ -63,6 +63,15 @@ python3.12 -m venv .venv
 .venv/bin/python -m ashare_multifactor.cli.formal_backtest all --publish
 ```
 
+隔离工作树没有独立虚拟环境时，使用主仓库环境并显式指定源码路径：
+
+```bash
+PYTHONPATH=src /Users/mikasa/本科时期/Projects/repository1/.venv/bin/python -m pytest -q
+```
+
+阶段六权威状态只能从 `processed/formal_backtest/CURRENT.json` 解析到不可变release；
+`artifacts/formal_backtest/` 下的便利报告属于单次诊断快照，不得用于判断当前发布状态。
+
 执行器包含T+1、整手、涨跌停、pending、滞后ADV容量、历史费用、滑点/冲击、除权日应收股利与派息日现金。完整成本、仅显性费用和零成本使用三套独立账本，并以后复权收益和长停牌证据作为发布门禁。
 
 阶段三MVP仍可独立复现：

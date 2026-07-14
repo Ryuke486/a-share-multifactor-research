@@ -298,3 +298,54 @@ def test_cost_scenarios_generate_independent_trades_and_positions() -> None:
     positions = result["scenario_positions"]
     assert positions.filter(pl.col("scenario") == "full_cost").is_empty()
     assert positions.filter(pl.col("scenario") == "zero_cost").item(0, "quantity") == 100
+
+
+def test_pending_buy_is_rebuilt_after_share_bonus() -> None:
+    panel = pl.DataFrame(
+        {
+            "date": [date(2010, 1, 4), date(2010, 1, 5)],
+            "symbol": ["000001", "000001"],
+            "open_raw": [10.0, 5.0],
+            "close_raw": [10.0, 5.0],
+            "prev_close_raw": [10.0, 5.0],
+            "adv20": [10_000.0, 10_000_000.0],
+            "limit_rate": [0.10, 0.10],
+            "is_suspended_proxy": [False, False],
+        }
+    )
+    targets = pl.DataFrame(
+        {"date": [date(2009, 12, 31)], "symbol": ["000001"], "target_weight": [1.0]}
+    )
+    actions = normalize_corporate_actions(
+        pl.DataFrame(
+            {
+                "symbol": ["000001"],
+                "ex_date": [date(2010, 1, 5)],
+                "effective_date": [date(2010, 1, 5)],
+                "cash_per_share": [0.0],
+                "share_ratio": [1.0],
+                "source": ["fixture"],
+            }
+        )
+    )
+
+    result = run_backtest(
+        panel,
+        targets,
+        actions,
+        load_market_rules(RULES),
+        BacktestSettings(
+            initial_cash=100_000.0,
+            fixed_slippage_bps=0.0,
+            reference_impact_bps=0.0,
+        ),
+    )
+
+    rebases = result["order_events"].filter(
+        pl.col("reason") == "corporate_action_rebase"
+    )
+    assert rebases.height == 1
+    old_order_id = rebases.item(0, "order_id")
+    assert result["orders"].filter(pl.col("order_id") == old_order_id).item(0, "status") == "cancelled"
+    replacement = result["orders"].filter(pl.col("order_id") != old_order_id).sort("signal_date")
+    assert replacement.tail(1).item(0, "quantity") == 19_700
