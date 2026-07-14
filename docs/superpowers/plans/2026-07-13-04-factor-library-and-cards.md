@@ -1,6 +1,6 @@
 # A股完整单因子库与因子卡片 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [x]) syntax for tracking.
 
 **Goal:** 在不读取验证期和最终测试期的前提下，建立覆盖2005–2016完整研究期的、预注册且可审计的A股单因子实验室，为阶段五因子合成提供候选清单、淘汰理由和稳定的数据接口。
 
@@ -654,29 +654,29 @@ git commit -m "feat: add price based factor families"
 **Interfaces:**
 - Produces: compute_value_factors、compute_liquidity_factors、compute_size_factor。
 
-- [ ] **Step 1: 写估值有效域测试**
+- [x] **Step 1: 写估值有效域测试**
 
 PE、PB、PS为零、负值、空值或非有限值时对应倒数必须为空；不能截断成有利数值。
 
-- [ ] **Step 2: 实现价值因子**
+- [x] **Step 2: 实现价值因子**
 
 输出原始EP、BP、SP，但携带unverified point-in-time状态；代码不得因为状态未核验而伪造数值。
 
-- [ ] **Step 3: 写Amihud和换手测试**
+- [x] **Step 3: 写Amihud和换手测试**
 
 成交额为零或非有限值时单日Amihud为空；20观测不足时为空；收益使用close_adj和prev_close_adj，成交额仍使用原始amount。
 
-- [ ] **Step 4: 实现流动性与规模因子**
+- [x] **Step 4: 实现流动性与规模因子**
 
 log_market_cap只接受有限正市值。禁止使用close_adj乘股本重算市值。
 
-- [ ] **Step 5: 运行测试**
+- [x] **Step 5: 运行测试**
 
 Run: .venv/bin/pytest tests/test_cross_sectional_factors.py -v
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交本任务**
+- [x] **Step 6: 提交本任务**
 
 ~~~bash
 git add src/ashare_multifactor/factors/value.py src/ashare_multifactor/factors/liquidity.py src/ashare_multifactor/factors/size.py tests/test_cross_sectional_factors.py
@@ -685,9 +685,9 @@ git commit -m "feat: add value liquidity and size factors"
 
 **验收：**
 
-- [ ] 价值字段缺失只降低覆盖率，不被填充为0。
-- [ ] Amihud不发生除零或Inf污染。
-- [ ] 市值口径与后复权价格完全解耦。
+- [x] 价值字段缺失只降低覆盖率，不被填充为0。
+- [x] Amihud不发生除零或Inf污染。
+- [x] 市值口径与后复权价格完全解耦。
 
 ---
 

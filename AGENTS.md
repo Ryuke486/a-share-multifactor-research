@@ -219,6 +219,8 @@
 5. 有充分样本外证据后，才考虑Ridge、Elastic Net或LightGBM；
 6. 复杂方法必须与简单基线比较。
 
+实际状态（2026-07-14）：阶段五已在2005–2016研究期完成运行，生成575,768条复合分数和28,800条月末目标权重。预注册 `family_equal` 的20日平均Rank IC为0.102201，滚动IC方案为0.101642，未因动态方法未超越简单基线而改选。规模分层缓冲组合平均单边目标换手为67.9583%，低于Top100等权基线的76.2083%；两组合平均持仓重合率为85%，每月均为100只、权重和为1。检查点A修复后，阶段五通过完整上游血缘、数据集契约和不可变release发布，两个独立dirty验证run的核心研究文件哈希一致；正式冻结run仍须在用户授权提交后生成。本阶段未模拟成交、未生成NAV，且未读取2017年及以后数据。
+
 ### 阶段六：正式A股回测
 
 小闭环后升级：
@@ -377,12 +379,13 @@
 
 ## 11. 计划文件的权威性和变更规则
 
-当前已批准的前四份实施计划：
+当前已批准的前五份实施计划：
 
 1. docs/superpowers/plans/2026-07-13-01-research-protocol.md
 2. docs/superpowers/plans/2026-07-13-02-data-foundation.md
 3. docs/superpowers/plans/2026-07-13-03-mvp-closed-loop.md
 4. docs/superpowers/plans/2026-07-13-04-factor-library-and-cards.md
+5. docs/superpowers/plans/2026-07-14-05-factor-combination-and-portfolio.md
 
 执行局部任务时，以本AGENTS.md的总目标和不可违反约束为最高项目级规则，以对应阶段计划作为具体实施清单。
 

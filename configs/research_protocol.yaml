@@ -37,3 +37,21 @@ factor_research:
   minimum_valid_months: 120
   fdr_q_threshold: 0.10
   redundancy_threshold: 0.70
+
+factor_combination:
+  analysis_start: 2005-01-01
+  analysis_end: 2016-12-31
+  methods: [candidate_equal, family_equal, representative_equal, rolling_ic_family]
+  primary_method: family_equal
+  minimum_families: 2
+  ic_window_months: 36
+  ic_minimum_months: 24
+  ic_shrinkage: 0.50
+
+portfolio_construction:
+  portfolio_size: 100
+  size_groups: 5
+  per_group: 20
+  buffer_rank: 30
+  minimum_coverage: 0.80
+  turnover_warning: 0.80
