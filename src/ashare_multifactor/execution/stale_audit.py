@@ -85,7 +85,10 @@ def audit_stale_positions(
             .alias("classification")
         )
         .select(*schema)
-        .sort("maximum_stale_days", descending=True)
+        .sort(
+            ["maximum_stale_days", "symbol"],
+            descending=[True, False],
+        )
     )
     unexplained = intervals.filter(pl.col("classification") == "unexplained").height
     return {
