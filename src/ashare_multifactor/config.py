@@ -60,6 +60,28 @@ class FactorResearchSettings:
 
 
 @dataclass(frozen=True)
+class FactorCombinationSettings:
+    analysis_start: date
+    analysis_end: date
+    methods: tuple[str, ...]
+    primary_method: str
+    minimum_families: int
+    ic_window_months: int
+    ic_minimum_months: int
+    ic_shrinkage: float
+
+
+@dataclass(frozen=True)
+class PortfolioConstructionSettings:
+    portfolio_size: int
+    size_groups: int
+    per_group: int
+    buffer_rank: int
+    minimum_coverage: float
+    turnover_warning: float
+
+
+@dataclass(frozen=True)
 class ResearchConfig:
     paths: Paths
     research: Period
@@ -69,6 +91,8 @@ class ResearchConfig:
     smoke_analysis: Period
     mvp: MvpSettings
     factor_research: FactorResearchSettings | None = None
+    factor_combination: FactorCombinationSettings | None = None
+    portfolio_construction: PortfolioConstructionSettings | None = None
 
 
 def _as_date(value: object) -> date:
@@ -110,6 +134,22 @@ def _factor_research(value: dict[str, object]) -> FactorResearchSettings:
         minimum_valid_months=value["minimum_valid_months"],
         fdr_q_threshold=value["fdr_q_threshold"],
         redundancy_threshold=value["redundancy_threshold"],
+    )
+
+
+def _factor_combination(value: dict[str, object]) -> FactorCombinationSettings:
+    methods = value["methods"]
+    if not isinstance(methods, (list, tuple)):
+        raise ValueError("factor_combination.methods must be a sequence")
+    return FactorCombinationSettings(
+        analysis_start=_as_date(value["analysis_start"]),
+        analysis_end=_as_date(value["analysis_end"]),
+        methods=tuple(methods),
+        primary_method=value["primary_method"],
+        minimum_families=value["minimum_families"],
+        ic_window_months=value["ic_window_months"],
+        ic_minimum_months=value["ic_minimum_months"],
+        ic_shrinkage=value["ic_shrinkage"],
     )
 
 
@@ -205,10 +245,48 @@ def _validate_factor_research(
             raise ValueError(f"factor_research.{field} must be finite and inside [0, 1]")
 
 
+def _validate_stage_five(
+    combination: FactorCombinationSettings,
+    portfolio: PortfolioConstructionSettings,
+    research: Period,
+) -> None:
+    if not research.contains(Period(combination.analysis_start, combination.analysis_end)):
+        raise ValueError("factor combination must stay inside the research period")
+    allowed = {
+        "candidate_equal", "family_equal", "representative_equal", "rolling_ic_family"
+    }
+    if not combination.methods or set(combination.methods) != allowed:
+        raise ValueError("factor_combination.methods must match the frozen methods")
+    if combination.primary_method not in combination.methods:
+        raise ValueError("factor_combination.primary_method must belong to methods")
+    for field in ("minimum_families", "ic_window_months", "ic_minimum_months"):
+        value = getattr(combination, field)
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"factor_combination.{field} must be a positive integer")
+    if combination.ic_minimum_months > combination.ic_window_months:
+        raise ValueError("factor combination minimum history exceeds its window")
+    if not _is_finite_number(combination.ic_shrinkage) or not 0 <= combination.ic_shrinkage <= 1:
+        raise ValueError("factor_combination.ic_shrinkage must be inside [0, 1]")
+    for field in ("portfolio_size", "size_groups", "per_group", "buffer_rank"):
+        value = getattr(portfolio, field)
+        if type(value) is not int or value <= 0:
+            raise ValueError(f"portfolio_construction.{field} must be a positive integer")
+    if portfolio.portfolio_size != portfolio.size_groups * portfolio.per_group:
+        raise ValueError("portfolio_construction.portfolio_size must equal size_groups * per_group")
+    if portfolio.buffer_rank < portfolio.per_group:
+        raise ValueError("portfolio buffer_rank must be at least per_group")
+    for field in ("minimum_coverage", "turnover_warning"):
+        value = getattr(portfolio, field)
+        if not _is_finite_number(value) or not 0 <= value <= 1:
+            raise ValueError(f"portfolio_construction.{field} must be inside [0, 1]")
+
+
 def load_config(path: Path) -> ResearchConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     periods = raw["periods"]
     factor_research = raw.get("factor_research")
+    factor_combination = raw.get("factor_combination")
+    portfolio_construction = raw.get("portfolio_construction")
     config = ResearchConfig(
         paths=Paths(**{key: Path(value) for key, value in raw["paths"].items()}),
         research=_period(periods["research"]),
@@ -219,6 +297,13 @@ def load_config(path: Path) -> ResearchConfig:
         mvp=MvpSettings(**raw["mvp"]),
         factor_research=(
             _factor_research(factor_research) if factor_research is not None else None
+        ),
+        factor_combination=(
+            _factor_combination(factor_combination) if factor_combination is not None else None
+        ),
+        portfolio_construction=(
+            PortfolioConstructionSettings(**portfolio_construction)
+            if portfolio_construction is not None else None
         ),
     )
     if config.research.overlaps(config.validation):
@@ -238,4 +323,10 @@ def load_config(path: Path) -> ResearchConfig:
         raise ValueError("portfolio size exceeds universe size")
     if config.factor_research is not None:
         _validate_factor_research(config.factor_research, config.research, config.validation)
+    if (config.factor_combination is None) != (config.portfolio_construction is None):
+        raise ValueError("stage five configuration sections must be provided together")
+    if config.factor_combination is not None and config.portfolio_construction is not None:
+        _validate_stage_five(
+            config.factor_combination, config.portfolio_construction, config.research
+        )
     return config

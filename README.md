@@ -48,6 +48,14 @@ python3.12 -m venv .venv
 
 `build` 仅构建2003–2016隔离数据集；`all` 依次执行字段审计、因子、评价和报告。阶段四不做因子合成、组合优化或正式回测，也不读取2017年及以后数据。
 
+从阶段四产物生成阶段五复合分数、目标权重和事前诊断：
+
+```bash
+.venv/bin/python -m ashare_multifactor.cli.combinations --config configs/research_protocol.yaml
+```
+
+阶段五只消费 `processed/factor_research/`，不读取原始CSV；滚动IC权重严格滞后一期。每次完整运行写入不可变release，`CURRENT.json`只在全部校验通过后切换。输出是阶段六的事前目标，不是真实成交回测。
+
 阶段三MVP仍可独立复现：
 
 从原始日文件重建2012–2015数据底座并完成全部MVP步骤：
@@ -73,6 +81,9 @@ python3.12 -m venv .venv
 - `processed/daily_panel/`：2012–2015按年份分区的统一Parquet、数据清单和质量问题记录；清单保存每个分区的行数、日期范围、大小和SHA-256。
 - `processed/mvp/`：信号、月末截面、Rank IC、目标权重、净回测成交/持仓/拒单账本、毛/净NAV与汇总，以及血缘信息等中间产物。
 - `artifacts/mvp/`：便于审计的 `rank_ic.csv`、`target_weights.parquet`、`trades.csv`、`holdings.parquet`、`blocked_orders.csv`、`nav.csv`、`gross_nav.csv`、`summary.json`、图表、运行清单、数据质量摘要和 `report.md`。
+- `processed/factor_combination/CURRENT.json`：当前权威阶段五release身份及manifest哈希。
+- `processed/factor_combination/releases/<run_id>/datasets/`：四种复合分数、每月因子权重、两套目标权重和组合诊断。
+- `processed/factor_combination/releases/<run_id>/artifacts/`：复合IC、月度截面相关性、换手、暴露、容量代理、质量问题、图表和机器生成报告。
 
 `report.md`中的指标从机器可读产物生成，不手工抄写回测数字。报告只说明管道可以运行、复现和审计，不应解读为策略赚钱、稳健或具备未来收益能力。
 
