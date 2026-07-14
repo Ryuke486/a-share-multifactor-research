@@ -1,0 +1,38 @@
+research_period: [2005-01-01, 2016-12-31]
+
+stamp_duty:
+  - {start: 2005-01-01, end: 2005-01-23, buy_rate: 0.002, sell_rate: 0.002}
+  - {start: 2005-01-24, end: 2007-05-29, buy_rate: 0.001, sell_rate: 0.001}
+  - {start: 2007-05-30, end: 2008-04-23, buy_rate: 0.003, sell_rate: 0.003}
+  - {start: 2008-04-24, end: 2008-09-18, buy_rate: 0.001, sell_rate: 0.001}
+  - {start: 2008-09-19, end: 2016-12-31, buy_rate: 0.0, sell_rate: 0.001}
+
+transfer_fee:
+  - {start: 2005-01-01, end: 2012-05-31, market: sh, basis: shares, rate: 0.001, minimum: 1.0}
+  - {start: 2012-06-01, end: 2012-08-31, market: sh, basis: shares, rate: 0.000375}
+  - {start: 2012-09-01, end: 2015-07-31, market: sh, basis: shares, rate: 0.0003}
+  - {start: 2015-08-01, end: 2016-12-31, market: sh, basis: amount, rate: 0.00002}
+  - {start: 2005-01-01, end: 2012-08-31, market: sz, basis: amount, rate: 0.0}
+  - {start: 2012-09-01, end: 2015-07-31, market: sz, basis: amount, rate: 0.0000255}
+  - {start: 2015-08-01, end: 2016-12-31, market: sz, basis: amount, rate: 0.00002}
+
+market_conventions:
+  buy_lot_size: 100
+  sell_odd_lot_on_full_exit: true
+  tick_size: 0.01
+  settlement: T+1
+  normal_limit_rate: 0.10
+  risk_warning_limit_rate: 0.05
+
+model_assumptions:
+  commission_rate: 0.0003
+  minimum_commission: 5.0
+  fixed_slippage_bps: 5.0
+  impact_reference_bps: 10.0
+  impact_reference_participation: 0.01
+  maximum_impact_bps: 50.0
+  maximum_participation: 0.10
+  adv_lookback: 20
+  sensitivity_commission_rates: [0.0001, 0.0003, 0.0005]
+  sensitivity_slippage_bps: [0.0, 5.0, 10.0]
+  sensitivity_maximum_participation: [0.05, 0.10, 0.20]

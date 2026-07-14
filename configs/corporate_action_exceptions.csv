@@ -1,0 +1,4 @@
+effective_date,source_symbol,event_type,target_symbol,ratio,cash_per_share,source
+2006-02-13,000618,cash_exit,,0.0,5.25,CNInfo 16440901 and SZSE tender-offer guide
+2009-05-06,000515,stock_merger,000629,1.78,0.0,SZSE implementation announcement beb7f2a7-90a5-4aa0-b5b5-7f0c22e6f56e
+2009-05-06,000569,stock_merger,000629,0.82,0.0,SZSE implementation announcement beb7f2a7-90a5-4aa0-b5b5-7f0c22e6f56e

@@ -55,3 +55,19 @@ portfolio_construction:
   buffer_rank: 30
   minimum_coverage: 0.80
   turnover_warning: 0.80
+
+formal_backtest:
+  analysis_start: 2005-01-01
+  analysis_end: 2016-12-31
+  initial_cash: 100000000.0
+  maximum_participation: 0.10
+  fixed_slippage_bps: 5.0
+  reference_impact_bps: 10.0
+  reference_participation: 0.01
+  maximum_impact_bps: 50.0
+  commission_rate: 0.0003
+  minimum_commission: 5.0
+  buy_lot_size: 100
+  adv_lookback: 20
+  shadow_divergence_threshold: 0.005
+  stale_review_days: 30

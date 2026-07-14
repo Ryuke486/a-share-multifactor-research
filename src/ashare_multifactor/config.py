@@ -82,6 +82,24 @@ class PortfolioConstructionSettings:
 
 
 @dataclass(frozen=True)
+class FormalBacktestSettings:
+    analysis_start: date
+    analysis_end: date
+    initial_cash: float
+    maximum_participation: float
+    fixed_slippage_bps: float
+    reference_impact_bps: float
+    reference_participation: float
+    maximum_impact_bps: float
+    commission_rate: float
+    minimum_commission: float
+    buy_lot_size: int
+    adv_lookback: int
+    shadow_divergence_threshold: float
+    stale_review_days: int
+
+
+@dataclass(frozen=True)
 class ResearchConfig:
     paths: Paths
     research: Period
@@ -93,6 +111,7 @@ class ResearchConfig:
     factor_research: FactorResearchSettings | None = None
     factor_combination: FactorCombinationSettings | None = None
     portfolio_construction: PortfolioConstructionSettings | None = None
+    formal_backtest: FormalBacktestSettings | None = None
 
 
 def _as_date(value: object) -> date:
@@ -287,6 +306,7 @@ def load_config(path: Path) -> ResearchConfig:
     factor_research = raw.get("factor_research")
     factor_combination = raw.get("factor_combination")
     portfolio_construction = raw.get("portfolio_construction")
+    formal_backtest = raw.get("formal_backtest")
     config = ResearchConfig(
         paths=Paths(**{key: Path(value) for key, value in raw["paths"].items()}),
         research=_period(periods["research"]),
@@ -304,6 +324,19 @@ def load_config(path: Path) -> ResearchConfig:
         portfolio_construction=(
             PortfolioConstructionSettings(**portfolio_construction)
             if portfolio_construction is not None else None
+        ),
+        formal_backtest=(
+            FormalBacktestSettings(
+                analysis_start=_as_date(formal_backtest["analysis_start"]),
+                analysis_end=_as_date(formal_backtest["analysis_end"]),
+                **{
+                    key: value
+                    for key, value in formal_backtest.items()
+                    if key not in {"analysis_start", "analysis_end"}
+                },
+            )
+            if formal_backtest is not None
+            else None
         ),
     )
     if config.research.overlaps(config.validation):
@@ -329,4 +362,35 @@ def load_config(path: Path) -> ResearchConfig:
         _validate_stage_five(
             config.factor_combination, config.portfolio_construction, config.research
         )
+    if config.formal_backtest is not None:
+        settings = config.formal_backtest
+        if not config.research.contains(Period(settings.analysis_start, settings.analysis_end)):
+            raise ValueError("formal backtest must stay inside research period")
+        if settings.analysis_end >= config.validation.start:
+            raise ValueError("formal backtest must stay before validation")
+        for field in ("buy_lot_size", "adv_lookback", "stale_review_days"):
+            value = getattr(settings, field)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"formal_backtest.{field} must be a positive integer")
+        for field in (
+            "initial_cash",
+            "maximum_participation",
+            "reference_participation",
+        ):
+            value = getattr(settings, field)
+            if not _is_finite_number(value) or value <= 0:
+                raise ValueError(f"formal_backtest.{field} must be positive and finite")
+        if settings.maximum_participation > 1:
+            raise ValueError("formal_backtest.maximum_participation must not exceed one")
+        for field in (
+            "fixed_slippage_bps",
+            "reference_impact_bps",
+            "maximum_impact_bps",
+            "commission_rate",
+            "minimum_commission",
+            "shadow_divergence_threshold",
+        ):
+            value = getattr(settings, field)
+            if not _is_finite_number(value) or value < 0:
+                raise ValueError(f"formal_backtest.{field} must be non-negative and finite")
     return config
