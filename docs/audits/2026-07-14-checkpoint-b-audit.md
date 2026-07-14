@@ -334,3 +334,19 @@ O-03至O-06可延后，但阶段七不得继续扩大现有超大文件或引用
 - [x] 检查点B复查记录完整。
 - [ ] 经用户确认后将阶段六分支合并到main，并在main复验测试、ruff及两个`CURRENT.json`。
 - [ ] 用户另行明确批准后才允许进入阶段七。
+
+### 第二次复查：额外再平衡修复（2026-07-15）
+
+**状态：** `passed_after_second_remediation_ready_to_merge`
+
+- 复查确认`f358569_stage6_remediated`存在122笔无旧pending、非新信号日生成的额外订单，其中117笔成交；该run已被替代，不得作为阶段七上游。
+- 修复提交：`de57558`。`corporate_action_rebase`现在必须存在受影响旧pending才会触发。
+- 新增交叉测试覆盖：无旧pending、pending买单、pending卖单、部分成交历史、现金分红应收、同日新信号、多公司行动单次重建、整手约束以及未来收盘/高低价/当日成交额不变性。
+- 全量验证：`588 passed`；`ruff check src tests`通过。
+- 双次run：`checkpoint_b2_repro_a_de57558`与`checkpoint_b2_repro_b_de57558`，31个核心文件哈希一致。
+- 新权威release：`de57558_stage6_final`；manifest SHA-256：`bda056f61985e8f1c116f0e4835297ce80bb692327af0f9769ff6575de523368`。
+- 新lineage记录替代`f358569_stage6_remediated`，原因为`superseded_due_to_unintended_corporate_action_rebalance`。
+- 完整成本期末NAV为698,471,802.37元；三场景最大逐日对账差约`2.38e-7`元。
+- 影子最大单日绝对偏差约0.3741%，未解释长期stale证券为0；2017年及以后仍未读取。
+
+合并main及main环境复验完成后，检查点B方可标记为最终`passed_after_remediation`。阶段七仍需用户另行明确批准。
