@@ -123,18 +123,18 @@ if affected_pending:
 
 只有以下条件全部满足后，才能开启板块7：
 
-- [ ] 多证券同日公司行动的重建范围已缩小为 `affected_symbols`；
-- [ ] 多证券混合反例已经红—绿验证；
-- [ ] 全量pytest和ruff通过；
-- [ ] 两个独立完整期run核心结果一致；
-- [ ] 上述35笔可疑订单在新release中降为0；
-- [ ] 新release来自干净Git提交；
-- [ ] 新release账务、影子NAV和stale门禁通过；
-- [ ] 旧release保留但明确标记为非权威；
-- [ ] `CURRENT.json` 已指向新release；
-- [ ] 所有release数据仍不超过2016-12-31；
-- [ ] 阶段五因子、目标权重和成本参数未改变；
-- [ ] 检查点B追加最终复查证据；
+- [x] 多证券同日公司行动的重建范围已缩小为 `affected_symbols`；
+- [x] 多证券混合反例已经红—绿验证；
+- [x] 全量pytest和ruff通过；
+- [x] 两个独立完整期run核心结果一致；
+- [x] 上述35笔可疑订单在新release中降为0；
+- [x] 新release来自干净Git提交；
+- [x] 新release账务、影子NAV和stale门禁通过；
+- [x] 旧release保留但明确标记为非权威；
+- [x] `CURRENT.json` 已指向新release；
+- [x] 所有release数据仍不超过2016-12-31；
+- [x] 阶段五因子、目标权重和成本参数未改变；
+- [x] 检查点B追加最终复查证据；
 - [ ] 用户明确批准进入板块7。
 
 ## 7. 当前结论
@@ -161,3 +161,13 @@ if affected_pending:
 - 影子最大单日绝对偏差约0.3741%，未解释长期stale证券为0；2017年及以后仍未读取。
 
 合并main并复验后，检查点B可恢复为`passed_after_remediation`。板块7仍需用户另行明确批准。
+
+### main合并后复验
+
+**最终状态：** `passed_after_remediation`
+
+- 修复通过合并提交`6454bb9`进入main。
+- main重新执行：`590 passed`，`ruff check src tests`通过。
+- main可完整解析`b995878_stage6_authoritative`及manifest，结构化准备度为`ready`。
+- main权威release所有日期字段均未超过2016-12-31。
+- B-04及第三次检查点B关闭；板块7仍需用户另行明确批准。
