@@ -56,7 +56,7 @@
 - [x] 先在人工夹具上测试schema、六位symbol、`(date, symbol)`唯一性和两种口径1:1连接。
 - [x] 复用阶段二规范化逻辑，按年生成2017–2021 Parquet，禁止研究模块直接读CSV。
 - [x] 产出日期范围、行数、主键、schema、文件哈希和质量问题摘要。
-- [x] 先运行小日期样本，再扩大至2017–2021；最终两次完整流水线run manifest记录耗时205–229秒、峰值RSS约8.95–9.02GB。
+- [x] 先运行小日期样本，再扩大至2017–2021；干净提交上的两次完整流水线run manifest记录耗时210–224秒、峰值RSS约8.73–8.82GB。
 
 ## Task 3：无重新选择地外推因子和复合分数
 
@@ -118,7 +118,7 @@
 - Produces: `processed/validation_evaluation/CURRENT.json`、release manifest/lineage/report。
 
 - [x] 发布前验证所有数据集最大日期不超过2021-12-31。
-- [ ] 在同一干净提交、配置和输入上执行两个独立run，比较核心产物哈希。
+- [x] 在干净提交 `efc0267`、相同配置和冻结输入上执行两个独立run，98个核心产物哈希一致。
 - [x] 血缘绑定阶段四、五、六release和validation日面板。
 - [x] 报告明确“验证期结果不是最终样本外证据”。
 
@@ -129,5 +129,5 @@
 - [x] 选择规则在结果之前已冻结；
 - [x] 主方案及失败候选均有机器可读证据；
 - [x] 三场景账本和逐日对账通过；
-- [x] 开发工作树下两个独立完整run的98个核心产物哈希一致；正式发布仍需在同一干净提交上复跑；
-- [ ] validation release已发布且Git工作区干净。
+- [x] 干净提交上的两个独立完整run可复现；
+- [x] validation release `efc0267_stage7_validation` 已发布，manifest SHA-256为 `c047f81c62d49b54159bff8765276eed683e541aaa826ad7173ea566206be728`。
