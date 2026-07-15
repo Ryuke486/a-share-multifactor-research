@@ -1,0 +1,135 @@
+protocol_version: 1
+random_seed: 20260715
+analysis_period: [2005-01-01, 2021-12-31]
+sealed_test_period: [2022-01-01, 2025-12-31]
+validation_release: efc0267_stage7_validation
+main_candidate: rolling_ic_family_size_stratified_buffered
+baseline_experiment: execution_full_cost
+required_metrics:
+  - annual_return
+  - annual_volatility
+  - maximum_drawdown
+  - turnover
+  - cost_erosion
+  - unfilled_rate
+  - target_deviation
+interpretation:
+  return_tolerance: 0.02
+  drawdown_tolerance: 0.05
+  turnover_tolerance: 0.15
+  fatal_statuses: [implementation_bug, protocol_breach, accounting_failure]
+experiments:
+  execution_full_cost:
+    category: execution
+    baseline: true
+    change: full audited cost model
+    parameters: {cost_mode: full}
+  execution_zero_cost:
+    category: execution
+    change: remove all trading costs
+    parameters: {cost_mode: zero}
+  execution_explicit_only:
+    category: execution
+    change: retain explicit fees and remove slippage and impact
+    parameters: {cost_mode: explicit_only}
+  execution_slippage_low:
+    category: execution
+    change: fixed slippage from 5 to 0 bps
+    parameters: {fixed_slippage_bps: 0.0}
+  execution_slippage_high:
+    category: execution
+    change: fixed slippage from 5 to 10 bps
+    parameters: {fixed_slippage_bps: 10.0}
+  execution_impact_low:
+    category: execution
+    change: reference impact from 10 to 5 bps
+    parameters: {reference_impact_bps: 5.0}
+  execution_impact_high:
+    category: execution
+    change: reference impact from 10 to 20 bps
+    parameters: {reference_impact_bps: 20.0}
+  execution_participation_low:
+    category: execution
+    change: maximum participation from 10% to 5%
+    parameters: {maximum_participation: 0.05}
+  execution_participation_high:
+    category: execution
+    change: maximum participation from 10% to 20%
+    parameters: {maximum_participation: 0.20}
+  execution_commission_low:
+    category: execution
+    change: commission rate from 3 to 1 bps
+    parameters: {commission_rate: 0.0001}
+  execution_commission_high:
+    category: execution
+    change: commission rate from 3 to 5 bps
+    parameters: {commission_rate: 0.0005}
+  execution_minimum_commission_low:
+    category: execution
+    change: minimum commission from 5 to 0 CNY
+    parameters: {minimum_commission: 0.0}
+  execution_minimum_commission_high:
+    category: execution
+    change: minimum commission from 5 to 10 CNY
+    parameters: {minimum_commission: 10.0}
+  portfolio_baseline:
+    category: portfolio
+    baseline: true
+    change: frozen monthly Top100 size-stratified buffered portfolio
+    parameters: {portfolio_size: 100, buffer_rank: 30, universe_size: 1000, rebalance_months: 1}
+  portfolio_size_low:
+    category: portfolio
+    change: holdings from 100 to 80
+    parameters: {portfolio_size: 80}
+  portfolio_size_high:
+    category: portfolio
+    change: holdings from 100 to 120
+    parameters: {portfolio_size: 120}
+  portfolio_buffer_low:
+    category: portfolio
+    change: buffer rank from 30 to 20
+    parameters: {buffer_rank: 20}
+  portfolio_buffer_high:
+    category: portfolio
+    change: buffer rank from 30 to 40
+    parameters: {buffer_rank: 40}
+  portfolio_universe_low:
+    category: portfolio
+    change: liquid universe from 1000 to 800
+    parameters: {universe_size: 800}
+  portfolio_universe_high:
+    category: portfolio
+    change: liquid universe from 1000 to 1200
+    parameters: {universe_size: 1200}
+  portfolio_rebalance_bimonthly:
+    category: portfolio
+    change: rebalance every two month-end signals
+    parameters: {rebalance_months: 2}
+  factor_ablation_liquidity:
+    category: factor_ablation
+    change: remove liquidity family only
+    parameters: {removed_family: liquidity}
+  factor_ablation_reversal:
+    category: factor_ablation
+    change: remove reversal family only
+    parameters: {removed_family: reversal}
+  factor_ablation_low_volatility:
+    category: factor_ablation
+    change: remove low-volatility family only
+    parameters: {removed_family: low_volatility}
+  rolling_window_low:
+    category: rolling_window
+    change: rolling IC history from 36 to 24 months
+    parameters: {window_months: 24, minimum_months: 16}
+  rolling_window_high:
+    category: rolling_window
+    change: rolling IC history from 36 to 48 months
+    parameters: {window_months: 48, minimum_months: 32}
+  regime_pre_registered:
+    category: regime
+    change: pre-registered time, market, volatility, size and industry-limit segments
+    parameters:
+      market_return_threshold: 0.0
+      volatility_quantile: 0.5
+      size_groups: 2
+      industry_status: unverified_descriptive_only

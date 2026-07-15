@@ -27,6 +27,7 @@ ashare-factors = "ashare_multifactor.cli.factors:main"
 ashare-combine = "ashare_multifactor.cli.combinations:main"
 ashare-backtest = "ashare_multifactor.cli.formal_backtest:main"
 ashare-validation = "ashare_multifactor.cli.validation:main"
+ashare-robustness = "ashare_multifactor.cli.robustness:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
