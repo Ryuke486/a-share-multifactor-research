@@ -38,6 +38,67 @@ def test_combination_evaluation_computes_rank_ic_with_current_polars() -> None:
     assert result.ic.get_column("rank_ic").to_list() == pytest.approx([1.0, 1.0, 1.0])
 
 
+def test_combination_evaluation_accepts_validation_subperiod() -> None:
+    scores = pl.DataFrame(
+        {
+            "date": [date(2017, 1, 31)] * 3,
+            "symbol": ["A", "B", "C"],
+            "method": ["family_equal"] * 3,
+            "score": [-1.0, 0.0, 1.0],
+        }
+    )
+    returns = pl.DataFrame(
+        {
+            "date": [date(2017, 1, 31)] * 3,
+            "symbol": ["A", "B", "C"],
+            "forward_return_5": [-0.1, 0.0, 0.1],
+            "forward_return_20": [-0.2, 0.0, 0.2],
+            "forward_return_60": [-0.3, 0.0, 0.3],
+        }
+    )
+
+    result = evaluate_combinations(
+        scores,
+        returns,
+        subperiod_boundaries=(("2017-2021", 2017, 2021),),
+    )
+
+    assert result.subperiods.get_column("subperiod").unique().to_list() == [
+        "2017-2021"
+    ]
+
+
+def test_combination_correlations_accept_mixed_null_and_string_reasons() -> None:
+    signal_date = date(2017, 1, 31)
+    scores = pl.DataFrame(
+        {
+            "date": [signal_date] * 3,
+            "symbol": ["A", "B", "C"],
+            "method": ["family_equal"] * 3,
+            "score": [-1.0, 0.0, 1.0],
+        }
+    )
+    returns = scores.select("date", "symbol").with_columns(
+        pl.Series("forward_return_5", [-0.1, 0.0, 0.1]),
+        pl.Series("forward_return_20", [-0.2, 0.0, 0.2]),
+        pl.Series("forward_return_60", [-0.3, 0.0, 0.3]),
+    )
+    factor_panel = pl.DataFrame(
+        {
+            "date": [signal_date] * 6,
+            "symbol": ["A", "B", "C"] * 2,
+            "factor_name": ["varying"] * 3 + ["constant"] * 3,
+            "score_size_neutral": [-1.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        }
+    )
+
+    result = evaluate_combinations(scores, returns, factor_panel)
+
+    assert set(result.correlation_monthly.get_column("reason").drop_nulls()) == {
+        "constant_series"
+    }
+
+
 def test_combination_lineage_is_json_serializable(tmp_path: Path) -> None:
     for name in UPSTREAM_FILES:
         (tmp_path / name).write_bytes(b"input")

@@ -28,6 +28,9 @@ def schedule() -> FeeSchedule:
         (date(2008, 9, 19), "buy", 0.0),
         (date(2008, 9, 19), "sell", 0.001),
         (date(2016, 12, 30), "sell", 0.001),
+        (date(2017, 1, 3), "sell", 0.001),
+        (date(2021, 12, 31), "buy", 0.0),
+        (date(2021, 12, 31), "sell", 0.001),
     ],
 )
 def test_stamp_duty_boundaries(
@@ -42,6 +45,8 @@ def test_transfer_fee_historical_boundaries(schedule: FeeSchedule) -> None:
     assert schedule.transfer_fee(date(2012, 9, 1), "sh", 10_000.0, 1_000) == 0.3
     assert schedule.transfer_fee(date(2015, 7, 31), "sz", 10_000.0, 1_000) == 0.255
     assert schedule.transfer_fee(date(2015, 8, 1), "sz", 10_000.0, 1_000) == 0.2
+    assert schedule.transfer_fee(date(2021, 12, 31), "sh", 10_000.0, 1_000) == 0.2
+    assert schedule.transfer_fee(date(2021, 12, 31), "sz", 10_000.0, 1_000) == 0.2
 
 
 def test_explicit_fee_components_are_hand_calculable(schedule: FeeSchedule) -> None:
@@ -66,4 +71,3 @@ def test_market_rules_reject_unknown_market(schedule: FeeSchedule) -> None:
 def test_limit_prices_use_decimal_half_up_rounding() -> None:
     assert limit_prices(10.05, 0.10) == (9.05, 11.06)
     assert limit_prices(10.05, 0.05) == (9.55, 10.55)
-

@@ -26,6 +26,7 @@ class BacktestSettings:
     reference_participation: float = 0.01
     maximum_impact_bps: float = 50.0
     buy_lot_size: int = 100
+    analysis_end: date = date(2016, 12, 31)
 
 
 def _order_id(signal_date: date, symbol: str, side: str, sequence: int) -> str:
@@ -44,10 +45,10 @@ def _run_backtest_once(
     if not 0 < settings.maximum_participation <= 1:
         raise ValueError("maximum_participation must be inside (0, 1]")
     dates = execution_panel["date"].unique().sort().to_list()
-    if not dates or max(dates) > date(2016, 12, 31):
-        raise ValueError("execution panel outside research period")
-    if target_weights.filter(pl.col("date") > date(2016, 12, 31)).height:
-        raise ValueError("target weights outside research period")
+    if not dates or max(dates) > settings.analysis_end:
+        raise ValueError("execution panel outside configured backtest period")
+    if target_weights.filter(pl.col("date") > settings.analysis_end).height:
+        raise ValueError("target weights outside configured backtest period")
 
     by_date: dict[date, dict[str, dict[str, object]]] = {}
     for row in execution_panel.sort("date", "symbol").iter_rows(named=True):
@@ -198,26 +199,31 @@ def _run_backtest_once(
 
         for event in security_events_by_date.get(trade_date, []):
             source = event["source_symbol"]
-            quantity = ledger.quantity(source)
-            if not quantity:
-                continue
             for order in [item for item in pending if item.symbol == source]:
                 cancelled = transition(order, OrderStatus.CANCELLED)
                 record_event(cancelled, trade_date, "security_event")
             pending = [item for item in pending if item.symbol != source]
+            quantity = ledger.quantity(source)
+            if not quantity:
+                continue
             cash_sequence += 1
-            if event["event_type"] == "cash_exit":
-                proceeds = ledger.cash_exit(source, event["cash_per_share"])
+            if event["event_type"] in {"cash_exit", "write_off"}:
+                cash_per_share = (
+                    event["cash_per_share"]
+                    if event["event_type"] == "cash_exit"
+                    else 0.0
+                )
+                proceeds = ledger.cash_exit(source, cash_per_share)
                 for alternate in (
                     ledgers["explicit_fee_only"],
                     ledgers["zero_cost"],
                 ):
-                    alternate.cash_exit(source, event["cash_per_share"])
+                    alternate.cash_exit(source, cash_per_share)
                 cash_rows.append(
                     {
                         "cash_event_id": f"c{cash_sequence:09d}",
                         "date": trade_date,
-                        "event_type": "cash_exit",
+                        "event_type": event["event_type"],
                         "symbol": source,
                         "amount": proceeds,
                         "order_id": None,

@@ -100,6 +100,21 @@ class FormalBacktestSettings:
 
 
 @dataclass(frozen=True)
+class ValidationEvaluationSettings:
+    data_start: date
+    analysis_start: date
+    analysis_end: date
+    primary_metric: str
+    secondary_metrics: tuple[str, ...]
+    candidates: tuple[str, ...]
+    default_candidate: str
+    minimum_return_improvement: float
+    maximum_drawdown_deterioration: float
+    maximum_turnover_increase: float
+    approved_stage_six_releases: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ResearchConfig:
     paths: Paths
     research: Period
@@ -112,6 +127,7 @@ class ResearchConfig:
     factor_combination: FactorCombinationSettings | None = None
     portfolio_construction: PortfolioConstructionSettings | None = None
     formal_backtest: FormalBacktestSettings | None = None
+    validation_evaluation: ValidationEvaluationSettings | None = None
 
 
 def _as_date(value: object) -> date:
@@ -169,6 +185,22 @@ def _factor_combination(value: dict[str, object]) -> FactorCombinationSettings:
         ic_window_months=value["ic_window_months"],
         ic_minimum_months=value["ic_minimum_months"],
         ic_shrinkage=value["ic_shrinkage"],
+    )
+
+
+def _validation_evaluation(value: dict[str, object]) -> ValidationEvaluationSettings:
+    return ValidationEvaluationSettings(
+        data_start=_as_date(value["data_start"]),
+        analysis_start=_as_date(value["analysis_start"]),
+        analysis_end=_as_date(value["analysis_end"]),
+        primary_metric=value["primary_metric"],
+        secondary_metrics=tuple(value["secondary_metrics"]),
+        candidates=tuple(value["candidates"]),
+        default_candidate=value["default_candidate"],
+        minimum_return_improvement=value["minimum_return_improvement"],
+        maximum_drawdown_deterioration=value["maximum_drawdown_deterioration"],
+        maximum_turnover_increase=value["maximum_turnover_increase"],
+        approved_stage_six_releases=tuple(value["approved_stage_six_releases"]),
     )
 
 
@@ -307,6 +339,7 @@ def load_config(path: Path) -> ResearchConfig:
     factor_combination = raw.get("factor_combination")
     portfolio_construction = raw.get("portfolio_construction")
     formal_backtest = raw.get("formal_backtest")
+    validation_evaluation = raw.get("validation_evaluation")
     config = ResearchConfig(
         paths=Paths(**{key: Path(value) for key, value in raw["paths"].items()}),
         research=_period(periods["research"]),
@@ -336,6 +369,11 @@ def load_config(path: Path) -> ResearchConfig:
                 },
             )
             if formal_backtest is not None
+            else None
+        ),
+        validation_evaluation=(
+            _validation_evaluation(validation_evaluation)
+            if validation_evaluation is not None
             else None
         ),
     )
@@ -393,4 +431,31 @@ def load_config(path: Path) -> ResearchConfig:
             value = getattr(settings, field)
             if not _is_finite_number(value) or value < 0:
                 raise ValueError(f"formal_backtest.{field} must be non-negative and finite")
+    if config.validation_evaluation is not None:
+        settings = config.validation_evaluation
+        if Period(settings.analysis_start, settings.analysis_end) != config.validation:
+            raise ValueError("validation evaluation must match the frozen validation period")
+        if settings.data_start != date(2003, 1, 1):
+            raise ValueError("validation evaluation data_start must preserve 2003 warmup")
+        if settings.primary_metric != "net_annual_return":
+            raise ValueError("validation primary metric must be net_annual_return")
+        expected_candidates = {
+            "family_equal_size_stratified_buffered",
+            "rolling_ic_family_size_stratified_buffered",
+            "family_equal_top100_equal",
+        }
+        if set(settings.candidates) != expected_candidates:
+            raise ValueError("validation candidates must match the frozen comparison set")
+        if settings.default_candidate not in settings.candidates:
+            raise ValueError("validation default candidate must belong to candidates")
+        if not settings.approved_stage_six_releases:
+            raise ValueError("validation requires an approved stage six release")
+        for field in (
+            "minimum_return_improvement",
+            "maximum_drawdown_deterioration",
+            "maximum_turnover_increase",
+        ):
+            value = getattr(settings, field)
+            if not _is_finite_number(value) or value < 0:
+                raise ValueError(f"validation_evaluation.{field} must be non-negative")
     return config

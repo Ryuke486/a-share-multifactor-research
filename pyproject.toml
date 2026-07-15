@@ -7,6 +7,7 @@ name = "ashare-multifactor"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
+  "baostock>=0.9.3",
   "matplotlib>=3.9",
   "numpy>=2.0",
   "polars>=1.30",
@@ -25,6 +26,7 @@ ashare-mvp = "ashare_multifactor.research.mvp:main"
 ashare-factors = "ashare_multifactor.cli.factors:main"
 ashare-combine = "ashare_multifactor.cli.combinations:main"
 ashare-backtest = "ashare_multifactor.cli.formal_backtest:main"
+ashare-validation = "ashare_multifactor.cli.validation:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

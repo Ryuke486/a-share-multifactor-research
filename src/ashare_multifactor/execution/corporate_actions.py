@@ -21,7 +21,11 @@ def _action_id(row: dict[str, object]) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:24]
 
 
-def normalize_corporate_actions(frame: pl.DataFrame) -> pl.DataFrame:
+def normalize_corporate_actions(
+    frame: pl.DataFrame,
+    *,
+    maximum_date: date = date(2016, 12, 31),
+) -> pl.DataFrame:
     required = {
         "symbol",
         "effective_date",
@@ -47,9 +51,9 @@ def normalize_corporate_actions(frame: pl.DataFrame) -> pl.DataFrame:
     )
     if normalized.filter(
         (pl.col("ex_date") < date(2005, 1, 1))
-        | (pl.col("ex_date") > date(2016, 12, 31))
+        | (pl.col("ex_date") > maximum_date)
         | (pl.col("effective_date") < date(2005, 1, 1))
-        | (pl.col("effective_date") > date(2016, 12, 31))
+        | (pl.col("effective_date") > maximum_date)
         | (pl.col("cash_per_share") < 0)
         | (pl.col("share_ratio") < -1)
     ).height:

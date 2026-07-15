@@ -163,10 +163,15 @@ def _validated_output_root(
         return config.paths.processed / "daily_panel"
 
     processed_logical = Path(os.path.abspath(config.paths.processed))
+    requested_logical = Path(os.path.abspath(output_root))
+    validation_logical = processed_logical / "validation_evaluation/daily_panel"
+    if requested_logical == validation_logical:
+        return config.paths.processed / "validation_evaluation/daily_panel"
     expected_logical = processed_logical / "factor_research/daily_panel"
-    if Path(os.path.abspath(output_root)) != expected_logical:
+    if requested_logical != expected_logical:
         raise ValueError(
-            "output_root must equal configured factor research daily panel"
+            "output_root must equal configured factor research daily panel "
+            "or validation daily panel"
         )
 
     factor_root = config.paths.processed / "factor_research"
@@ -205,6 +210,10 @@ def build_parquet_dataset(
         allowed_start = config.smoke_data.start
         allowed_end = config.smoke_data.end
         period_name = "smoke_data"
+    elif target == config.paths.processed / "validation_evaluation/daily_panel":
+        allowed_start = config.validation.start
+        allowed_end = config.validation.end
+        period_name = "validation"
     else:
         if config.factor_research is None:
             raise ValueError("explicit output_root requires factor_research settings")

@@ -110,6 +110,95 @@ def test_corporate_action_changes_cash_and_shares_before_valuation() -> None:
     assert result["cash_ledger"].filter(pl.col("event_type") == "cash_dividend").height == 1
 
 
+def test_security_write_off_removes_untradable_position_at_zero_value() -> None:
+    dates = [date(2010, 1, 4), date(2010, 1, 5), date(2010, 1, 6)]
+    panel = pl.DataFrame(
+        {
+            "date": dates,
+            "symbol": ["000001"] * 3,
+            "open_raw": [10.0, 10.0, None],
+            "close_raw": [10.0, 10.0, None],
+            "prev_close_raw": [10.0, 10.0, 10.0],
+            "adv20": [10_000_000.0] * 3,
+            "limit_rate": [0.10] * 3,
+            "is_suspended_proxy": [False, False, True],
+        }
+    )
+    targets = pl.DataFrame(
+        {"date": [date(2009, 12, 31)], "symbol": ["000001"], "target_weight": [0.5]}
+    )
+    events = pl.DataFrame(
+        {
+            "effective_date": [date(2010, 1, 6)],
+            "source_symbol": ["000001"],
+            "event_type": ["write_off"],
+            "target_symbol": [None],
+            "ratio": [0.0],
+            "cash_per_share": [0.0],
+            "source": ["fixture"],
+        }
+    )
+
+    result = run_backtest(
+        panel,
+        targets,
+        _empty_actions(),
+        load_market_rules(RULES),
+        BacktestSettings(initial_cash=100_000.0, fixed_slippage_bps=0.0),
+        events,
+    )
+
+    assert result["positions"].filter(pl.col("date") == date(2010, 1, 6)).is_empty()
+    event = result["cash_ledger"].filter(pl.col("event_type") == "write_off")
+    assert event.height == 1
+    assert event.item(0, "amount") == 0.0
+
+
+def test_security_event_cancels_pending_order_without_existing_position() -> None:
+    dates = [date(2010, 1, 4), date(2010, 1, 5), date(2010, 1, 6)]
+    panel = pl.DataFrame(
+        {
+            "date": dates,
+            "symbol": ["000001"] * 3,
+            "open_raw": [10.0] * 3,
+            "close_raw": [10.0] * 3,
+            "prev_close_raw": [10.0] * 3,
+            "adv20": [10_000_000.0] * 3,
+            "limit_rate": [0.10] * 3,
+            "is_suspended_proxy": [True] * 3,
+        }
+    )
+    targets = pl.DataFrame(
+        {"date": [date(2009, 12, 31)], "symbol": ["000001"], "target_weight": [1.0]}
+    )
+    events = pl.DataFrame(
+        {
+            "effective_date": [date(2010, 1, 6)],
+            "source_symbol": ["000001"],
+            "event_type": ["write_off"],
+            "target_symbol": [None],
+            "ratio": [0.0],
+            "cash_per_share": [0.0],
+            "source": ["fixture"],
+        }
+    )
+
+    result = run_backtest(
+        panel,
+        targets,
+        _empty_actions(),
+        load_market_rules(RULES),
+        BacktestSettings(initial_cash=100_000.0),
+        events,
+    )
+
+    cancelled = result["order_events"].filter(
+        pl.col("reason") == "security_event"
+    )
+    assert cancelled.height == 1
+    assert cancelled.item(0, "status") == "cancelled"
+
+
 def test_cash_dividend_is_receivable_between_ex_and_payment_dates() -> None:
     panel = pl.DataFrame(
         {

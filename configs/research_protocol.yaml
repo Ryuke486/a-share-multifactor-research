@@ -71,3 +71,19 @@ formal_backtest:
   adv_lookback: 20
   shadow_divergence_threshold: 0.005
   stale_review_days: 30
+
+validation_evaluation:
+  data_start: 2003-01-01
+  analysis_start: 2017-01-01
+  analysis_end: 2021-12-31
+  primary_metric: net_annual_return
+  secondary_metrics: [rank_ic, icir, maximum_drawdown, turnover, cost_erosion]
+  candidates:
+    - family_equal_size_stratified_buffered
+    - rolling_ic_family_size_stratified_buffered
+    - family_equal_top100_equal
+  default_candidate: family_equal_size_stratified_buffered
+  minimum_return_improvement: 0.01
+  maximum_drawdown_deterioration: 0.05
+  maximum_turnover_increase: 0.10
+  approved_stage_six_releases: [b995878_stage6_authoritative]

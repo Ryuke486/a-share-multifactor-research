@@ -23,6 +23,12 @@ def evaluate_combinations(
     scores: pl.DataFrame,
     returns: pl.DataFrame,
     factor_panel: pl.DataFrame | None = None,
+    *,
+    subperiod_boundaries: tuple[tuple[str, int, int], ...] = (
+        ("2005-2008", 2005, 2008),
+        ("2009-2012", 2009, 2012),
+        ("2013-2016", 2013, 2016),
+    ),
 ) -> CombinationEvaluation:
     joined = scores.join(returns, on=["date", "symbol"], how="left", validate="m:1")
     ic_rows: list[dict[str, object]] = []
@@ -82,7 +88,7 @@ def evaluate_combinations(
             ),
         })
     summary = summary.join(pl.DataFrame(q_metrics), on="method", how="left", validate="m:1")
-    subperiods = _subperiods(ic)
+    subperiods = _subperiods(ic, subperiod_boundaries)
     correlations, correlation_monthly = _correlations(scores, factor_panel)
     return CombinationEvaluation(
         ic, quantiles, subperiods, correlations, correlation_monthly, summary
@@ -96,9 +102,10 @@ def _spearman(left: pl.Series, right: pl.Series) -> float | None:
     return float(value) if value is not None and np.isfinite(value) else None
 
 
-def _subperiods(ic: pl.DataFrame) -> pl.DataFrame:
-    boundaries = (("2005-2008", 2005, 2008), ("2009-2012", 2009, 2012),
-                  ("2013-2016", 2013, 2016))
+def _subperiods(
+    ic: pl.DataFrame,
+    boundaries: tuple[tuple[str, int, int], ...],
+) -> pl.DataFrame:
     rows = []
     for label, start, end in boundaries:
         part = ic.filter(pl.col("date").dt.year().is_between(start, end))
@@ -107,7 +114,16 @@ def _subperiods(ic: pl.DataFrame) -> pl.DataFrame:
             pl.col("rank_ic").count().alias("valid_months"),
         ).iter_rows(named=True):
             rows.append({"subperiod": label, **row})
-    return pl.DataFrame(rows).sort("method", "horizon", "subperiod")
+    return pl.DataFrame(
+        rows,
+        schema={
+            "subperiod": pl.String,
+            "method": pl.String,
+            "horizon": pl.Int64,
+            "mean_ic": pl.Float64,
+            "valid_months": pl.UInt32,
+        },
+    ).sort("method", "horizon", "subperiod")
 
 
 def _correlations(
@@ -128,7 +144,9 @@ def _correlations(
         for left in methods:
             for right in factors:
                 pair_frames.append(_monthly_pair(combined, left, right, "single_factor"))
-    monthly = pl.concat(pair_frames).sort("date", "left_name", "right_name")
+    monthly = pl.concat(pair_frames, how="vertical_relaxed").sort(
+        "date", "left_name", "right_name"
+    )
     rows = []
     for (left, right, right_type), frame in monthly.group_by(
         "left_name", "right_name", "right_type", maintain_order=True

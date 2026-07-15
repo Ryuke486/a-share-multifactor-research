@@ -1,0 +1,3 @@
+effective_date,source_symbol,event_type,target_symbol,ratio,cash_per_share,source_url,cache_file,sha256
+2017-12-25,000916,stock_merger,001965,0.6956,0.0,https://static.cninfo.com.cn/finalpage/2017-12-21/1204242424.PDF,000916_1204242424.pdf,e7d80db31de5967db9c1184d9081339dd9252967077235df39fbc50e8793b54e
+2018-12-28,000979,write_off,,0.0,0.0,https://disc.static.szse.cn/download/disc/disk01/finalpage/2018-12-28/c0f86b35-1ad0-4f00-af09-3e491ccd1164.PDF,000979_c0f86b35.pdf,6ad69710152c6d8e8f8d7bba9cba01508b0a662ec549798451486de959e8592e
