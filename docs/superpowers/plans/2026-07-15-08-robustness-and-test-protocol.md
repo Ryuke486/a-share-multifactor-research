@@ -81,7 +81,7 @@
 - [x] 实现封存最终代码提交、配置、上游release、主组合、日期、成本、指标、报告模板和随机种子哈希的机器门禁。
 - [x] 明确测试期只允许执行一个权威run，失败运行必须保留记录。
 - [x] 实现测试开启令牌验证；无用户明确批准时拒绝扫描2022年及以后文件。
-- [ ] 在同一干净提交下发布两个独立可复现run后的robustness release，但不打开测试期。
+- [x] 在同一干净提交下发布两个独立可复现run后的robustness release，但不打开测试期。
 
 ## 验收清单
 
@@ -90,7 +90,7 @@
 - [x] 变体没有被用于事后改选主方案；
 - [x] 成本、组合、因子删除和市场分段结果已生成；
 - [x] 失败变体已报告；
-- [ ] `sealed_test_protocol.json` 已在干净提交下正式发布并可完整复验；
+- [x] `sealed_test_protocol.json` 已在干净提交下正式发布并可完整复验；
 - [x] 2022–2025仍为零读取；
 - [x] 用户批准前测试开启门禁保持关闭。
 
@@ -101,6 +101,9 @@
 - 加固后真实全链路run：`stage8_hardened_dirty_v2`；242行、27个实验，最大日期`2021-12-31`，机器门禁`ready_to_seal`。首次加固run在规模分段列顺序处失败并自动删除，随后以失败回归测试完成修复。
 - 发布与封存加固：权威期间契约在Parquet扫描前校验；实际Stage5/因子研究输入全部绑定哈希；发布前复验双run源文件；最终测试令牌采用外部密钥HMAC、sealed payload完整性重算和唯一绝对账本路径的原子单次消费。
 - 独立代码审查最终结论：Critical 0、Important 0；全量`665 passed`及ruff通过。
+- 干净实现提交：`58adad4f4b376af4b966dcab68bcb8c1602a4170`。两个独立完整run为`58adad4_stage8_clean_1`、`58adad4_stage8_clean_2`，`outputs_identical=true`、`release_eligible=true`。
+- 权威release：`58adad4_stage8_robustness`；manifest SHA-256 `975291896c01cd7fdf7ab2a56247a28ac9f8cbc20d26708f76b5e25bfe620a21`。3个核心哈希为：results `777f47f82c5bbe0b8d395b3779c21b4952554b7fb1d3e87442dfab71b7a28aa5`、report `484e6216f62a96947aa3f6a8f7000597ef5734b8c6df7147bec54eff8016c90f`、gate `6e689301b9945a6767e50249b4b7dab84bca916f56936d733456815aabbe3ccf`。
+- `sealed_test_protocol.json` payload哈希、报告模板哈希、`CURRENT.json`和release manifest已完整复验；`opening_token_status=closed`，唯一消费账本不存在，2022–2025未打开。
 - 机器门禁：`ready_to_seal`；无致命实现、协议或账务缺陷。
 - 失败/限制性证据：1200只股票池超出已冻结上游1000只范围，记为`unavailable`；历史行业口径未验证，记为`descriptive_only`。
-- 用户已授权提交；正式release仍须在本实现形成干净提交后完成两个独立run，当前`CURRENT.json`与正式`sealed_test_protocol.json`尚未发布。
+- 板块8已正式发布并封存最终测试协议；板块9仍须用户另行明确授权并提供外部开启密钥，当前保持关闭。
