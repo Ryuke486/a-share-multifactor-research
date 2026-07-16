@@ -690,6 +690,37 @@ def test_partial_year_manifest_cannot_masquerade_as_complete_final_period() -> N
         )
 
 
+def test_final_calendar_requires_all_48_continuous_months() -> None:
+    from ashare_multifactor.final_test import backtest
+
+    source = SimpleNamespace(
+        manifest={
+            "min_date": "2022-12-30",
+            "max_date": "2025-01-27",
+            "years": [2022, 2023, 2024, 2025],
+        }
+    )
+    calendar = pl.DataFrame(
+        {
+            "date": [
+                date(2022, 12, 30),
+                date(2023, 6, 30),
+                date(2024, 6, 28),
+                date(2025, 1, 27),
+            ]
+        }
+    )
+    execution = pl.DataFrame({"date": [date(2025, 1, 27)]})
+
+    with pytest.raises(ValueError, match="48 continuous final-test months"):
+        backtest._validate_final_coverage(
+            source,
+            calendar,
+            execution,
+            calendar,
+        )
+
+
 def test_final_execution_rows_must_reach_manifest_last_trading_day() -> None:
     from ashare_multifactor.final_test import backtest
 

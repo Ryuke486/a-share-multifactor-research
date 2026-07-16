@@ -472,6 +472,19 @@ def _validate_final_coverage(
         or trading_calendar.get_column("date").max() != manifest_maximum
     ):
         raise ValueError("trading calendar differs from the verified final manifest")
+    actual_months = set(
+        trading_calendar.select(
+            pl.col("date").dt.year().alias("year"),
+            pl.col("date").dt.month().alias("month"),
+        ).iter_rows()
+    )
+    expected_months = {
+        (year, month)
+        for year in range(FINAL_TEST_START.year, FINAL_TEST_END.year + 1)
+        for month in range(1, 13)
+    }
+    if actual_months != expected_months:
+        raise ValueError("trading calendar must cover all 48 continuous final-test months")
     if (
         final_execution.is_empty()
         or final_execution.get_column("date").max() != manifest_maximum
