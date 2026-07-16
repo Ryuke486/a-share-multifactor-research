@@ -149,7 +149,7 @@ def _factor_rows(
     groups: pl.DataFrame,
     metrics: Sequence[str],
 ) -> list[dict[str, object]]:
-    required_ic = {"factor_name", "score_variant", "rank_ic"}
+    required_ic = {"factor_name", "score_variant", "horizon", "rank_ic"}
     required_groups = {
         "date",
         "factor_name",
@@ -187,10 +187,8 @@ def _factor_rows(
                 (pl.col("factor_name") == factor)
                 & (pl.col("score_variant") == variant)
             )
-            if "horizon" in selected_ic.columns and selected_ic.get_column(
-                "horizon"
-            ).n_unique() != 1:
-                raise ValueError(f"factor input must contain one sealed horizon: {factor}")
+            if set(selected_ic.get_column("horizon")) != {20}:
+                raise ValueError(f"factor input must use the frozen 20-day horizon: {factor}")
             factor_ic = selected_ic.get_column("rank_ic")
             values["rank_ic"] = _finite_mean(factor_ic, f"Rank IC for {factor}")
         if needs_groups:
@@ -198,12 +196,21 @@ def _factor_rows(
                 (pl.col("factor_name") == factor)
                 & (pl.col("score_variant") == variant)
             )
-            quantile_count = int(factor_groups.get_column("quantile").max())
+            monthly_groups = factor_groups.group_by("date").agg(
+                pl.col("quantile").sort().alias("quantiles")
+            )
+            if any(
+                row["quantiles"] != [1, 2, 3, 4, 5]
+                for row in monthly_groups.iter_rows(named=True)
+            ):
+                raise ValueError(
+                    f"factor input must contain complete frozen five groups monthly: {factor}"
+                )
             spread, monotonicity = quantile_metrics(
                 factor_groups,
                 factor,
                 str(variant),
-                quantile_count,
+                5,
             )
             if spread is None or monotonicity is None:
                 raise ValueError(f"factor groups are incomplete or duplicated: {factor}")

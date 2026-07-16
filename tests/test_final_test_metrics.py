@@ -54,34 +54,8 @@ def _complete_comparison() -> pl.DataFrame:
 
 
 def test_final_metrics_compute_only_the_sealed_factor_and_portfolio_metrics() -> None:
-    rank_ic = pl.DataFrame(
-        {
-            "date": [date(2022, 1, 31), date(2022, 2, 28)],
-            "factor_name": ["composite", "composite"],
-            "score_variant": ["score", "score"],
-            "rank_ic": [0.10, 0.20],
-        }
-    )
-    groups = pl.DataFrame(
-        {
-            "date": [date(2022, 1, 31)] * 5 + [date(2022, 2, 28)] * 5,
-            "factor_name": ["composite"] * 10,
-            "score_variant": ["score"] * 10,
-            "quantile": [1, 2, 3, 4, 5] * 2,
-            "mean_forward_return_20": [
-                -0.02,
-                -0.01,
-                0.0,
-                0.01,
-                0.02,
-                -0.10,
-                -0.05,
-                0.0,
-                0.05,
-                0.10,
-            ],
-        }
-    )
+    rank_ic = _twenty_day_rank_ic()
+    groups = _complete_factor_groups()
     backtest = {
         "nav": pl.DataFrame(
             {
@@ -127,6 +101,99 @@ def test_final_metrics_compute_only_the_sealed_factor_and_portfolio_metrics() ->
     assert values[("portfolio", "main", "unfilled_rate")] == pytest.approx(0.25)
     assert values[("portfolio", "main", "maximum_drawdown")] == pytest.approx(0.0)
     assert values[("portfolio", "main", "cost_erosion")] > 0.0
+
+
+@pytest.mark.parametrize("horizon", [5, 60])
+def test_final_factor_metrics_require_frozen_twenty_day_horizon(
+    horizon: int,
+) -> None:
+    rank_ic = pl.DataFrame(
+        {
+            "date": [date(2022, 1, 31)],
+            "factor_name": ["composite"],
+            "score_variant": ["score"],
+            "horizon": [horizon],
+            "rank_ic": [0.1],
+        }
+    )
+
+    with pytest.raises(ValueError, match="frozen 20-day horizon"):
+        compute_final_test_metrics(
+            period="test",
+            factor_rank_ic=rank_ic,
+            factor_groups=_complete_factor_groups(),
+            backtest={},
+            metric_manifest=SEALED_METRICS,
+            sealed_protocol=_sealed_protocol(),
+        )
+
+
+def test_final_factor_metrics_reject_groups_without_q5() -> None:
+    groups = _complete_factor_groups().filter(pl.col("quantile") != 5)
+
+    with pytest.raises(ValueError, match="complete frozen five groups"):
+        compute_final_test_metrics(
+            period="test",
+            factor_rank_ic=_twenty_day_rank_ic(),
+            factor_groups=groups,
+            backtest={},
+            metric_manifest=SEALED_METRICS,
+            sealed_protocol=_sealed_protocol(),
+        )
+
+
+def test_final_factor_metrics_reject_one_month_with_a_missing_group() -> None:
+    groups = _complete_factor_groups().filter(
+        ~(
+            (pl.col("date") == date(2022, 2, 28))
+            & (pl.col("quantile") == 3)
+        )
+    )
+
+    with pytest.raises(ValueError, match="complete frozen five groups"):
+        compute_final_test_metrics(
+            period="test",
+            factor_rank_ic=_twenty_day_rank_ic(),
+            factor_groups=groups,
+            backtest={},
+            metric_manifest=SEALED_METRICS,
+            sealed_protocol=_sealed_protocol(),
+        )
+
+
+def _twenty_day_rank_ic() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "date": [date(2022, 1, 31), date(2022, 2, 28)],
+            "factor_name": ["composite", "composite"],
+            "score_variant": ["score", "score"],
+            "horizon": [20, 20],
+            "rank_ic": [0.10, 0.20],
+        }
+    )
+
+
+def _complete_factor_groups() -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "date": [date(2022, 1, 31)] * 5 + [date(2022, 2, 28)] * 5,
+            "factor_name": ["composite"] * 10,
+            "score_variant": ["score"] * 10,
+            "quantile": [1, 2, 3, 4, 5] * 2,
+            "mean_forward_return_20": [
+                -0.02,
+                -0.01,
+                0.0,
+                0.01,
+                0.02,
+                -0.10,
+                -0.05,
+                0.0,
+                0.05,
+                0.10,
+            ],
+        }
+    )
 
 
 def test_final_metrics_require_exact_verified_seal_metric_order() -> None:
