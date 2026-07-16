@@ -16,6 +16,7 @@ from ashare_multifactor.audit.publication import publish_release, resolve_curren
 from ashare_multifactor.audit.records import file_record, sha256_file
 from ashare_multifactor.final_test.data_inventory import write_json
 from ashare_multifactor.final_test.gate import authorize_final_test
+from ashare_multifactor.final_test import gate as gate_module
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
 from ashare_multifactor.robustness.test_protocol import seal_test_protocol
 
@@ -226,6 +227,35 @@ def _fixture(tmp_path: Path, *, successor: bool = True) -> dict[str, Path]:
         "token": token,
         "opening_ledger": tmp_path / "opening-ledger",
     }
+
+
+@pytest.mark.parametrize("changed", ["manifest", "lineage"])
+def test_authorization_detects_concurrent_stage8_identity_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: str
+) -> None:
+    paths = _fixture(tmp_path)
+    original = gate_module.save_token_snapshot
+
+    def mutate_after_snapshot(*args: object, **kwargs: object) -> Path:
+        snapshot = original(*args, **kwargs)
+        current = resolve_current(paths["robustness"])
+        getattr(current, changed).write_text('{"changed":true}\n', encoding="utf-8")
+        return snapshot
+
+    monkeypatch.setattr(gate_module, "save_token_snapshot", mutate_after_snapshot)
+    with pytest.raises(ValueError, match="identity changed"):
+        authorize_final_test(
+            code_root=paths["code"], robustness_root=paths["robustness"],
+            validation_root=paths["validation"], opening_token_path=paths["token"],
+            approval_key=APPROVAL_KEY, registry_root=paths["registry"],
+            requested_start=date(2022, 1, 1), requested_end=date(2025, 12, 31),
+            attempt_id="concurrent-drift",
+        )
+    outcome = json.loads(
+        (paths["registry"] / "concurrent-drift.outcome.json").read_text()
+    )
+    assert outcome["status"] == "failed"
+    assert outcome["authoritative"] is False
 
 
 def _republish_with_sealed_mutation(

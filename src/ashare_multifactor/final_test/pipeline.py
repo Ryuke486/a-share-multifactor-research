@@ -533,6 +533,8 @@ def _assert_reusable_data_claim(
         "git_tree": authorization.git_tree,
         "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
         "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
     }
     if any(claim.get(key) != value for key, value in expected.items()):
         raise ValueError("final-test panel cannot be reused across seal or Git identity")

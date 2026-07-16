@@ -15,6 +15,7 @@ from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import sha256_file, verify_file_record
 from ashare_multifactor.config import load_config
 from ashare_multifactor.final_test.registry import (
+    append_attempt_outcome,
     assert_no_authoritative_success,
     register_attempt,
     save_token_snapshot,
@@ -44,6 +45,14 @@ class FinalTestAuthorization:
     robustness_lineage_sha256: str = ""
 
 
+@dataclass(frozen=True)
+class FrozenStage8Identity:
+    run_id: str
+    manifest_sha256: str
+    lineage_sha256: str
+    seal_sha256: str
+
+
 def authorize_final_test(
     *,
     code_root: Path,
@@ -68,6 +77,12 @@ def authorize_final_test(
         )
     )
     seal = _verify_sealed_payload(sealed)
+    frozen = FrozenStage8Identity(
+        run_id=robustness.run_id,
+        manifest_sha256=robustness.manifest_sha256,
+        lineage_sha256=sha256_file(robustness.lineage),
+        seal_sha256=seal,
+    )
     _verify_frozen_contract(code_root, sealed, validation_root, robustness.lineage)
     assert_no_authoritative_success(registry_root)
 
@@ -79,9 +94,9 @@ def authorize_final_test(
         approval_key=approval_key,
         current_commit=current_commit,
         current_tree=current_tree,
-        robustness_release=robustness.run_id,
-        robustness_manifest_sha256=robustness.manifest_sha256,
-        robustness_lineage_sha256=sha256_file(robustness.lineage),
+        robustness_release=frozen.run_id,
+        robustness_manifest_sha256=frozen.manifest_sha256,
+        robustness_lineage_sha256=frozen.lineage_sha256,
     )
     actual_attempt_id = attempt_id or uuid.uuid4().hex
     record = register_attempt(
@@ -91,22 +106,33 @@ def authorize_final_test(
         git_tree=current_tree,
         token_sha256=token_sha256,
         sealed_protocol_sha256=seal,
-        robustness_release=robustness.run_id,
+        robustness_release=frozen.run_id,
         approval_id=str(token["approval_id"]),
-        robustness_manifest_sha256=robustness.manifest_sha256,
-        robustness_lineage_sha256=sha256_file(robustness.lineage),
+        robustness_manifest_sha256=frozen.manifest_sha256,
+        robustness_lineage_sha256=frozen.lineage_sha256,
     )
-    token_snapshot = save_token_snapshot(
-        registry_root,
-        attempt_id=actual_attempt_id,
-        token_bytes=token_bytes,
-        expected_sha256=token_sha256,
-    )
-    verify_test_opening_token(
-        token_snapshot,
-        sealed,
-        approval_key=approval_key,
-    )
+    try:
+        token_snapshot = save_token_snapshot(
+            registry_root,
+            attempt_id=actual_attempt_id,
+            token_bytes=token_bytes,
+            expected_sha256=token_sha256,
+        )
+        verify_test_opening_token(
+            token_snapshot,
+            sealed,
+            approval_key=approval_key,
+        )
+        _assert_stage8_identity_unchanged(robustness, frozen)
+    except BaseException as error:
+        append_attempt_outcome(
+            registry_root,
+            attempt_id=actual_attempt_id,
+            status="failed",
+            authoritative=False,
+            reason=f"authorization failed after registration: {error}",
+        )
+        raise
     return FinalTestAuthorization(
         attempt_id=actual_attempt_id,
         approval_id=str(token["approval_id"]),
@@ -114,11 +140,24 @@ def authorize_final_test(
         git_commit=current_commit,
         git_tree=current_tree,
         sealed_protocol_sha256=seal,
-        robustness_release=robustness.run_id,
+        robustness_release=frozen.run_id,
         test_period=(requested_start, requested_end),
-        robustness_manifest_sha256=robustness.manifest_sha256,
-        robustness_lineage_sha256=sha256_file(robustness.lineage),
+        robustness_manifest_sha256=frozen.manifest_sha256,
+        robustness_lineage_sha256=frozen.lineage_sha256,
     )
+
+
+def _assert_stage8_identity_unchanged(
+    robustness: object, frozen: FrozenStage8Identity
+) -> None:
+    manifest = Path(getattr(robustness, "manifest"))
+    lineage = Path(getattr(robustness, "lineage"))
+    if (
+        getattr(robustness, "run_id") != frozen.run_id
+        or sha256_file(manifest) != frozen.manifest_sha256
+        or sha256_file(lineage) != frozen.lineage_sha256
+    ):
+        raise ValueError("Stage-8 identity changed during final-test authorization")
 
 
 def _verify_sealed_payload(sealed: dict[str, object]) -> str:

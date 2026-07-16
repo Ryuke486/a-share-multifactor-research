@@ -757,6 +757,10 @@ def test_publishing_recovery_writes_prepared_then_completed(
         ("git_tree", "e" * 40),
         ("sealed_protocol_sha256", "1" * 64),
         ("robustness_release", "replacement-release"),
+        ("robustness_manifest_sha256", "3" * 64),
+        ("robustness_lineage_sha256", "4" * 64),
+        ("robustness_manifest_sha256", None),
+        ("robustness_lineage_sha256", None),
         ("data_manifest", {"sha256": "2" * 64}),
     ],
 )
@@ -795,7 +799,12 @@ def test_prepared_recovery_rejects_mutated_publishing_claim(
 
     claim[field] = replacement
     claim_path.write_text(json.dumps(claim))
-    with pytest.raises(ValueError, match="prepared data recovery"):
+    expected_error = (
+        "authorization identity is incomplete"
+        if replacement is None
+        else "prepared data recovery"
+    )
+    with pytest.raises(ValueError, match=expected_error):
         _recover_or_archive_data_claim(root)
 
 
@@ -861,6 +870,8 @@ def test_failed_attempt_data_reuse_requires_same_seal_git_and_raw_inventory() ->
         "git_commit": authorization.git_commit,
         "git_tree": authorization.git_tree,
         "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
     }
     inventory = {"files": [{"path": "2022.csv", "sha256": "d" * 64}]}
 

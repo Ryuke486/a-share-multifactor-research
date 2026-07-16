@@ -120,6 +120,8 @@ def _claim_payload(
         "git_tree": authorization.git_tree,
         "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
         "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
         "status": status,
     }
     if data_manifest is not None:

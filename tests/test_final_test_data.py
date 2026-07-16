@@ -258,6 +258,8 @@ def test_final_test_builder_reuses_canonical_schema_and_manifest_without_mutatin
         (config.paths.processed / "final_test/data-build-claim.json").read_text()
     )
     assert claim["attempt_id"] == authorization.attempt_id
+    assert claim["robustness_manifest_sha256"] == authorization.robustness_manifest_sha256
+    assert claim["robustness_lineage_sha256"] == authorization.robustness_lineage_sha256
     assert claim["status"] == "published"
     assert claim["data_manifest"]["relative_path"] == "daily_panel/data_manifest.json"
     assert _raw_hashes(config) == raw_before
@@ -370,7 +372,7 @@ def test_robustness_release_or_seal_drift_is_rejected_before_discovery(
         )
     calls = _forbid_discovery(monkeypatch)
 
-    with pytest.raises(ValueError, match=drift):
+    with pytest.raises(ValueError, match=drift if drift == "release" else "identity"):
         _build(config, authorization, code_root)
 
     assert calls == []

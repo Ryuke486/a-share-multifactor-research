@@ -10,6 +10,7 @@ import subprocess
 from uuid import uuid4
 
 from ashare_multifactor.audit.publication import resolve_current
+from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.data.build import BuildManifest, build_parquet_dataset
 from ashare_multifactor.data.discovery import discover_daily_pairs
@@ -145,6 +146,11 @@ def _verify_authorization(
     robustness = resolve_current(config.paths.processed / "robustness")
     if robustness.run_id != authorization.robustness_release:
         raise ValueError("current robustness release differs from final-test authorization")
+    if (
+        robustness.manifest_sha256 != authorization.robustness_manifest_sha256
+        or sha256_file(robustness.lineage) != authorization.robustness_lineage_sha256
+    ):
+        raise ValueError("current robustness identity differs from final-test authorization")
     try:
         sealed = json.loads(
             (robustness.artifacts / "sealed_test_protocol.json").read_text(
@@ -177,6 +183,8 @@ def _verify_authorization(
         "git_tree": authorization.git_tree,
         "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
         "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
         "status": "registered",
         "authoritative": False,
     }
