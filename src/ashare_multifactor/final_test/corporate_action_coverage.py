@@ -168,7 +168,11 @@ def validate_corporate_action_coverage(
         raise ValueError("official corporate-action event counts do not match coverage")
 
     candidates = pl.read_parquet(paths["candidate_file"])
-    if "candidate_id" not in candidates.columns or candidates.select(
+    candidate_fields = {
+        "candidate_id", "symbol", "ex_date", "effective_date", "cash_per_share",
+        "share_ratio",
+    }
+    if not candidate_fields.issubset(candidates.columns) or candidates.select(
         pl.col("candidate_id").is_duplicated().any()
     ).item():
         raise ValueError("BaoStock corporate-action candidates are invalid")
@@ -217,6 +221,45 @@ def validate_corporate_action_coverage(
         or linked.join(publishable_candidates, on="candidate_id", how="anti").height
     ):
         raise ValueError("candidate disposition does not match official action rows")
+    linked_counts = linked.group_by("candidate_id").len()
+    if linked_counts.filter(pl.col("len") != 1).height:
+        raise ValueError("candidate maps to multiple official action rows")
+    candidate_rows = {
+        str(row["candidate_id"]): row for row in candidates.iter_rows(named=True)
+    }
+    official_rows = {
+        str(row["candidate_id"]): row
+        for row in official.filter(pl.col("candidate_id").is_not_null()).iter_rows(named=True)
+    }
+    comparison_fields = (
+        "symbol", "ex_date", "effective_date", "cash_per_share", "share_ratio"
+    )
+    for disposition in diff.iter_rows(named=True):
+        candidate_id = str(disposition["candidate_id"])
+        status = str(disposition["status"])
+        official_row = official_rows.get(candidate_id)
+        if status == "rejected":
+            if official_row is not None:
+                raise ValueError("rejected candidate has an official action row")
+            continue
+        if official_row is None:
+            raise ValueError("publishable candidate lacks official action row")
+        candidate_row = candidate_rows[candidate_id]
+        for field in comparison_fields:
+            expected = candidate_row[field]
+            if status == "corrected":
+                corrected_field = f"corrected_{field}"
+                original_field = f"original_{field}"
+                if corrected_field not in diff.columns or original_field not in diff.columns:
+                    raise ValueError("corrected candidate lacks explicit field reconciliation")
+                original = disposition[original_field]
+                corrected = disposition[corrected_field]
+                if original is not None and original != candidate_row[field]:
+                    raise ValueError("corrected candidate original value is false")
+                if corrected is not None:
+                    expected = corrected
+            if official_row[field] != expected:
+                raise ValueError(f"candidate official {field} mismatch")
 
     actions = normalize_corporate_actions(
         official.select(

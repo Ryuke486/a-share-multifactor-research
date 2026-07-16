@@ -90,6 +90,45 @@ def test_normalized_actions_come_only_from_official_rows(tmp_path: Path) -> None
     assert actions.get_column("cash_per_share").to_list() == [0.2]
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("symbol", "000002", "row lacks official evidence"),
+        ("ex_date", date(2023, 6, 2), "ex_date mismatch"),
+        ("effective_date", date(2023, 6, 6), "effective_date mismatch"),
+        ("cash_per_share", 0.3, "cash_per_share mismatch"),
+        ("share_ratio", 0.1, "share_ratio mismatch"),
+    ],
+)
+def test_accepted_candidate_requires_exact_official_values(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    root = _write_coverage(tmp_path)
+    official = pl.read_parquet(root / "official_actions.parquet").with_columns(
+        pl.lit(value).alias(field)
+    )
+    official.write_parquet(root / "official_actions.parquet")
+    _refresh_record(root, "official_actions")
+    with pytest.raises(ValueError, match=message):
+        validate_corporate_action_coverage(root)
+
+
+def test_candidate_cannot_map_to_multiple_official_rows(tmp_path: Path) -> None:
+    root = _write_coverage(tmp_path)
+    official = pl.read_parquet(root / "official_actions.parquet")
+    duplicate = official.with_columns(pl.lit(date(2023, 6, 6)).alias("effective_date"))
+    pl.concat((official, duplicate)).write_parquet(root / "official_actions.parquet")
+    coverage = pl.read_parquet(root / "query_coverage.parquet").with_columns(
+        pl.when(pl.col("symbol") == "000001").then(2).otherwise(pl.col("event_count"))
+        .alias("event_count")
+    )
+    coverage.write_parquet(root / "query_coverage.parquet")
+    _refresh_record(root, "official_actions")
+    _refresh_record(root, "query_coverage")
+    with pytest.raises(ValueError, match="multiple official"):
+        validate_corporate_action_coverage(root)
+
+
 def _write_coverage(
     root: Path, *, symbols: tuple[str, ...] = ("000001", "600000")
 ) -> Path:
@@ -131,7 +170,11 @@ def _write_coverage(
         )
     pl.DataFrame(coverage_rows).write_parquet(root / "query_coverage.parquet")
     pl.DataFrame(
-        {"candidate_id": ["candidate-1"], "symbol": ["000001"], "cash": [9.9]}
+        {
+            "candidate_id": ["candidate-1"], "symbol": ["000001"],
+            "ex_date": [date(2023, 6, 1)], "effective_date": [date(2023, 6, 5)],
+            "cash_per_share": [0.2], "share_ratio": [0.0],
+        }
     ).write_parquet(root / "candidates.parquet")
     pl.DataFrame(
         {
@@ -142,6 +185,11 @@ def _write_coverage(
             "original_ex_date": [date(2023, 6, 1)],
             "corrected_ex_date": [date(2023, 6, 1)],
             "correction_reason": [None],
+            "original_symbol": ["000001"], "corrected_symbol": [None],
+            "original_effective_date": [date(2023, 6, 5)],
+            "corrected_effective_date": [None],
+            "original_cash_per_share": [0.2], "corrected_cash_per_share": [None],
+            "original_share_ratio": [0.0], "corrected_share_ratio": [None],
         }
     ).write_parquet(root / "candidate_diff.parquet")
     pl.DataFrame(
