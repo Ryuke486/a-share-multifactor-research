@@ -11,6 +11,7 @@ import json
 import hashlib
 
 from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
+from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.final_test.action_source_contract import (
     build_execution_input_manifest,
@@ -326,6 +327,7 @@ def validate_security_event_coverage(
         pl.col("event_count").cast(pl.Int64),
         pl.col("evidence_id").cast(pl.String),
     )
+    _validate_coverage_markets(normalized_coverage)
     normalized = (
         sorted({str(symbol).zfill(6) for symbol in symbols})
         if symbols is not None
@@ -424,6 +426,25 @@ def _validate_event_counts(coverage: pl.DataFrame, events: pl.DataFrame) -> None
     )
     if reconciled.height:
         raise ValueError("official security-event event counts do not match coverage")
+
+
+def _validate_coverage_markets(coverage: pl.DataFrame) -> None:
+    expected = coverage.with_columns(
+        pl.col("source_symbol")
+        .map_elements(market_for_symbol, return_dtype=pl.String)
+        .alias("expected_market")
+    )
+    if expected.filter(pl.col("market") != pl.col("expected_market")).height:
+        raise ValueError("official security-event symbol market is invalid")
+    if expected.filter(
+        ~pl.struct("market", "source").is_in(
+            [
+                {"market": "sh", "source": "sse"},
+                {"market": "sz", "source": "szse"},
+            ]
+        )
+    ).height:
+        raise ValueError("official security-event market source is invalid")
 
 
 def _resolve_coverage_manifest(path: Path) -> tuple[Path, Path]:

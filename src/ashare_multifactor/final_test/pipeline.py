@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import version
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -46,6 +47,16 @@ from ashare_multifactor.final_test.signals import (
     FinalTestSignals,
     build_final_test_signals,
     _load_frozen_config,
+)
+
+
+_RECOVERY_IDENTITY_FIELDS = (
+    "attempt_id",
+    "approval_id",
+    "git_commit",
+    "git_tree",
+    "sealed_protocol_sha256",
+    "robustness_release",
 )
 
 
@@ -353,7 +364,9 @@ def _recover_or_archive_data_claim(final_root: Path) -> str:
     claim_path = final_root / "data-build-claim.json"
     if not claim_path.is_file():
         return "absent"
-    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    claim_bytes = claim_path.read_bytes()
+    claim = json.loads(claim_bytes)
+    initial_claim_sha256 = hashlib.sha256(claim_bytes).hexdigest()
     status = claim.get("status") if isinstance(claim, dict) else None
     panel = final_root / "daily_panel"
     if status == "failed" and not panel.exists():
@@ -362,7 +375,7 @@ def _recover_or_archive_data_claim(final_root: Path) -> str:
             raise ValueError("failed claim archive uses a symlink")
         archive_root.mkdir(exist_ok=True)
         archived_attempt = validate_publication_id(str(claim.get("attempt_id", "")))
-        digest = hashlib.sha256(claim_path.read_bytes()).hexdigest()[:16]
+        digest = initial_claim_sha256[:16]
         destination = archive_root / f"{archived_attempt}-{digest}.json"
         if destination.exists():
             raise FileExistsError("failed claim archive already exists")
@@ -377,21 +390,25 @@ def _recover_or_archive_data_claim(final_root: Path) -> str:
         if not resolution.requires_recovery:
             raise ValueError("publishing claim recovery state is inconsistent")
         _assert_safe_recovery_root(recovery_root)
+        existing_prepared = set(recovery_root.glob("*.prepared.json"))
+        if existing_prepared and existing_prepared != {prepared_path}:
+            raise ValueError("prepared data recovery attempt does not match claim")
         manifest_sha256 = _claim_manifest_sha256(claim)
+        recovery_identity = _claim_recovery_identity(claim)
         if not prepared_path.exists():
             _write_json_exclusive(
                 prepared_path,
                 {
-                    "attempt_id": attempt_id,
                     "status": "prepared",
-                    "claim_sha256": hashlib.sha256(claim_path.read_bytes()).hexdigest(),
+                    "claim_sha256": initial_claim_sha256,
                     "data_manifest_sha256": manifest_sha256,
+                    **recovery_identity,
                 },
             )
         prepared = _load_prepared_recovery(
             prepared_path,
-            attempt_id=attempt_id,
-            data_manifest_sha256=manifest_sha256,
+            claim=claim,
+            current_claim_sha256=hashlib.sha256(claim_path.read_bytes()).hexdigest(),
         )
         claim["status"] = "published"
         _write_json_atomic(claim_path, claim)
@@ -409,8 +426,7 @@ def _recover_or_archive_data_claim(final_root: Path) -> str:
             _assert_safe_recovery_root(recovery_root)
             prepared = _load_prepared_recovery(
                 prepared_path,
-                attempt_id=attempt_id,
-                data_manifest_sha256=_claim_manifest_sha256(claim),
+                claim=claim,
             )
             _complete_data_recovery(
                 completed_path,
@@ -430,6 +446,19 @@ def _claim_manifest_sha256(claim: Mapping[str, object]) -> str:
     return digest
 
 
+def _claim_recovery_identity(claim: Mapping[str, object]) -> dict[str, str]:
+    identity = {field: claim.get(field) for field in _RECOVERY_IDENTITY_FIELDS}
+    if any(not isinstance(value, str) or not value for value in identity.values()):
+        raise ValueError("final-test recovery authorization identity is incomplete")
+    if (
+        len(identity["git_commit"]) != 40
+        or len(identity["git_tree"]) != 40
+        or len(identity["sealed_protocol_sha256"]) != 64
+    ):
+        raise ValueError("final-test recovery authorization identity is invalid")
+    return {field: str(identity[field]) for field in _RECOVERY_IDENTITY_FIELDS}
+
+
 def _assert_safe_recovery_root(root: Path) -> None:
     if root.is_symlink():
         raise ValueError("data recovery path uses a symlink")
@@ -437,7 +466,10 @@ def _assert_safe_recovery_root(root: Path) -> None:
 
 
 def _load_prepared_recovery(
-    path: Path, *, attempt_id: str, data_manifest_sha256: str
+    path: Path,
+    *,
+    claim: Mapping[str, object],
+    current_claim_sha256: str | None = None,
 ) -> Mapping[str, object]:
     if path.is_symlink():
         raise ValueError("prepared data recovery audit uses a symlink")
@@ -445,13 +477,20 @@ def _load_prepared_recovery(
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as error:
         raise ValueError("invalid prepared data recovery audit") from error
+    if not isinstance(payload, dict) or not isinstance(payload.get("claim_sha256"), str):
+        raise ValueError("prepared data recovery audit does not match claim")
+    if current_claim_sha256 is not None and not hmac.compare_digest(
+        str(payload["claim_sha256"]), current_claim_sha256
+    ):
+        raise ValueError("prepared data recovery claim hash does not match publishing claim")
     if (
-        not isinstance(payload, dict)
-        or payload.get("attempt_id") != attempt_id
-        or payload.get("status") != "prepared"
-        or payload.get("data_manifest_sha256") != data_manifest_sha256
-        or not isinstance(payload.get("claim_sha256"), str)
+        payload.get("status") != "prepared"
+        or payload.get("data_manifest_sha256") != _claim_manifest_sha256(claim)
         or len(str(payload["claim_sha256"])) != 64
+        or any(
+            payload.get(field) != value
+            for field, value in _claim_recovery_identity(claim).items()
+        )
     ):
         raise ValueError("prepared data recovery audit does not match claim")
     return payload

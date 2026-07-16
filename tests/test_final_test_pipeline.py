@@ -11,10 +11,12 @@ import pytest
 
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import file_record
+from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.backtest import FinalTestBacktestResult
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 from ashare_multifactor.final_test.execution_sources import (
     _normalize_final_dividends,
+    _validate_coverage_markets,
     _validate_event_counts,
     validate_security_event_coverage,
 )
@@ -390,6 +392,24 @@ def test_security_events_must_match_coverage_counts_by_source_key() -> None:
         _validate_event_counts(coverage, events)
 
 
+@pytest.mark.parametrize(
+    ("symbol", "market"),
+    [("000001", "sz"), ("300001", "sz"), ("600000", "sh"),
+     ("688001", "sh"), ("430001", "bj"), ("830001", "bj"),
+     ("920001", "bj"), ("900901", "sh")],
+)
+def test_authoritative_symbol_market_boundaries(symbol: str, market: str) -> None:
+    assert market_for_symbol(symbol) == market
+
+
+def test_coverage_market_must_match_source_symbol() -> None:
+    invalid = pl.DataFrame(
+        {"source_symbol": ["000001"], "market": ["sh"], "source": ["sse"]}
+    )
+    with pytest.raises(ValueError, match="symbol market"):
+        _validate_coverage_markets(invalid)
+
+
 def test_publishing_recovery_writes_prepared_then_completed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -398,6 +418,11 @@ def test_publishing_recovery_writes_prepared_then_completed(
     panel.mkdir(parents=True)
     claim = {
         "attempt_id": "attempt-1",
+        "approval_id": "approval-1",
+        "git_commit": "a" * 40,
+        "git_tree": "b" * 40,
+        "sealed_protocol_sha256": "c" * 64,
+        "robustness_release": "stage8-release",
         "status": "publishing",
         "data_manifest": {"sha256": "d" * 64},
     }
@@ -417,6 +442,55 @@ def test_publishing_recovery_writes_prepared_then_completed(
     (recovery / "attempt-1.completed.json").unlink()
     assert _recover_or_archive_data_claim(root) == "recovered_published"
     assert (recovery / "attempt-1.completed.json").is_file()
+
+
+@pytest.mark.parametrize(
+    ("field", "replacement"),
+    [
+        ("attempt_id", "attempt-2"),
+        ("approval_id", "approval-2"),
+        ("git_commit", "f" * 40),
+        ("git_tree", "e" * 40),
+        ("sealed_protocol_sha256", "1" * 64),
+        ("robustness_release", "replacement-release"),
+        ("data_manifest", {"sha256": "2" * 64}),
+    ],
+)
+def test_prepared_recovery_rejects_mutated_publishing_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    replacement: object,
+) -> None:
+    root = tmp_path / "final_test"
+    (root / "daily_panel").mkdir(parents=True)
+    claim_path = root / "data-build-claim.json"
+    claim = {
+        "attempt_id": "attempt-1",
+        "approval_id": "approval-1",
+        "git_commit": "a" * 40,
+        "git_tree": "b" * 40,
+        "sealed_protocol_sha256": "c" * 64,
+        "robustness_release": "stage8-release",
+        "status": "publishing",
+        "data_manifest": {"sha256": "d" * 64},
+    }
+    claim_path.write_text(json.dumps(claim))
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.pipeline.resolve_final_test_data_panel",
+        lambda _root: SimpleNamespace(requires_recovery=True),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.pipeline._write_json_atomic",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("crash")),
+    )
+    with pytest.raises(RuntimeError, match="crash"):
+        _recover_or_archive_data_claim(root)
+
+    claim[field] = replacement
+    claim_path.write_text(json.dumps(claim))
+    with pytest.raises(ValueError, match="prepared data recovery"):
+        _recover_or_archive_data_claim(root)
 
 
 @pytest.mark.parametrize("value", ["../escape", "/absolute", "a/b", "a..b", "."])
