@@ -17,6 +17,19 @@ ANALYSIS_START = date(2005, 1, 1)
 ANALYSIS_END = date(2021, 12, 31)
 FINAL_TEST_START = date(2022, 1, 1)
 FROZEN_MAIN_CANDIDATE = "rolling_ic_family_size_stratified_buffered"
+FINAL_TEST_METRICS = (
+    "rank_ic",
+    "group_spread",
+    "group_monotonicity",
+    "annual_return",
+    "annual_volatility",
+    "sharpe_zero_rate",
+    "maximum_drawdown",
+    "turnover",
+    "cost_erosion",
+    "target_deviation",
+    "unfilled_rate",
+)
 
 
 @dataclass(frozen=True)
@@ -41,6 +54,7 @@ class RobustnessProtocol:
     main_candidate: str
     baseline_experiment: str
     required_metrics: tuple[str, ...]
+    final_test_metrics: tuple[str, ...]
     interpretation: Mapping[str, object]
     experiments: tuple[RobustnessExperiment, ...]
     protocol_sha256: str
@@ -128,6 +142,9 @@ def load_robustness_protocol(path: Path) -> RobustnessProtocol:
     if raw["main_candidate"] != FROZEN_MAIN_CANDIDATE:
         raise ValueError("frozen validation main candidate changed")
     metrics = tuple(str(item) for item in raw["required_metrics"])
+    final_test_metrics = tuple(str(item) for item in raw["final_test_metrics"])
+    if final_test_metrics != FINAL_TEST_METRICS:
+        raise ValueError("frozen final-test metrics changed")
     items = raw.get("experiments", {})
     if not isinstance(items, dict):
         raise ValueError("experiments must be a mapping")
@@ -157,6 +174,7 @@ def load_robustness_protocol(path: Path) -> RobustnessProtocol:
         main_candidate=str(raw["main_candidate"]),
         baseline_experiment=baseline_id,
         required_metrics=metrics,
+        final_test_metrics=final_test_metrics,
         interpretation=MappingProxyType(dict(raw["interpretation"])),
         experiments=experiments,
         protocol_sha256=hashlib.sha256(canonical).hexdigest(),

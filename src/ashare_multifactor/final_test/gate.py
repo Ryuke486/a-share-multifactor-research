@@ -153,7 +153,7 @@ def _verify_frozen_contract(
     protocol = load_robustness_protocol(code_root / "configs/robustness_protocol.yaml")
     if protocol.protocol_sha256 != sealed.get("robustness_protocol_sha256"):
         raise ValueError("robustness protocol hash changed; refreezing is forbidden")
-    if list(protocol.required_metrics) != sealed.get("metrics"):
+    if list(protocol.final_test_metrics) != sealed.get("metrics"):
         raise ValueError("frozen metrics hash changed; refreezing is forbidden")
     if protocol.main_candidate != sealed.get("main_candidate"):
         raise ValueError("frozen main candidate changed")

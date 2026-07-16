@@ -32,6 +32,28 @@ def test_official_protocol_is_frozen_and_deterministic() -> None:
         "regime",
     }
     assert all(item.metrics for item in first.experiments)
+    assert first.required_metrics == (
+        "annual_return",
+        "annual_volatility",
+        "maximum_drawdown",
+        "turnover",
+        "cost_erosion",
+        "unfilled_rate",
+        "target_deviation",
+    )
+    assert first.final_test_metrics == (
+        "rank_ic",
+        "group_spread",
+        "group_monotonicity",
+        "annual_return",
+        "annual_volatility",
+        "sharpe_zero_rate",
+        "maximum_drawdown",
+        "turnover",
+        "cost_erosion",
+        "target_deviation",
+        "unfilled_rate",
+    )
 
 
 def test_protocol_rejects_duplicate_ids_and_main_candidate_changes(tmp_path: Path) -> None:
@@ -51,6 +73,15 @@ def test_protocol_rejects_duplicate_ids_and_main_candidate_changes(tmp_path: Pat
     )
     path.write_text(changed, encoding="utf-8")
     with pytest.raises(ValueError, match="frozen validation main candidate"):
+        load_robustness_protocol(path)
+
+    reordered_metrics = config.replace(
+        "  - rank_ic\n  - group_spread",
+        "  - group_spread\n  - rank_ic",
+        1,
+    )
+    path.write_text(reordered_metrics, encoding="utf-8")
+    with pytest.raises(ValueError, match="frozen final-test metrics"):
         load_robustness_protocol(path)
 
 

@@ -64,7 +64,7 @@ def seal_test_protocol(
             protocol.sealed_test_end.isoformat(),
         ],
         "cost_model": "full_audited_cost_model",
-        "metrics": list(protocol.required_metrics),
+        "metrics": list(protocol.final_test_metrics),
         "market_rules_sha256": market_rules_sha256,
         "report_template_sha256": report_template_sha256,
         "random_seed": protocol.random_seed,

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
+import hashlib
+import json
 import math
 
 import numpy as np
 import polars as pl
+
+from ashare_multifactor.research.factor_metrics import quantile_metrics
+from ashare_multifactor.robustness.protocol import FINAL_TEST_METRICS
 
 
 FACTOR_METRICS = ("rank_ic", "group_spread", "group_monotonicity")
@@ -18,7 +23,6 @@ PORTFOLIO_METRICS = (
     "target_deviation",
     "unfilled_rate",
 )
-ALLOWED_METRICS = frozenset((*FACTOR_METRICS, *PORTFOLIO_METRICS))
 PERIODS = ("research", "validation", "test")
 
 
@@ -29,9 +33,10 @@ def compute_final_test_metrics(
     factor_groups: pl.DataFrame,
     backtest: dict[str, pl.DataFrame],
     metric_manifest: Sequence[str],
+    sealed_protocol: Mapping[str, object],
 ) -> pl.DataFrame:
     """Return only pre-registered metrics in an auditable long-table schema."""
-    metrics = _validate_manifest(metric_manifest)
+    metrics = _validate_manifest(metric_manifest, sealed_protocol)
     if period not in PERIODS:
         raise ValueError(f"unknown evaluation period: {period}")
     rows: list[dict[str, object]] = []
@@ -73,9 +78,10 @@ def build_period_comparison(
     period_metrics: Iterable[pl.DataFrame],
     *,
     metric_manifest: Sequence[str],
+    sealed_protocol: Mapping[str, object],
 ) -> pl.DataFrame:
     """Place frozen periods beside one another; never pool or rank their values."""
-    metrics = _validate_manifest(metric_manifest)
+    metrics = _validate_manifest(metric_manifest, sealed_protocol)
     frames = list(period_metrics)
     if not frames:
         raise ValueError("period metrics are empty")
@@ -89,6 +95,12 @@ def build_period_comparison(
     periods = set(combined.get_column("period"))
     if periods != set(PERIODS):
         raise ValueError("comparison requires separate research, validation, and test rows")
+    for period in PERIODS:
+        present = set(
+            combined.filter(pl.col("period") == period).get_column("metric")
+        )
+        if present != set(metrics):
+            raise ValueError("every sealed metric is required in every frozen period")
     keys = ["scope", "entity", "metric", "period"]
     if combined.select(pl.struct(keys).is_duplicated().any()).item():
         raise ValueError("comparison contains duplicate period metric rows")
@@ -109,13 +121,25 @@ def build_period_comparison(
     ).sort("__metric_order", "scope", "entity").drop("__metric_order")
 
 
-def _validate_manifest(metric_manifest: Sequence[str]) -> tuple[str, ...]:
+def _validate_manifest(
+    metric_manifest: Sequence[str],
+    sealed_protocol: Mapping[str, object],
+) -> tuple[str, ...]:
     metrics = tuple(str(metric) for metric in metric_manifest)
-    if not metrics or len(metrics) != len(set(metrics)):
-        raise ValueError("pre-registered metric manifest is empty or duplicated")
-    unknown = sorted(set(metrics) - ALLOWED_METRICS)
-    if unknown:
-        raise ValueError("metric is not pre-registered: " + ", ".join(unknown))
+    sealed = dict(sealed_protocol)
+    recorded = str(sealed.pop("sealed_protocol_sha256", ""))
+    canonical = json.dumps(
+        sealed, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    if not recorded or hashlib.sha256(canonical).hexdigest() != recorded:
+        raise ValueError("verified seal hash does not match its payload")
+    if sealed.get("status") != "sealed":
+        raise ValueError("final-test metric seal is not closed")
+    sealed_metrics = tuple(str(metric) for metric in sealed.get("metrics", ()))
+    if metrics != sealed_metrics:
+        raise ValueError("metric manifest must exactly match verified seal metrics")
+    if metrics != FINAL_TEST_METRICS:
+        raise ValueError("verified seal metrics differ from the frozen Task-5 vocabulary")
     return metrics
 
 
@@ -125,8 +149,14 @@ def _factor_rows(
     groups: pl.DataFrame,
     metrics: Sequence[str],
 ) -> list[dict[str, object]]:
-    required_ic = {"factor_name", "rank_ic"}
-    required_groups = {"factor_name", "quantile", "mean_forward_return_20"}
+    required_ic = {"factor_name", "score_variant", "rank_ic"}
+    required_groups = {
+        "date",
+        "factor_name",
+        "score_variant",
+        "quantile",
+        "mean_forward_return_20",
+    }
     needs_ic = "rank_ic" in metrics
     needs_groups = bool(set(metrics) & {"group_spread", "group_monotonicity"})
     if needs_ic and (
@@ -145,28 +175,42 @@ def _factor_rows(
     rows: list[dict[str, object]] = []
     source = rank_ic if needs_ic else groups
     for factor in sorted(set(source.get_column("factor_name"))):
+        variants = set(
+            source.filter(pl.col("factor_name") == factor).get_column("score_variant")
+        )
+        if len(variants) != 1:
+            raise ValueError(f"factor input must contain one sealed score variant: {factor}")
+        variant = next(iter(variants))
         values: dict[str, float] = {}
         if needs_ic:
-            factor_ic = rank_ic.filter(pl.col("factor_name") == factor).get_column(
-                "rank_ic"
+            selected_ic = rank_ic.filter(
+                (pl.col("factor_name") == factor)
+                & (pl.col("score_variant") == variant)
             )
+            if "horizon" in selected_ic.columns and selected_ic.get_column(
+                "horizon"
+            ).n_unique() != 1:
+                raise ValueError(f"factor input must contain one sealed horizon: {factor}")
+            factor_ic = selected_ic.get_column("rank_ic")
             values["rank_ic"] = _finite_mean(factor_ic, f"Rank IC for {factor}")
         if needs_groups:
-            factor_groups = groups.filter(pl.col("factor_name") == factor).sort(
-                "quantile"
+            factor_groups = groups.filter(
+                (pl.col("factor_name") == factor)
+                & (pl.col("score_variant") == variant)
             )
-            quantiles = (
-                factor_groups.get_column("quantile").cast(pl.Float64).to_numpy()
+            quantile_count = int(factor_groups.get_column("quantile").max())
+            spread, monotonicity = quantile_metrics(
+                factor_groups,
+                factor,
+                str(variant),
+                quantile_count,
             )
-            returns = factor_groups.get_column("mean_forward_return_20").to_numpy()
-            if len(quantiles) < 2 or len(set(quantiles)) != len(quantiles):
+            if spread is None or monotonicity is None:
                 raise ValueError(f"factor groups are incomplete or duplicated: {factor}")
             if "group_spread" in metrics:
-                values["group_spread"] = float(returns[-1] - returns[0])
+                values["group_spread"] = float(spread)
             if "group_monotonicity" in metrics:
-                values["group_monotonicity"] = float(
-                    np.corrcoef(quantiles, returns)[0, 1]
-                )
+                values["group_monotonicity"] = float(monotonicity)
         if not all(math.isfinite(values[metric]) for metric in metrics):
             raise ValueError(f"factor metric is not finite: {factor}")
         rows.extend(

@@ -7,12 +7,13 @@ from pathlib import Path
 import polars as pl
 
 
-_REQUIRED_HEADINGS = (
-    "## 1. 冻结身份",
-    "## 2. 一次性测试结果",
-    "## 3. 预注册稳健性对照",
-    "## 4. 失败运行与异常披露",
-    "## 5. 结论与限制",
+_PLACEHOLDERS = ("{{identity}}", "{{comparison_table}}", "{{failed_runs}}")
+_IDENTITY_FIELDS = (
+    ("sealed_protocol_sha256", "sealed protocol SHA-256"),
+    ("approval_id", "opening approval ID"),
+    ("attempt_id", "authoritative run ID"),
+    ("git_commit", "code commit"),
+    ("robustness_release", "upstream robustness release"),
 )
 _LABELS = {
     "rank_ic": "Rank IC",
@@ -52,29 +53,25 @@ def render_final_test_report(
     if hashlib.sha256(payload).hexdigest() != expected_template_sha256:
         raise ValueError("frozen report template hash mismatch")
     template = payload.decode("utf-8")
-    if any(heading not in template for heading in _REQUIRED_HEADINGS):
-        raise ValueError("frozen report template structure is incomplete")
+    if any(template.count(placeholder) != 1 for placeholder in _PLACEHOLDERS):
+        raise ValueError("frozen report template placeholders are incomplete")
     _validate_comparison(comparison)
-
-    lines = [
-        template.splitlines()[0],
-        "",
-        _REQUIRED_HEADINGS[0],
-        "",
-        f"- sealed protocol SHA-256: `{identity.get('sealed_protocol_sha256', '')}`",
-        f"- opening approval ID: `{identity.get('approval_id', '')}`",
-        f"- authoritative run ID: `{identity.get('attempt_id', '')}`",
-        f"- code commit: `{identity.get('git_commit', '')}`",
-        f"- upstream robustness release: `{identity.get('robustness_release', '')}`",
-        "",
-        _REQUIRED_HEADINGS[1],
-        "",
+    missing_identity = [
+        key for key, _label in _IDENTITY_FIELDS if not str(identity.get(key, "")).strip()
+    ]
+    if missing_identity:
+        raise ValueError("critical report identity is empty: " + ", ".join(missing_identity))
+    identity_lines = [
+        f"- {label}: `{identity[key]}` (`machine_identity:{key}`)"
+        for key, label in _IDENTITY_FIELDS
+    ]
+    table_lines = [
         "| 范围 | 对象 | 指标 | 2005–2016研究期 | 2017–2021验证期 | 2022–2025最终测试期 | 机器结果键 |",
         "|---|---|---|---:|---:|---:|---|",
     ]
     for row in comparison.iter_rows(named=True):
         machine_key = f"{row['scope']}/{row['entity']}/{row['metric']}"
-        lines.append(
+        table_lines.append(
             "| {scope} | {entity} | {label} | {research} | {validation} | "
             "{test} | `machine_result:{key}` |".format(
                 scope=row["scope"],
@@ -86,35 +83,29 @@ def render_final_test_report(
                 key=machine_key,
             )
         )
-    lines.extend(
-        [
-            "",
-            _REQUIRED_HEADINGS[2],
-            "",
-            "仅并列封存时点和指标，不合并期间重新选模，不新增参数。",
-            "",
-            _REQUIRED_HEADINGS[3],
-            "",
-        ]
-    )
+    failure_lines = []
     if failed_runs:
         for failure in failed_runs:
-            lines.append(
+            attempt_id = str(failure.get("attempt_id", "")).strip()
+            status = str(failure.get("status", "")).strip()
+            reason = str(failure.get("reason", "")).strip()
+            if not attempt_id or not status or not reason:
+                raise ValueError("failed run record is missing a machine-readable field")
+            failure_lines.append(
                 f"- `{failure.get('attempt_id', '')}`: "
-                f"`{failure.get('status', '')}`；{failure.get('reason', '')}"
+                f"`{failure.get('status', '')}`；{failure.get('reason', '')} "
+                f"(`machine_failure:{attempt_id}`)"
             )
     else:
-        lines.append("- 无（`machine_result:failed_runs/count=0`）")
-    lines.extend(
-        [
-            "",
-            _REQUIRED_HEADINGS[4],
-            "",
-            "三个固定期间的证据已分列报告；不得根据最终测试结果返回修改模型。",
-            "",
-        ]
+        failure_lines.append("- 无（`machine_failure:count=0`）")
+    report = (
+        template.replace("{{identity}}", "\n".join(identity_lines))
+        .replace("{{comparison_table}}", "\n".join(table_lines))
+        .replace("{{failed_runs}}", "\n".join(failure_lines))
     )
-    return "\n".join(lines)
+    if "{{" in report or "}}" in report:
+        raise ValueError("frozen report contains an unfilled placeholder")
+    return report
 
 
 def _validate_comparison(comparison: pl.DataFrame) -> None:
@@ -124,6 +115,8 @@ def _validate_comparison(comparison: pl.DataFrame) -> None:
     unknown = set(comparison.get_column("metric")) - set(_LABELS)
     if unknown:
         raise ValueError("report contains a metric outside the frozen vocabulary")
+    if set(comparison.get_column("metric")) != set(_LABELS):
+        raise ValueError("report requires every sealed metric")
     if comparison.select(
         pl.struct("scope", "entity", "metric").is_duplicated().any()
     ).item():

@@ -411,6 +411,28 @@ def test_sealed_runtime_python_and_dependencies_are_verified(tmp_path: Path) -> 
     assert not paths["registry"].exists()
 
 
+def test_sealed_metrics_cannot_substitute_robustness_metric_list(tmp_path: Path) -> None:
+    paths = _fixture(tmp_path)
+
+    def substitute_robustness_metrics(sealed: dict[str, object]) -> None:
+        sealed["metrics"] = [
+            "annual_return",
+            "annual_volatility",
+            "maximum_drawdown",
+            "turnover",
+            "cost_erosion",
+            "unfilled_rate",
+            "target_deviation",
+        ]
+
+    _republish_with_sealed_mutation(paths, tmp_path, substitute_robustness_metrics)
+
+    with pytest.raises(ValueError, match="frozen metrics"):
+        _authorize(paths)
+
+    assert not paths["registry"].exists()
+
+
 def test_token_is_read_once_and_snapshot_is_consumed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

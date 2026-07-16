@@ -13,6 +13,18 @@ required_metrics:
   - cost_erosion
   - unfilled_rate
   - target_deviation
+final_test_metrics:
+  - rank_ic
+  - group_spread
+  - group_monotonicity
+  - annual_return
+  - annual_volatility
+  - sharpe_zero_rate
+  - maximum_drawdown
+  - turnover
+  - cost_erosion
+  - target_deviation
+  - unfilled_rate
 interpretation:
   return_tolerance: 0.02
   drawdown_tolerance: 0.05
