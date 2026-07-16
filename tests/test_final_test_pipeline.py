@@ -27,6 +27,7 @@ from ashare_multifactor.final_test.pipeline import (
     _assert_safe_roots,
     _copy_release_inputs,
     _recover_or_archive_data_claim,
+    _slice_audit_frame,
     _validate_publication_id,
     run_final_test_release,
 )
@@ -368,6 +369,24 @@ def test_release_date_scan_rejects_early_artifact_rows(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="artifacts/stale_intervals.parquet.*outside"):
         _assert_release_date_bounds(tmp_path)
+
+
+def test_stale_interval_slice_keeps_and_clips_cross_boundary_rows() -> None:
+    frame = pl.DataFrame(
+        {
+            "symbol": ["a", "b", "c"],
+            "first_stale_date": [date(2021, 12, 1), date(2025, 12, 1), date(2021, 1, 1)],
+            "last_stale_date": [date(2022, 1, 5), date(2026, 1, 5), date(2021, 2, 1)],
+        }
+    )
+    sliced = _slice_audit_frame("stale_intervals", frame)
+    assert sliced.get_column("symbol").to_list() == ["a", "b"]
+    assert sliced.get_column("first_stale_date").to_list() == [
+        date(2022, 1, 1), date(2025, 12, 1)
+    ]
+    assert sliced.get_column("last_stale_date").to_list() == [
+        date(2022, 1, 5), date(2025, 12, 31)
+    ]
 
 
 def test_research_and_validation_use_same_stage7_continuous_candidate() -> None:

@@ -643,19 +643,39 @@ def _write_attempt_core(
     )
     for name, value in backtest.audits.items():
         if isinstance(value, pl.DataFrame):
-            date_columns = [
-                column
-                for column, dtype in value.schema.items()
-                if dtype == pl.Date or isinstance(dtype, pl.Datetime)
-            ]
-            bounded = value
-            for column in date_columns:
-                bounded = bounded.filter(
-                    pl.col(column).cast(pl.Date).is_between(
-                        FINAL_TEST_START, FINAL_TEST_END
-                    )
-                )
-            bounded.write_parquet(artifacts / f"{name}.parquet")
+            _slice_audit_frame(name, value).write_parquet(
+                artifacts / f"{name}.parquet"
+            )
+
+
+def _slice_audit_frame(name: str, frame: pl.DataFrame) -> pl.DataFrame:
+    if name == "stale_intervals":
+        required = {"first_stale_date", "last_stale_date"}
+        if not required.issubset(frame.columns):
+            raise ValueError("stale_intervals audit schema is invalid")
+        return frame.filter(
+            (pl.col("last_stale_date") >= FINAL_TEST_START)
+            & (pl.col("first_stale_date") <= FINAL_TEST_END)
+        ).with_columns(
+            pl.max_horizontal(
+                pl.col("first_stale_date"), pl.lit(FINAL_TEST_START)
+            ).alias("first_stale_date"),
+            pl.min_horizontal(
+                pl.col("last_stale_date"), pl.lit(FINAL_TEST_END)
+            ).alias("last_stale_date"),
+        )
+    if "date" in frame.columns:
+        return frame.filter(pl.col("date").cast(pl.Date).is_between(
+            FINAL_TEST_START, FINAL_TEST_END
+        ))
+    date_columns = [
+        column
+        for column, dtype in frame.schema.items()
+        if dtype == pl.Date or isinstance(dtype, pl.Datetime)
+    ]
+    if date_columns:
+        raise ValueError(f"unknown dated audit schema: {name}")
+    return frame
 
 
 def _assert_release_date_bounds(root: Path) -> None:
