@@ -147,6 +147,7 @@ def validate_corporate_action_coverage(
     )
     if official.filter(
         ~pl.col("symbol").is_in(normalized)
+        | pl.col("announcement_date").is_null()
         | (pl.col("announcement_date") > pl.col("ex_date"))
         | (pl.col("announcement_date") > pl.col("effective_date"))
         | ~pl.col("ex_date").is_between(FINAL_TEST_START, FINAL_TEST_END)

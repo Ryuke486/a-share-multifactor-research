@@ -111,6 +111,17 @@ def test_announcement_after_effective_date_is_rejected(tmp_path: Path) -> None:
         validate_corporate_action_coverage(root)
 
 
+def test_missing_announcement_date_is_rejected(tmp_path: Path) -> None:
+    root = _write_coverage(tmp_path)
+    official = pl.read_parquet(root / "official_actions.parquet").with_columns(
+        pl.lit(None, dtype=pl.Date).alias("announcement_date")
+    )
+    official.write_parquet(root / "official_actions.parquet")
+    _refresh_record(root, "official_actions")
+    with pytest.raises(ValueError, match="lacks official evidence"):
+        validate_corporate_action_coverage(root)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
