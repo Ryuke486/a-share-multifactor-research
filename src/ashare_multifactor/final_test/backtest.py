@@ -186,6 +186,7 @@ def _execution_input_failures(
                 source_root,
                 authorization=authorization,
                 security_event_coverage_path=coverage_path,
+                corporate_action_coverage_root=source_root / "corporate_action_coverage",
                 final_root=final_root,
             )
             validate_security_event_coverage(

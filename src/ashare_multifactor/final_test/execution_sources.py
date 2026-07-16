@@ -19,6 +19,9 @@ from ashare_multifactor.final_test.action_source_contract import (
     evidence_url_matches_source,
     load_action_source_contract,
 )
+from ashare_multifactor.final_test.corporate_action_coverage import (
+    validate_corporate_action_coverage,
+)
 from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
 from ashare_multifactor.final_test.data_inventory import write_json
 from ashare_multifactor.final_test.gate import (
@@ -39,7 +42,6 @@ def build_final_execution_inputs(
 ) -> dict[str, object]:
     """Generate, then bind, the frozen action/event inputs to this attempt."""
     del data_root
-    del corporate_action_coverage_root
     source_root = final_root / "execution_input_sources"
     execution_root = final_root / "attempt_inputs" / authorization.attempt_id
     if (
@@ -56,12 +58,14 @@ def build_final_execution_inputs(
             code_root=code_root,
             final_root=final_root,
             security_event_coverage_path=security_event_coverage_path,
+            corporate_action_coverage_root=corporate_action_coverage_root,
         )
     else:
         _verify_reusable_source_root(
             source_root,
             authorization=authorization,
             security_event_coverage_path=security_event_coverage_path,
+            corporate_action_coverage_root=corporate_action_coverage_root,
             final_root=final_root,
         )
     source_actions = source_root / "corporate_actions.parquet"
@@ -101,8 +105,9 @@ def generate_final_execution_sources(
     code_root: Path,
     final_root: Path,
     security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
 ) -> Path:
-    """Acquire every frozen BaoStock query and create canonical execution inputs."""
+    """Bind verified official action/event evidence to canonical execution inputs."""
     _assert_authorization(authorization)
     contract = load_action_source_contract(
         code_root / "configs/final_execution_sources.yaml"
@@ -132,12 +137,11 @@ def generate_final_execution_sources(
     )
     coverage_root = security_coverage["coverage_root"]
     coverage_manifest_path = security_coverage["coverage_manifest_path"]
-    raw, coverage = _download_final_dividends(
-        symbols,
-        years=contract.query_years,
-        year_type=contract.query_year_type,
+    corporate_coverage = validate_corporate_action_coverage(
+        corporate_action_coverage_root,
+        symbols=symbols,
     )
-    actions = _normalize_final_dividends(raw, symbols=set(symbols))
+    actions = corporate_coverage["actions"]
     event_file = security_coverage.get("events_file")
     events = pl.read_parquet(event_file) if isinstance(event_file, Path) else pl.DataFrame(
         schema={
@@ -156,14 +160,28 @@ def generate_final_execution_sources(
     temporary = final_root / f".execution-input-sources-{uuid4().hex}.tmp"
     temporary.mkdir(parents=True)
     try:
-        raw.write_parquet(temporary / "baostock_dividends.parquet")
-        coverage.write_parquet(temporary / "baostock_query_coverage.parquet")
         actions.write_parquet(temporary / "corporate_actions.parquet")
         if isinstance(event_file, Path):
             shutil.copy2(event_file, temporary / "security_events.parquet")
         else:
             events.write_parquet(temporary / "security_events.parquet")
         shutil.copy2(coverage_manifest_path, temporary / "security_event_coverage.json")
+        corporate_destination = temporary / "corporate_action_coverage"
+        corporate_destination.mkdir()
+        corporate_support = {
+            corporate_coverage["coverage_manifest_path"],
+            corporate_coverage["candidate_file"],
+            corporate_coverage["coverage_file"],
+            corporate_coverage["evidence_index_file"],
+            corporate_coverage["official_actions_file"],
+            corporate_coverage["diff_file"],
+            *corporate_coverage["evidence_paths"],
+        }
+        for support in sorted(corporate_support):
+            relative = support.relative_to(corporate_coverage["coverage_root"])
+            destination_support = corporate_destination / relative
+            destination_support.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(support, destination_support)
         support_paths = set(security_coverage["evidence_paths"]) | set(
             security_coverage["coverage_paths"]
         )
@@ -193,12 +211,15 @@ def generate_final_execution_sources(
                 "security_event_coverage_sha256": sha256_file(
                     coverage_manifest_path
                 ),
+                "corporate_action_coverage_sha256": sha256_file(
+                    corporate_coverage["coverage_manifest_path"]
+                ),
                 "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
                 "provider": contract.provider,
                 "query_year_type": contract.query_year_type,
                 "query_years": list(contract.query_years),
                 "symbol_count": len(symbols),
-                "successful_query_count": coverage.height,
+                "successful_query_count": corporate_coverage["coverage"].height,
                 "security_event_source": (
                     "official_events" if events.height else "official_zero_event_coverage"
                 ),
@@ -219,6 +240,7 @@ def _verify_reusable_source_root(
     *,
     authorization: FinalTestAuthorization,
     security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
     final_root: Path,
 ) -> None:
     if root.is_symlink() or root.resolve() != final_root.resolve() / "execution_input_sources":
@@ -229,6 +251,9 @@ def _verify_reusable_source_root(
         raise ValueError("invalid reusable final execution source manifest") from error
     resolution = resolve_final_test_data_panel(final_root)
     security_coverage = validate_security_event_coverage(security_event_coverage_path)
+    corporate_coverage = validate_corporate_action_coverage(
+        corporate_action_coverage_root
+    )
     expected = {
         "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
         "git_commit": authorization.git_commit,
@@ -236,6 +261,9 @@ def _verify_reusable_source_root(
         "data_manifest_sha256": resolution.data_manifest_sha256,
         "security_event_coverage_sha256": sha256_file(
             security_coverage["coverage_manifest_path"]
+        ),
+        "corporate_action_coverage_sha256": sha256_file(
+            corporate_coverage["coverage_manifest_path"]
         ),
     }
     if any(manifest.get(key) != value for key, value in expected.items()):
