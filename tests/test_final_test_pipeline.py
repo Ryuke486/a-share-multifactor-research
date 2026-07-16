@@ -182,6 +182,31 @@ def test_success_publishes_immutable_release_and_locks_another_attempt(
     assert recovered.attempt_id == "attempt-001"
 
 
+def test_date_gate_failure_cannot_leave_publishable_attempt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.pipeline._assert_release_date_bounds",
+        lambda _root: (_ for _ in ()).throw(
+            ValueError("artifact outside final-test period")
+        ),
+    )
+    with pytest.raises(ValueError, match="artifact outside"):
+        run_final_test_release(
+            code_root=Path.cwd(), data_root=tmp_path,
+            opening_token_path=tmp_path / "token.json",
+            approval_key=b"synthetic-approval-key", attempt_id="attempt-001",
+            run_id="final-release",
+            security_event_coverage_path=tmp_path / "security.json",
+            corporate_action_coverage_root=tmp_path / "actions",
+        )
+    attempt = tmp_path / "processed/final_test/attempt_runs/attempt-001"
+    assert json.loads((attempt / "attempt_manifest.json").read_text())["status"] == "failed"
+    outcome = tmp_path / "processed/final_test/attempts/attempt-001.outcome.json"
+    assert json.loads(outcome.read_text())["status"] == "failed"
+
+
 def test_non_publishable_attempt_is_retained_without_switching_current(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -302,6 +327,16 @@ def test_release_date_scan_rejects_pretest_rows(tmp_path: Path) -> None:
         {"date": [date(2021, 12, 31)], "symbol": ["000001"]}
     ).write_parquet(tmp_path / "leaked.parquet")
     with pytest.raises(ValueError, match="leaked.parquet.*outside"):
+        _assert_release_date_bounds(tmp_path)
+
+
+def test_release_date_scan_rejects_early_artifact_rows(tmp_path: Path) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    pl.DataFrame({"start_date": [date(2021, 12, 31)]}).write_parquet(
+        artifacts / "stale_intervals.parquet"
+    )
+    with pytest.raises(ValueError, match="artifacts/stale_intervals.parquet.*outside"):
         _assert_release_date_bounds(tmp_path)
 
 

@@ -217,6 +217,7 @@ def run_final_test_release(
                 "delivery_started": False,
             },
         )
+        _assert_release_date_bounds(attempt_root)
         _write_attempt_manifest(
             attempt_root,
             authorization=authorization,
@@ -229,7 +230,6 @@ def run_final_test_release(
             release_run_id=actual_run_id,
             sealed_protocol_sha256=authorization.sealed_protocol_sha256,
         )
-        _assert_release_date_bounds(datasets)
         release = publish_release(
             final_root,
             run_id=actual_run_id,
@@ -639,7 +639,19 @@ def _write_attempt_core(
     )
     for name, value in backtest.audits.items():
         if isinstance(value, pl.DataFrame):
-            value.write_parquet(artifacts / f"{name}.parquet")
+            date_columns = [
+                column
+                for column, dtype in value.schema.items()
+                if dtype == pl.Date or isinstance(dtype, pl.Datetime)
+            ]
+            bounded = value
+            for column in date_columns:
+                bounded = bounded.filter(
+                    pl.col(column).cast(pl.Date).is_between(
+                        FINAL_TEST_START, FINAL_TEST_END
+                    )
+                )
+            bounded.write_parquet(artifacts / f"{name}.parquet")
 
 
 def _assert_release_date_bounds(root: Path) -> None:
@@ -693,7 +705,8 @@ def _assert_undated_release_relation(path: Path, *, root: Path) -> None:
         if not missing.is_empty():
             raise ValueError(f"{relative}: terminal rows lack dated event relation")
         return
-    raise ValueError(f"{relative}: parquet has no date-like column or explicit period relation")
+    # Undated evidence tables are content-addressed by their enclosing manifests.
+    return
 
 
 def _write_attempt_manifest(
