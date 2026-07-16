@@ -90,6 +90,27 @@ def test_normalized_actions_come_only_from_official_rows(tmp_path: Path) -> None
     assert actions.get_column("cash_per_share").to_list() == [0.2]
 
 
+def test_preperiod_announcement_is_valid_for_final_period_action(tmp_path: Path) -> None:
+    root = _write_coverage(tmp_path)
+    official = pl.read_parquet(root / "official_actions.parquet").with_columns(
+        pl.lit(date(2021, 12, 20)).alias("announcement_date")
+    )
+    official.write_parquet(root / "official_actions.parquet")
+    _refresh_record(root, "official_actions")
+    assert validate_corporate_action_coverage(root)["actions"].height == 1
+
+
+def test_announcement_after_effective_date_is_rejected(tmp_path: Path) -> None:
+    root = _write_coverage(tmp_path)
+    official = pl.read_parquet(root / "official_actions.parquet").with_columns(
+        pl.lit(date(2023, 6, 6)).alias("announcement_date")
+    )
+    official.write_parquet(root / "official_actions.parquet")
+    _refresh_record(root, "official_actions")
+    with pytest.raises(ValueError, match="lacks official evidence"):
+        validate_corporate_action_coverage(root)
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     [
