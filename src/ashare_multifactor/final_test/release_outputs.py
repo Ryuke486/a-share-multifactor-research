@@ -6,9 +6,13 @@ from pathlib import Path
 
 import polars as pl
 
-from ashare_multifactor.audit.publication import resolve_current
+from ashare_multifactor.audit.publication import PublishedRelease
+from ashare_multifactor.audit.records import sha256_file, verify_file_record
 from ashare_multifactor.final_test.backtest import FinalTestBacktestResult
-from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test.gate import (
+    FinalTestAuthorization,
+    _verify_sealed_payload,
+)
 from ashare_multifactor.final_test.metrics import (
     build_period_comparison,
     compute_final_test_metrics,
@@ -30,9 +34,7 @@ def build_final_metrics(
     data_root: Path,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     del code_root
-    robustness = resolve_current(data_root / "processed/robustness")
-    if robustness.run_id != authorization.robustness_release:
-        raise ValueError("robustness release changed before final metrics")
+    robustness = _resolve_authorized_robustness(data_root, authorization)
     sealed = json.loads(
         (robustness.artifacts / "sealed_test_protocol.json").read_text(encoding="utf-8")
     )
@@ -59,7 +61,8 @@ def build_final_metrics(
         metric_manifest=metrics,
         sealed_protocol=sealed,
     )
-    historical = _historical_metrics(data_root, sealed, metrics)
+    stage8_lineage = json.loads(robustness.lineage.read_text(encoding="utf-8"))
+    historical = _historical_metrics(data_root, sealed, metrics, stage8_lineage)
     comparison = build_period_comparison(
         (*historical, test_metrics),
         metric_manifest=metrics,
@@ -75,7 +78,9 @@ def build_final_report(
     code_root: Path,
     registry_root: Path,
 ) -> str:
-    robustness = resolve_current(registry_root.parent.parent / "robustness")
+    robustness = _resolve_authorized_robustness(
+        registry_root.parent.parent.parent, authorization
+    )
     sealed = json.loads(
         (robustness.artifacts / "sealed_test_protocol.json").read_text(encoding="utf-8")
     )
@@ -126,20 +131,26 @@ def _historical_metrics(
     data_root: Path,
     sealed: dict[str, object],
     metrics: tuple[str, ...],
+    stage8_lineage: dict[str, object],
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    stage_five = resolve_current(data_root / "processed/factor_combination")
-    validation = resolve_current(data_root / "processed/validation_evaluation")
+    stage_five, validation = _resolve_historical_releases(
+        data_root, sealed, stage8_lineage
+    )
     sources = (
         (
             "research",
-            stage_five.artifacts / "composite_ic.parquet",
-            stage_five.artifacts / "composite_quantiles.parquet",
+            _bound_release_file(stage_five, "artifacts/composite_ic.parquet"),
+            _bound_release_file(stage_five, "artifacts/composite_quantiles.parquet"),
             _historical_backtest_root(validation, period="research"),
         ),
         (
             "validation",
-            validation.artifacts / "research/composite_rank_ic.parquet",
-            validation.artifacts / "research/composite_quantile_returns.parquet",
+            _bound_release_file(
+                validation, "artifacts/research/composite_rank_ic.parquet"
+            ),
+            _bound_release_file(
+                validation, "artifacts/research/composite_quantile_returns.parquet"
+            ),
             _historical_backtest_root(validation, period="validation"),
         ),
     )
@@ -147,7 +158,12 @@ def _historical_metrics(
     for period, ic_path, groups_path, backtest_root in sources:
         ic, groups = _metric_inputs(pl.read_parquet(ic_path), pl.read_parquet(groups_path))
         continuous = {
-            name: pl.read_parquet(backtest_root / f"{name}.parquet")
+            name: pl.read_parquet(
+                _bound_release_file(
+                    validation,
+                    (backtest_root / f"{name}.parquet").relative_to(validation.root).as_posix(),
+                )
+            )
             for name in ("nav", "orders", "order_events", "trades", "target_diagnostics")
         }
         bounds = {
@@ -168,6 +184,125 @@ def _historical_metrics(
             )
         )
     return result[0], result[1]
+
+
+def _resolve_historical_releases(
+    data_root: Path,
+    sealed: dict[str, object],
+    stage8_lineage: dict[str, object],
+) -> tuple[PublishedRelease, PublishedRelease]:
+    """Resolve immutable Stage-5/7 inputs from the sealed Stage-8 lineage."""
+    validation_identity = sealed.get("upstream_validation")
+    if not isinstance(validation_identity, dict):
+        raise ValueError("sealed protocol lacks upstream validation identity")
+    validation = _resolve_bound_release(
+        data_root / "processed/validation_evaluation", validation_identity
+    )
+    stage8_inputs = stage8_lineage.get("inputs")
+    validation_input = (
+        stage8_inputs.get("validation_manifest")
+        if isinstance(stage8_inputs, dict)
+        else None
+    )
+    if (
+        not isinstance(validation_input, dict)
+        or validation_input.get("sha256") != validation.manifest_sha256
+    ):
+        raise ValueError("Stage-8 lineage does not bind sealed Stage-7 manifest")
+    lineage = json.loads(validation.lineage.read_text(encoding="utf-8"))
+    upstream = lineage.get("upstream")
+    if not isinstance(upstream, dict):
+        raise ValueError("validation lineage lacks frozen Stage-5 inputs")
+    manifest_record = upstream.get("stage_five_manifest")
+    lineage_record = upstream.get("stage_five_lineage")
+    if not isinstance(manifest_record, dict) or not isinstance(lineage_record, dict):
+        raise ValueError("validation lineage lacks frozen Stage-5 records")
+    manifest_path = verify_file_record(manifest_record, root=data_root)
+    lineage_path = verify_file_record(lineage_record, root=data_root)
+    stage_five_root = manifest_path.parent
+    expected_parent = (data_root / "processed/factor_combination/releases").resolve()
+    if (
+        stage_five_root.parent.resolve() != expected_parent
+        or lineage_path.parent != stage_five_root
+        or manifest_path.name != "manifest.json"
+        or lineage_path.name != "lineage.json"
+    ):
+        raise ValueError("validation lineage Stage-5 paths escape release root")
+    stage_five = _resolve_bound_release(
+        data_root / "processed/factor_combination",
+        {
+            "run_id": stage_five_root.name,
+            "manifest_sha256": manifest_record.get("sha256"),
+        },
+    )
+    return stage_five, validation
+
+
+def _resolve_authorized_robustness(
+    data_root: Path, authorization: FinalTestAuthorization
+) -> PublishedRelease:
+    """Resolve the authorized Stage-8 run without consulting CURRENT.json."""
+    base = data_root / "processed/robustness"
+    root = base / "releases" / authorization.robustness_release
+    robustness = _resolve_bound_release(
+        base,
+        {
+            "run_id": authorization.robustness_release,
+            "manifest_sha256": sha256_file(root / "manifest.json"),
+        },
+    )
+    sealed = json.loads(
+        (robustness.artifacts / "sealed_test_protocol.json").read_text(encoding="utf-8")
+    )
+    if _verify_sealed_payload(sealed) != authorization.sealed_protocol_sha256:
+        raise ValueError("authorized Stage-8 sealed protocol changed")
+    return robustness
+
+
+def _resolve_bound_release(
+    base: Path, identity: dict[str, object]
+) -> PublishedRelease:
+    run_id = identity.get("run_id")
+    expected_hash = identity.get("manifest_sha256")
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or Path(run_id).name != run_id
+        or not isinstance(expected_hash, str)
+        or len(expected_hash) != 64
+    ):
+        raise ValueError("sealed release identity is invalid")
+    root = base / "releases" / run_id
+    manifest_path = root / "manifest.json"
+    lineage_path = root / "lineage.json"
+    if sha256_file(manifest_path) != expected_hash:
+        raise ValueError("sealed release manifest hash changed")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if manifest.get("run_id") != run_id or not isinstance(manifest.get("files"), list):
+        raise ValueError("sealed release manifest is invalid")
+    for record in manifest["files"]:
+        verify_file_record(record, root=root)
+    return PublishedRelease(
+        run_id=run_id,
+        root=root,
+        datasets=root / "datasets",
+        artifacts=root / "artifacts",
+        manifest=manifest_path,
+        lineage=lineage_path,
+        manifest_sha256=expected_hash,
+    )
+
+
+def _bound_release_file(release: PublishedRelease, relative: str) -> Path:
+    manifest = json.loads(release.manifest.read_text(encoding="utf-8"))
+    records = [
+        record
+        for record in manifest.get("files", [])
+        if isinstance(record, dict) and record.get("path") == relative
+    ]
+    if len(records) != 1:
+        raise ValueError(f"sealed release does not bind required file: {relative}")
+    return verify_file_record(records[0], root=release.root)
 
 
 def _historical_backtest_root(validation: object, *, period: str) -> Path:

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from ashare_multifactor.audit.publication import resolve_current
+from ashare_multifactor.audit.publication import publish_release, resolve_current
 from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.backtest import FinalTestBacktestResult
@@ -36,6 +36,7 @@ from ashare_multifactor.final_test.registry import (
 )
 from ashare_multifactor.final_test.release_outputs import (
     _historical_backtest_root,
+    _resolve_historical_releases,
     _slice_backtest_period,
 )
 from ashare_multifactor.final_test.signals import FinalTestSignals
@@ -315,6 +316,74 @@ def test_research_and_validation_use_same_stage7_continuous_candidate() -> None:
     )
     assert research == expected
     assert holdout == expected
+
+
+def test_historical_releases_ignore_drifting_current_pointers(tmp_path: Path) -> None:
+    empty_datasets = tmp_path / "empty-datasets"
+    empty_artifacts = tmp_path / "empty-artifacts"
+    empty_datasets.mkdir()
+    empty_artifacts.mkdir()
+    stage5_base = tmp_path / "processed/factor_combination"
+    bound_stage5 = publish_release(
+        stage5_base,
+        run_id="stage5-bound",
+        staged_datasets=empty_datasets,
+        staged_artifacts=empty_artifacts,
+        lineage={"stage": 5},
+    )
+    publish_release(
+        stage5_base,
+        run_id="stage5-drift",
+        staged_datasets=empty_datasets,
+        staged_artifacts=empty_artifacts,
+        lineage={"stage": "drift"},
+    )
+    validation_lineage = {
+        "upstream": {
+            "stage_five_manifest": file_record(
+                bound_stage5.manifest, root=tmp_path, role="stage_five_manifest"
+            ).to_dict(),
+            "stage_five_lineage": file_record(
+                bound_stage5.lineage, root=tmp_path, role="stage_five_lineage"
+            ).to_dict(),
+        }
+    }
+    validation_base = tmp_path / "processed/validation_evaluation"
+    bound_validation = publish_release(
+        validation_base,
+        run_id="validation-bound",
+        staged_datasets=empty_datasets,
+        staged_artifacts=empty_artifacts,
+        lineage=validation_lineage,
+    )
+    publish_release(
+        validation_base,
+        run_id="validation-drift",
+        staged_datasets=empty_datasets,
+        staged_artifacts=empty_artifacts,
+        lineage={"stage": "drift"},
+    )
+
+    stage5, validation = _resolve_historical_releases(
+        tmp_path,
+        {
+            "upstream_validation": {
+                "run_id": bound_validation.run_id,
+                "manifest_sha256": bound_validation.manifest_sha256,
+            }
+        },
+        {
+            "inputs": {
+                "validation_manifest": {
+                    "sha256": bound_validation.manifest_sha256,
+                    "size": bound_validation.manifest.stat().st_size,
+                }
+            }
+        },
+    )
+
+    assert stage5.run_id == "stage5-bound"
+    assert validation.run_id == "validation-bound"
 
 
 def test_security_event_zero_rows_still_require_ready_official_coverage(
