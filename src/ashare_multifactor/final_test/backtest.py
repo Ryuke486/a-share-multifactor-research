@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
+import json
 from pathlib import Path
 
 import polars as pl
@@ -192,7 +193,14 @@ def _resolve_verified_inputs(
     final_events = _load_final_security_events(verified["security_events.parquet"])
     targets = _continuous_targets(pretest.target_weights, signals.target_weights)
     symbols = _execution_symbols(targets, pretest.security_events, final_events)
+    final_calendar = _load_final_trading_calendar(source)
     final_daily = _load_final_execution_daily(source, symbols)
+    _validate_final_coverage(
+        source,
+        final_calendar,
+        final_daily,
+        signals.target_weights,
+    )
     final_execution = _extend_execution_panel(
         pretest.execution_panel,
         pretest.warmup_daily,
@@ -236,7 +244,26 @@ def _resolve_pretest_execution_inputs(
         authorization,
         data_root=data_root,
     )
+    robustness = resolve_current(data_root / "processed/robustness")
+    if robustness.run_id != authorization.robustness_release:
+        raise ValueError("robustness release changed during final input resolution")
+    sealed = json.loads(
+        (robustness.artifacts / "sealed_test_protocol.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if sealed.get("sealed_protocol_sha256") != authorization.sealed_protocol_sha256:
+        raise ValueError("sealed protocol changed during final input resolution")
+    expected_validation = sealed.get("upstream_validation")
+    if not isinstance(expected_validation, dict):
+        raise ValueError("authorized seal lacks validation release identity")
     validation = resolve_current(data_root / "processed/validation_evaluation")
+    if (
+        validation.run_id != expected_validation.get("run_id")
+        or validation.manifest_sha256
+        != expected_validation.get("manifest_sha256")
+    ):
+        raise ValueError("validation release differs from authorized seal")
     paths = {
         name: _release_file(validation, f"datasets/inputs/{name}.parquet")
         for name in (
@@ -269,7 +296,17 @@ def _load_final_actions(path: Path) -> pl.DataFrame:
     )
     if not required_dates.issubset(frame.columns) or frame.filter(invalid_dates).height:
         raise ValueError("final corporate actions cross the sealed date bounds")
-    return normalize_corporate_actions(frame, maximum_date=FINAL_TEST_END)
+    normalized = normalize_corporate_actions(frame, maximum_date=FINAL_TEST_END)
+    if normalized.filter(
+        pl.col("cash_per_share").is_null()
+        | ~pl.col("cash_per_share").is_finite()
+        | pl.col("share_ratio").is_null()
+        | ~pl.col("share_ratio").is_finite()
+    ).height:
+        raise ValueError("final corporate action numeric values must be finite")
+    if normalized.filter(pl.col("effective_date") < pl.col("ex_date")).height:
+        raise ValueError("final corporate action effective date precedes ex-date")
+    return normalized
 
 
 def _load_final_security_events(path: Path) -> pl.DataFrame:
@@ -397,6 +434,63 @@ def _load_final_execution_daily(source: object, symbols: list[str]) -> pl.DataFr
     return daily
 
 
+def _load_final_trading_calendar(source: object) -> pl.DataFrame:
+    files = getattr(source, "files", None)
+    if not isinstance(files, tuple) or not files:
+        raise ValueError("verified final daily-panel source is empty")
+    return (
+        pl.scan_parquet(files)
+        .select("date")
+        .unique()
+        .collect()
+        .sort("date")
+    )
+
+
+def _validate_final_coverage(
+    source: object,
+    trading_calendar: pl.DataFrame,
+    final_execution: pl.DataFrame,
+    final_targets: pl.DataFrame,
+) -> None:
+    manifest = getattr(source, "manifest", None)
+    if not isinstance(manifest, dict):
+        raise ValueError("verified final daily-panel manifest is missing")
+    try:
+        manifest_minimum = date.fromisoformat(str(manifest["min_date"]))
+        manifest_maximum = date.fromisoformat(str(manifest["max_date"]))
+    except (KeyError, ValueError) as error:
+        raise ValueError("verified final daily-panel date identity is invalid") from error
+    if (
+        manifest.get("years") != [2022, 2023, 2024, 2025]
+        or manifest_minimum.year != FINAL_TEST_START.year
+        or manifest_maximum.year != FINAL_TEST_END.year
+    ):
+        raise ValueError("final daily-panel manifest must cover all four final-test years")
+    if trading_calendar.is_empty() or (
+        trading_calendar.get_column("date").min() != manifest_minimum
+        or trading_calendar.get_column("date").max() != manifest_maximum
+    ):
+        raise ValueError("trading calendar differs from the verified final manifest")
+    if (
+        final_execution.is_empty()
+        or final_execution.get_column("date").max() != manifest_maximum
+    ):
+        raise ValueError("final execution rows do not reach the manifest last trading day")
+    expected_rebalances = set(
+        trading_calendar.with_columns(
+            pl.col("date").dt.year().alias("_year"),
+            pl.col("date").dt.month().alias("_month"),
+        )
+        .group_by("_year", "_month")
+        .agg(pl.col("date").max())
+        .get_column("date")
+    )
+    actual_rebalances = set(final_targets.get_column("date"))
+    if actual_rebalances != expected_rebalances:
+        raise ValueError("final targets differ from the frozen month-end rebalance schedule")
+
+
 def _extend_execution_panel(
     historical_execution: pl.DataFrame,
     warmup_daily: pl.DataFrame,
@@ -456,12 +550,22 @@ def _execute_verified_inputs(
         settings,
         inputs.security_events,
     )
-    reconciliation = max(
-        float(outputs["reconciliation"]["difference"].abs().max() or 0.0),
-        float(
-            outputs["scenario_reconciliation"]["difference"].abs().max() or 0.0
-        ),
+    reconciliation_frames = (
+        outputs["reconciliation"],
+        outputs["scenario_reconciliation"],
     )
+    reconciliation_is_finite = all(
+        not _has_nonfinite(frame, ("difference",)) for frame in reconciliation_frames
+    )
+    reconciliation = (
+        max(
+            float(frame["difference"].abs().max() or 0.0)
+            for frame in reconciliation_frames
+        )
+        if reconciliation_is_finite
+        else float("inf")
+    )
+    nav_is_finite = not _has_nonfinite(outputs["nav"])
     shadow, shadow_daily = shadow_nav_audit(
         inputs.execution_panel,
         inputs.corporate_actions,
@@ -478,8 +582,12 @@ def _execute_verified_inputs(
         review_days=formal.stale_review_days,
     )
     failures = []
-    if reconciliation > _RECONCILIATION_THRESHOLD:
+    if not reconciliation_is_finite:
+        failures.append("non-finite reconciliation gate failed")
+    elif reconciliation > _RECONCILIATION_THRESHOLD:
         failures.append("reconciliation gate failed")
+    if not nav_is_finite:
+        failures.append("non-finite NAV gate failed")
     if shadow.get("status") != "ready":
         failures.append("shadow NAV gate failed")
     if stale.get("status") != "ready" or stale.get("unexplained_symbols", 0):
@@ -497,6 +605,25 @@ def _execute_verified_inputs(
         preflight={"status": "ready", "execution_started": True},
         publishable=not failures,
         gate_failures=tuple(failures),
+    )
+
+
+def _has_nonfinite(
+    frame: pl.DataFrame,
+    columns: tuple[str, ...] | None = None,
+) -> bool:
+    selected = columns or tuple(
+        name for name, dtype in frame.schema.items() if dtype.is_numeric()
+    )
+    if (
+        frame.is_empty()
+        or not selected
+        or any(name not in frame.columns for name in selected)
+    ):
+        return True
+    return any(
+        frame.select((pl.col(name).is_null() | ~pl.col(name).is_finite()).any()).item()
+        for name in selected
     )
 
 

@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import date
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -405,6 +406,10 @@ def test_verified_inputs_extend_stage7_ledger_with_final_manifest_data(
         lambda *_args, **_kwargs: pretest,
         raising=False,
     )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._validate_final_coverage",
+        lambda *_args, **_kwargs: None,
+    )
 
     result = _resolve_verified_inputs(
         SimpleNamespace(files=(final_panel_path,)),
@@ -538,3 +543,241 @@ def test_verified_inputs_run_the_unchanged_three_scenario_stage6_engine() -> Non
         "zero_cost",
     }
     assert result.outputs["scenario_reconciliation"]["difference"].abs().max() < 0.01
+
+
+def test_non_finite_reconciliation_and_nav_block_publication(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test.backtest import _execute_verified_inputs
+
+    config = _config(tmp_path)
+    outputs = {
+        "positions": pl.DataFrame(
+            schema={
+                "date": pl.Date,
+                "symbol": pl.String,
+                "market_value": pl.Float64,
+                "is_stale": pl.Boolean,
+                "stale_days": pl.Int64,
+            }
+        ),
+        "nav": pl.DataFrame(
+            {"date": [date(2022, 1, 4)], "nav": [float("inf")]}
+        ),
+        "reconciliation": pl.DataFrame({"difference": [float("nan")]}),
+        "scenario_reconciliation": pl.DataFrame({"difference": [0.0]}),
+    }
+    inputs = SimpleNamespace(
+        execution_panel=pl.DataFrame(),
+        target_weights=pl.DataFrame(),
+        corporate_actions=pl.DataFrame(),
+        security_events=pl.DataFrame(),
+        stale_evidence=pl.DataFrame(schema={"symbol": pl.String}),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest.run_backtest",
+        lambda *_args, **_kwargs: outputs,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest.shadow_nav_audit",
+        lambda *_args, **_kwargs: ({"status": "ready"}, pl.DataFrame()),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest.audit_stale_positions",
+        lambda *_args, **_kwargs: (
+            {"status": "ready", "unexplained_symbols": 0},
+            pl.DataFrame(),
+        ),
+    )
+
+    result = _execute_verified_inputs(
+        inputs,
+        fees=object(),
+        formal=config.formal_backtest,
+    )
+
+    assert result.publishable is False
+    assert "non-finite reconciliation gate failed" in result.gate_failures
+    assert "non-finite NAV gate failed" in result.gate_failures
+
+
+@pytest.mark.parametrize(
+    ("cash_per_share", "share_ratio"),
+    [(float("inf"), 0.0), (0.0, float("nan"))],
+)
+def test_final_actions_require_finite_numeric_values(
+    tmp_path: Path,
+    cash_per_share: float,
+    share_ratio: float,
+) -> None:
+    from ashare_multifactor.final_test.backtest import _load_final_actions
+
+    path = tmp_path / "corporate_actions.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["000001"],
+            "ex_date": [date(2022, 1, 4)],
+            "effective_date": [date(2022, 1, 4)],
+            "cash_per_share": [cash_per_share],
+            "share_ratio": [share_ratio],
+            "source": ["synthetic"],
+        }
+    ).write_parquet(path)
+
+    with pytest.raises(ValueError, match="finite"):
+        _load_final_actions(path)
+
+
+def test_final_action_effective_date_cannot_precede_ex_date(tmp_path: Path) -> None:
+    from ashare_multifactor.final_test.backtest import _load_final_actions
+
+    path = tmp_path / "corporate_actions.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["000001"],
+            "ex_date": [date(2022, 1, 5)],
+            "effective_date": [date(2022, 1, 4)],
+            "cash_per_share": [0.1],
+            "share_ratio": [0.0],
+            "source": ["synthetic"],
+        }
+    ).write_parquet(path)
+
+    with pytest.raises(ValueError, match="precedes ex-date"):
+        _load_final_actions(path)
+
+
+def _complete_final_calendar() -> pl.DataFrame:
+    dates = [
+        date(year, month, 28)
+        for year in range(2022, 2026)
+        for month in range(1, 13)
+    ]
+    dates[-1] = date(2025, 12, 30)
+    return pl.DataFrame({"date": dates})
+
+
+def _complete_final_source() -> SimpleNamespace:
+    return SimpleNamespace(
+        manifest={
+            "min_date": "2022-01-28",
+            "max_date": "2025-12-30",
+            "years": [2022, 2023, 2024, 2025],
+        }
+    )
+
+
+def test_partial_year_manifest_cannot_masquerade_as_complete_final_period() -> None:
+    from ashare_multifactor.final_test import backtest
+
+    source = SimpleNamespace(
+        manifest={
+            "min_date": "2022-01-03",
+            "max_date": "2023-12-29",
+            "years": [2022, 2023],
+        }
+    )
+    calendar = pl.DataFrame(
+        {"date": [date(2022, 1, 31), date(2023, 12, 29)]}
+    )
+
+    with pytest.raises(ValueError, match="all four final-test years"):
+        backtest._validate_final_coverage(
+            source,
+            calendar,
+            calendar,
+            calendar,
+        )
+
+
+def test_final_execution_rows_must_reach_manifest_last_trading_day() -> None:
+    from ashare_multifactor.final_test import backtest
+
+    calendar = _complete_final_calendar()
+    targets = calendar.clone()
+    execution = pl.DataFrame({"date": [date(2025, 12, 29)]})
+
+    with pytest.raises(ValueError, match="manifest last trading day"):
+        backtest._validate_final_coverage(
+            _complete_final_source(),
+            calendar,
+            execution,
+            targets,
+        )
+
+
+def test_final_targets_cover_every_manifest_month_end_rebalance() -> None:
+    from ashare_multifactor.final_test import backtest
+
+    calendar = _complete_final_calendar()
+    incomplete_targets = calendar.head(calendar.height - 1)
+    execution = pl.DataFrame({"date": [date(2025, 12, 30)]})
+
+    with pytest.raises(ValueError, match="frozen month-end rebalance schedule"):
+        backtest._validate_final_coverage(
+            _complete_final_source(),
+            calendar,
+            execution,
+            incomplete_targets,
+        )
+
+
+def test_second_validation_resolution_must_match_the_authorized_seal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test.backtest import (
+        _resolve_pretest_execution_inputs,
+    )
+
+    authorization = _authorization()
+    robustness_artifacts = tmp_path / "robustness/artifacts"
+    robustness_artifacts.mkdir(parents=True)
+    (robustness_artifacts / "sealed_test_protocol.json").write_text(
+        json.dumps(
+            {
+                "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+                "upstream_validation": {
+                    "run_id": "authorized-validation",
+                    "manifest_sha256": "d" * 64,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    robustness = SimpleNamespace(
+        run_id=authorization.robustness_release,
+        artifacts=robustness_artifacts,
+    )
+    substituted_validation = SimpleNamespace(
+        run_id="substituted-validation",
+        manifest_sha256="e" * 64,
+    )
+    empty = tmp_path / "empty.parquet"
+    pl.DataFrame().write_parquet(empty)
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._load_frozen_config",
+        lambda *_args: _config(tmp_path),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest.resolve_final_test_signal_inputs",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            historical_daily=pl.DataFrame()
+        ),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest.resolve_current",
+        lambda path: (
+            robustness if path.name == "robustness" else substituted_validation
+        ),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._release_file",
+        lambda *_args: empty,
+    )
+
+    with pytest.raises(ValueError, match="validation release differs from authorized seal"):
+        _resolve_pretest_execution_inputs(
+            authorization,
+            code_root=tmp_path,
+            data_root=tmp_path,
+        )
