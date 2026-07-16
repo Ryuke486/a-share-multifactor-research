@@ -24,6 +24,50 @@ def assert_no_authoritative_success(registry_root: Path) -> None:
             raise ValueError("authoritative final-test run already succeeded")
 
 
+def append_attempt_outcome(
+    registry_root: Path,
+    *,
+    attempt_id: str,
+    status: str,
+    authoritative: bool,
+    reason: str,
+    release_run_id: str | None = None,
+    release_manifest_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Append one terminal outcome without rewriting the opening attempt record."""
+    if _ATTEMPT_ID.fullmatch(attempt_id) is None:
+        raise ValueError("invalid final-test attempt ID")
+    if status not in {"failed", "succeeded"}:
+        raise ValueError("invalid final-test attempt outcome")
+    if authoritative != (status == "succeeded"):
+        raise ValueError("only a succeeded final-test outcome can be authoritative")
+    if not reason.strip():
+        raise ValueError("final-test attempt outcome reason is required")
+    if authoritative and (not release_run_id or not release_manifest_sha256):
+        raise ValueError("authoritative outcome requires release identity")
+    payload: dict[str, Any] = {
+        "attempt_id": attempt_id,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "status": status,
+        "authoritative": authoritative,
+        "reason": reason.strip(),
+    }
+    if release_run_id is not None:
+        payload["release_run_id"] = release_run_id
+    if release_manifest_sha256 is not None:
+        payload["release_manifest_sha256"] = release_manifest_sha256
+    registry_root.mkdir(parents=True, exist_ok=True)
+    destination = registry_root / f"{attempt_id}.outcome.json"
+    try:
+        _write_exclusive(
+            destination,
+            (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(),
+        )
+    except FileExistsError as exc:
+        raise ValueError("final-test attempt outcome is already recorded") from exc
+    return payload
+
+
 def register_attempt(
     registry_root: Path,
     *,
