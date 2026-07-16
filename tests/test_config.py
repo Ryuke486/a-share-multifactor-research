@@ -3,8 +3,10 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import polars as pl
 
 from ashare_multifactor.config import load_config
+from ashare_multifactor.data.security import assert_supported_markets
 
 
 BASE_CONFIG = """
@@ -29,6 +31,16 @@ mvp:
   transaction_cost_bps: 10.0
   initial_cash: 1000000.0
 """
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["Stage-7 handoff", "Stage-8 handoff", "final backtest handoff"],
+)
+def test_market_handoff_assertion_rejects_bj_with_label(label: str) -> None:
+    frame = pl.DataFrame({"symbol": ["000001", "600000", "920001"]})
+    with pytest.raises(ValueError, match=label):
+        assert_supported_markets(frame, ("sh", "sz"), label=label)
 
 
 def test_smoke_period_must_not_overlap_final_test(tmp_path: Path):

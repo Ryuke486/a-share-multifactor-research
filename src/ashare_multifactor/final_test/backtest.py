@@ -9,7 +9,7 @@ import polars as pl
 
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.config import FormalBacktestSettings
-from ashare_multifactor.data.security import market_for_symbol
+from ashare_multifactor.data.security import assert_supported_markets, market_for_symbol
 from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.execution.fees import FeeSchedule, load_market_rules
@@ -113,6 +113,7 @@ def run_final_test_backtest(
             authorization=authorization,
             code_root=code_root,
             final_root=final_root,
+            supported_markets=config.supported_markets,
         )
     except (FileNotFoundError, ValueError) as error:
         return _blocked_preflight([str(error)])
@@ -212,6 +213,7 @@ def _resolve_verified_inputs(
     authorization: FinalTestAuthorization,
     code_root: Path,
     final_root: Path,
+    supported_markets: tuple[str, ...],
 ) -> FinalTestBacktestInputs:
     verified = verify_execution_input_manifest(
         _execution_manifest_path(final_root, authorization),
@@ -221,6 +223,27 @@ def _resolve_verified_inputs(
         authorization,
         code_root=code_root,
         data_root=final_root.parent.parent,
+    )
+    assert_supported_markets(
+        pretest.execution_panel,
+        supported_markets,
+        label="final backtest handoff Stage-7 execution panel",
+    )
+    assert_supported_markets(
+        pretest.target_weights,
+        supported_markets,
+        label="final backtest handoff Stage-7 targets",
+    )
+    assert_supported_markets(
+        pretest.corporate_actions,
+        supported_markets,
+        label="final backtest handoff Stage-7 corporate actions",
+    )
+    assert_supported_markets(
+        pretest.security_events,
+        supported_markets,
+        label="final backtest handoff Stage-7 security events",
+        symbol_columns=("source_symbol", "target_symbol"),
     )
     adv_lookback = pretest.adv_lookback
     if adv_lookback <= 0:

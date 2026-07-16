@@ -12,6 +12,7 @@ from ashare_multifactor.audit.publication import PublishedRelease, resolve_curre
 from ashare_multifactor.audit.records import FileRecord, verify_file_record
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.data.field_audit import FieldReadiness
+from ashare_multifactor.data.security import assert_supported_markets
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 
@@ -75,6 +76,11 @@ def resolve_final_test_signal_inputs(
         )
     )
     _validate_previous_targets(previous_targets)
+    assert_supported_markets(
+        previous_targets,
+        config.supported_markets,
+        label="final signal handoff Stage-7 targets",
+    )
 
     factor_root = data_root / "processed/factor_research"
     stage_four = _required_records(inputs, "stage_four_files")
@@ -104,6 +110,9 @@ def resolve_final_test_signal_inputs(
             factor.minimum_history,
             max(definition.lookback for definition in FACTOR_DEFINITIONS),
         ),
+    )
+    assert_supported_markets(
+        daily, config.supported_markets, label="final signal handoff Stage-7 daily history"
     )
     return FinalTestSignalInputs(
         historical_daily=daily,

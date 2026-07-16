@@ -30,3 +30,26 @@ def filter_supported_markets(
         .map_elements(market_for_symbol, return_dtype=pl.String)
         .is_in(supported_markets)
     )
+
+
+def assert_supported_markets(
+    frame: pl.DataFrame,
+    supported_markets: tuple[str, ...],
+    *,
+    label: str,
+    symbol_columns: tuple[str, ...] = ("symbol",),
+) -> None:
+    for column in symbol_columns:
+        if column not in frame.columns:
+            raise ValueError(f"{label} lacks market-scope column: {column}")
+        symbols = frame.get_column(column).drop_nulls().cast(pl.String).str.zfill(6)
+        unsupported = sorted(
+            symbol
+            for symbol in symbols.unique()
+            if market_for_symbol(symbol) not in supported_markets
+        )
+        if unsupported:
+            raise ValueError(
+                f"{label} contains unsupported market symbols in {column}: "
+                + ", ".join(unsupported[:10])
+            )

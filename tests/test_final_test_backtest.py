@@ -433,6 +433,7 @@ def test_verified_inputs_extend_stage7_ledger_with_final_manifest_data(
         authorization=_authorization(),
         code_root=tmp_path,
         final_root=final_root,
+        supported_markets=("sh", "sz"),
     )
 
     assert result.execution_panel.get_column("date").max() == date(2022, 1, 4)

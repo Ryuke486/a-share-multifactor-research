@@ -14,8 +14,8 @@
 - RED 1：新测试因缺失 `final_test.pipeline` 失败。
 - RED 2：执行源日期归一化接口缺失，测试导入失败。
 - RED 3：删除 outcome 后仍应由 authoritative `CURRENT.json` 锁定，以及失败 attempt 缺少 manifest，两项测试失败。
-- GREEN：本轮跨阶段市场范围相关集成测试 191 项通过。
-- 最终全量结果：`pytest -q` 804 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
+- GREEN：本轮交接审计相关测试 71 项通过。
+- 最终全量结果：`pytest -q` 807 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
 
 ## 边界与关注点
 
@@ -62,3 +62,9 @@
 - 六位证券代码市场映射保留沪、深、北通用能力，但 MVP 与完整因子研究的动态股票池在历史计数和流动性排名前即过滤市场；研究、验证和最终信号共享同一路径。
 - final execution 合同改为仅支持沪深；coverage、事件证据和最终目标发现 `4/8/92` 北交所证券立即 fail-closed，执行源查询范围只取最终沪深 symbol 全集。
 - seal、Stage 8 lineage、final lineage 和最终报告均记录 `[sh, sz]`，授权 gate 同时核对研究配置、seal 与 successor lineage，范围漂移不能继续执行。
+
+## 历史交接内容审计
+
+- 新增通用 `assert_supported_markets` 内容断言；与股票池过滤不同，已发布或上游文件发现范围外证券会带交接 label、字段和证券代码立即失败，不会静默删除或改写旧 release。
+- Stage 7 在读取 Stage 5 targets、Stage 6 execution/actions/events，以及发布新 targets、continuous targets、execution/actions/events 和含 symbol 的连续账本前均执行断言。
+- Stage 8 执行实验及发布/seal 消费 validation release inputs 时重复检查；final signal 与 backtest handoff 再检查 Stage 7 daily、targets、execution、actions 和 events。

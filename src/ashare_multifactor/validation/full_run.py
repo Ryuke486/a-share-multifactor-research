@@ -10,6 +10,7 @@ import polars as pl
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.config import load_config
 from ashare_multifactor.data.field_audit import FieldReadiness
+from ashare_multifactor.data.security import assert_supported_markets
 from ashare_multifactor.execution.broker import BacktestSettings
 from ashare_multifactor.execution.fees import load_market_rules
 from ashare_multifactor.execution.shadow_nav import shadow_nav_audit
@@ -133,6 +134,9 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
 
     stage_five = resolve_current(data_root / "processed/factor_combination")
     research_targets = pl.read_parquet(stage_five.datasets / "target_weights.parquet")
+    assert_supported_markets(
+        research_targets, config.supported_markets, label="Stage-5 target weights"
+    )
     previous_targets = research_targets.filter(
         (pl.col("portfolio_name") == "size_stratified_buffered")
         & (pl.col("date") == pl.col("date").max())
@@ -178,12 +182,27 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
     research_execution = pl.read_parquet(stage_six.datasets / "execution_panel.parquet")
     research_actions = pl.read_parquet(stage_six.datasets / "corporate_actions.parquet")
     research_events = pl.read_parquet(stage_six.datasets / "security_events.parquet")
+    assert_supported_markets(
+        research_execution, config.supported_markets, label="Stage-6 execution panel"
+    )
+    assert_supported_markets(
+        research_actions, config.supported_markets, label="Stage-6 corporate actions"
+    )
+    assert_supported_markets(
+        research_events,
+        config.supported_markets,
+        label="Stage-6 security events",
+        symbol_columns=("source_symbol", "target_symbol"),
+    )
     continuous: dict[str, pl.DataFrame] = {}
     for candidate in validation.candidates:
         frame = build_continuous_targets(
             research_targets,
             validation_targets,
             candidate=candidate,
+        )
+        assert_supported_markets(
+            frame, config.supported_markets, label=f"Stage-7 continuous targets {candidate}"
         )
         frame.write_parquet(datasets / f"continuous_targets_{candidate}.parquet")
         continuous[candidate] = frame
@@ -241,6 +260,21 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         payment_date_overrides=payments,
         action_corrections=corrections,
     )
+    assert_supported_markets(
+        validation_targets, config.supported_markets, label="Stage-7 target weights"
+    )
+    assert_supported_markets(
+        execution, config.supported_markets, label="Stage-7 execution panel"
+    )
+    assert_supported_markets(
+        actions, config.supported_markets, label="Stage-7 corporate actions"
+    )
+    assert_supported_markets(
+        events,
+        config.supported_markets,
+        label="Stage-7 security events",
+        symbol_columns=("source_symbol", "target_symbol"),
+    )
     actions.write_parquet(datasets / "corporate_actions.parquet")
     events.write_parquet(datasets / "security_events.parquet")
 
@@ -284,6 +318,12 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         candidate_datasets.mkdir(parents=True)
         candidate_artifacts.mkdir()
         for name, frame in result.items():
+            if "symbol" in frame.columns:
+                assert_supported_markets(
+                    frame,
+                    config.supported_markets,
+                    label=f"Stage-7 continuous ledger {candidate}/{name}",
+                )
             frame.write_parquet(candidate_datasets / f"{name}.parquet")
         shadow, shadow_daily = shadow_nav_audit(
             execution,

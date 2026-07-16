@@ -16,6 +16,7 @@ from ashare_multifactor.combination.definitions import CANDIDATE_FACTORS
 from ashare_multifactor.combination.panel import build_rolling_composite_scores
 from ashare_multifactor.combination.rolling_ic import rolling_ic_weights
 from ashare_multifactor.config import load_config
+from ashare_multifactor.data.security import assert_supported_markets
 from ashare_multifactor.execution.broker import BacktestSettings
 from ashare_multifactor.execution.fee_protocol import validate_fee_protocol
 from ashare_multifactor.execution.fees import load_market_rules
@@ -281,6 +282,12 @@ def publish_robustness_release(
         raise ValueError("robustness gate does not allow publication")
     protocol = load_robustness_protocol(code_root / "configs/robustness_protocol.yaml")
     research_config = load_config(code_root / "configs/research_protocol.yaml")
+    validation_release = resolve_current(
+        data_root / "processed/validation_evaluation"
+    )
+    _assert_validation_market_scope(
+        validation_release, research_config.supported_markets
+    )
     validation_pointer = json.loads(
         (data_root / "processed/validation_evaluation/CURRENT.json").read_text(
             encoding="utf-8"
@@ -363,6 +370,33 @@ def publish_robustness_release(
     )
 
 
+def _assert_validation_market_scope(
+    validation: object, supported_markets: tuple[str, ...]
+) -> None:
+    inputs = validation.datasets / "inputs"
+    frames = (
+        ("execution_panel.parquet", ("symbol",)),
+        ("corporate_actions.parquet", ("symbol",)),
+        ("security_events.parquet", ("source_symbol", "target_symbol")),
+    )
+    for name, columns in frames:
+        assert_supported_markets(
+            pl.read_parquet(inputs / name),
+            supported_markets,
+            label=f"Stage-8 publish validation handoff {name}",
+            symbol_columns=columns,
+        )
+    target_paths = sorted(inputs.glob("continuous_targets_*.parquet"))
+    if not target_paths:
+        raise ValueError("Stage-8 publish validation handoff lacks continuous targets")
+    for path in target_paths:
+        assert_supported_markets(
+            pl.read_parquet(path),
+            supported_markets,
+            label=f"Stage-8 publish validation handoff {path.name}",
+        )
+
+
 def _successor_release_contract(
     code_root: Path,
     data_root: Path,
@@ -438,6 +472,15 @@ def _execute_experiments(
     targets = read_bounded_parquet(
         inputs / f"continuous_targets_{protocol.main_candidate}.parquet"
     )
+    assert_supported_markets(execution, config.supported_markets, label="Stage-8 execution panel")
+    assert_supported_markets(actions, config.supported_markets, label="Stage-8 corporate actions")
+    assert_supported_markets(
+        events,
+        config.supported_markets,
+        label="Stage-8 security events",
+        symbol_columns=("source_symbol", "target_symbol"),
+    )
+    assert_supported_markets(targets, config.supported_markets, label="Stage-8 targets")
     baseline_result = _load_published_backtest(validation, protocol.main_candidate)
     fees = load_market_rules(code_root / "configs/market_rules.yaml")
     settings = BacktestSettings(
