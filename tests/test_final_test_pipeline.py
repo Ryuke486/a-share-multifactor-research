@@ -15,6 +15,7 @@ from ashare_multifactor.final_test.backtest import FinalTestBacktestResult
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 from ashare_multifactor.final_test.execution_sources import (
     _normalize_final_dividends,
+    _validate_event_counts,
     validate_security_event_coverage,
 )
 from ashare_multifactor.final_test.pipeline import (
@@ -284,7 +285,7 @@ def test_research_and_validation_use_same_stage7_continuous_candidate() -> None:
 
 
 def test_security_event_zero_rows_still_require_ready_official_coverage(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     evidence = tmp_path / "official.json"
     evidence.write_text('{"source":"official"}\n', encoding="utf-8")
@@ -332,8 +333,14 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
         encoding="utf-8",
     )
 
-    verified = validate_security_event_coverage(coverage, symbols=["000001"])
+    monkeypatch.chdir(tmp_path)
+    verified = validate_security_event_coverage(Path("coverage.json"), symbols=["000001"])
     assert verified["event_rows"] == 0
+    assert verified["coverage_root"] == tmp_path.resolve()
+    alias = tmp_path / "alias"
+    alias.symlink_to(tmp_path, target_is_directory=True)
+    with pytest.raises(ValueError, match="symlink"):
+        validate_security_event_coverage(alias / "coverage.json", symbols=["000001"])
     pl.concat([pl.read_parquet(query_coverage)] * 2).write_parquet(query_coverage)
     with pytest.raises(ValueError, match="query coverage"):
         validate_security_event_coverage(coverage, symbols=["000001"])
@@ -361,6 +368,55 @@ def test_failed_claim_without_panel_is_archived_before_retry(tmp_path: Path) -> 
     assert _recover_or_archive_data_claim(root) == "archived_failed"
     assert not claim.exists()
     assert len(list((root / "failed-claims").glob("*.json"))) == 1
+
+
+def test_security_events_must_match_coverage_counts_by_source_key() -> None:
+    coverage = pl.DataFrame(
+        {
+            "symbol": ["000001", "600000"],
+            "market": ["sz", "sh"],
+            "source": ["szse", "sse"],
+            "event_count": [1, 0],
+        }
+    )
+    events = pl.DataFrame(
+        {
+            "source_symbol": ["600000"],
+            "market": ["sh"],
+            "source": ["sse"],
+        }
+    )
+    with pytest.raises(ValueError, match="event counts"):
+        _validate_event_counts(coverage, events)
+
+
+def test_publishing_recovery_writes_prepared_then_completed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "final_test"
+    panel = root / "daily_panel"
+    panel.mkdir(parents=True)
+    claim = {
+        "attempt_id": "attempt-1",
+        "status": "publishing",
+        "data_manifest": {"sha256": "d" * 64},
+    }
+    (root / "data-build-claim.json").write_text(json.dumps(claim))
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.pipeline.resolve_final_test_data_panel",
+        lambda _root: SimpleNamespace(requires_recovery=True),
+    )
+
+    assert _recover_or_archive_data_claim(root) == "recovered_published"
+    recovery = root / "data-recovery"
+    assert (recovery / "attempt-1.prepared.json").is_file()
+    assert (recovery / "attempt-1.completed.json").is_file()
+    published = json.loads((root / "data-build-claim.json").read_text())
+    assert published["status"] == "published"
+
+    (recovery / "attempt-1.completed.json").unlink()
+    assert _recover_or_archive_data_claim(root) == "recovered_published"
+    assert (recovery / "attempt-1.completed.json").is_file()
 
 
 @pytest.mark.parametrize("value", ["../escape", "/absolute", "a/b", "a..b", "."])

@@ -14,8 +14,8 @@
 - RED 1：新测试因缺失 `final_test.pipeline` 失败。
 - RED 2：执行源日期归一化接口缺失，测试导入失败。
 - RED 3：删除 outcome 后仍应由 authoritative `CURRENT.json` 锁定，以及失败 attempt 缺少 manifest，两项测试失败。
-- GREEN：Task 6 测试 17 项通过；final-test 相关集成测试 94 项通过。
-- 最终全量结果：`pytest -q` 778 项通过；`ruff check .` 通过；`git diff --check` 通过。
+- GREEN：Task 6 测试 19 项通过；本轮 final-test 相关集成测试 72 项通过。
+- 最终全量结果：`pytest -q` 780 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
 
 ## 边界与关注点
 
@@ -38,3 +38,9 @@
 - 路径保护扩展到 attempts、attempt_inputs、execution_input_sources、data-reuse、failed-claims 和 data-recovery，复用源目录也拒绝 symlink/逃逸。
 - 无面板的 failed claim 会原子归档后允许新 attempt 重建；`publishing+完整面板` 验证 manifest 后恢复为 published 并写入不可变恢复事件。
 - orders 按首个实际订单事件日归期，并按期末最后事件提取每个 order_id 的唯一终态，避免跨年误归期和未成交重复计数。
+
+## 第三轮复审追加
+
+- security events 与 coverage 按 `(source_symbol, market, source)` 做逐键精确对账；拒绝 coverage 外事件、缺失事件、数量错配及 evidence/source/market 不一致。
+- coverage 入口先解析为规范绝对路径；manifest、证据、coverage 和事件支持文件必须位于同一规范根内，整条路径不得包含 symlink；相对 CLI 路径已有回归覆盖。
+- `publishing` 恢复改为 append-only 两阶段审计：原子写 `prepared`（绑定 claim/data manifest 哈希），原子切换 claim，再原子写 `completed`；可从 `prepared+publishing` 或 `prepared+published` 幂等续跑。

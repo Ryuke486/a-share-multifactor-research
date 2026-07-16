@@ -368,31 +368,143 @@ def _recover_or_archive_data_claim(final_root: Path) -> str:
             raise FileExistsError("failed claim archive already exists")
         os.replace(claim_path, destination)
         return "archived_failed"
+    attempt_id = validate_publication_id(str(claim.get("attempt_id", "")))
+    recovery_root = final_root / "data-recovery"
+    prepared_path = recovery_root / f"{attempt_id}.prepared.json"
+    completed_path = recovery_root / f"{attempt_id}.completed.json"
     if status == "publishing" and panel.is_dir():
         resolution = resolve_final_test_data_panel(final_root)
         if not resolution.requires_recovery:
             raise ValueError("publishing claim recovery state is inconsistent")
+        _assert_safe_recovery_root(recovery_root)
+        manifest_sha256 = _claim_manifest_sha256(claim)
+        if not prepared_path.exists():
+            _write_json_exclusive(
+                prepared_path,
+                {
+                    "attempt_id": attempt_id,
+                    "status": "prepared",
+                    "claim_sha256": hashlib.sha256(claim_path.read_bytes()).hexdigest(),
+                    "data_manifest_sha256": manifest_sha256,
+                },
+            )
+        prepared = _load_prepared_recovery(
+            prepared_path,
+            attempt_id=attempt_id,
+            data_manifest_sha256=manifest_sha256,
+        )
         claim["status"] = "published"
-        _write_json(claim_path, claim)
-        recovery_root = final_root / "data-recovery"
-        if recovery_root.is_symlink():
-            raise ValueError("data recovery path uses a symlink")
-        recovery_root.mkdir(exist_ok=True)
-        recovery_path = recovery_root / f"{validate_publication_id(str(claim['attempt_id']))}.json"
-        if recovery_path.exists() or recovery_path.is_symlink():
-            raise FileExistsError("data recovery event already exists")
-        _write_json(
-            recovery_path,
-            {
-                "attempt_id": claim["attempt_id"],
-                "status": "recovered_published",
-                "data_manifest": claim["data_manifest"],
-            },
+        _write_json_atomic(claim_path, claim)
+        _complete_data_recovery(
+            completed_path,
+            prepared=prepared,
+            published_claim_sha256=hashlib.sha256(claim_path.read_bytes()).hexdigest(),
         )
         return "recovered_published"
     if status == "published":
+        if prepared_path.is_file():
+            if not panel.is_dir():
+                raise ValueError("prepared data recovery is missing the published panel")
+            resolve_final_test_data_panel(final_root)
+            _assert_safe_recovery_root(recovery_root)
+            prepared = _load_prepared_recovery(
+                prepared_path,
+                attempt_id=attempt_id,
+                data_manifest_sha256=_claim_manifest_sha256(claim),
+            )
+            _complete_data_recovery(
+                completed_path,
+                prepared=prepared,
+                published_claim_sha256=hashlib.sha256(claim_path.read_bytes()).hexdigest(),
+            )
+            return "recovered_published"
         return "published"
     raise ValueError("final-test data claim requires manual recovery")
+
+
+def _claim_manifest_sha256(claim: Mapping[str, object]) -> str:
+    manifest = claim.get("data_manifest")
+    digest = manifest.get("sha256") if isinstance(manifest, dict) else None
+    if not isinstance(digest, str) or len(digest) != 64:
+        raise ValueError("final-test data claim manifest identity is invalid")
+    return digest
+
+
+def _assert_safe_recovery_root(root: Path) -> None:
+    if root.is_symlink():
+        raise ValueError("data recovery path uses a symlink")
+    root.mkdir(exist_ok=True)
+
+
+def _load_prepared_recovery(
+    path: Path, *, attempt_id: str, data_manifest_sha256: str
+) -> Mapping[str, object]:
+    if path.is_symlink():
+        raise ValueError("prepared data recovery audit uses a symlink")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("invalid prepared data recovery audit") from error
+    if (
+        not isinstance(payload, dict)
+        or payload.get("attempt_id") != attempt_id
+        or payload.get("status") != "prepared"
+        or payload.get("data_manifest_sha256") != data_manifest_sha256
+        or not isinstance(payload.get("claim_sha256"), str)
+        or len(str(payload["claim_sha256"])) != 64
+    ):
+        raise ValueError("prepared data recovery audit does not match claim")
+    return payload
+
+
+def _complete_data_recovery(
+    path: Path,
+    *,
+    prepared: Mapping[str, object],
+    published_claim_sha256: str,
+) -> None:
+    payload = {
+        "attempt_id": prepared["attempt_id"],
+        "status": "completed",
+        "prepared_claim_sha256": prepared["claim_sha256"],
+        "data_manifest_sha256": prepared["data_manifest_sha256"],
+        "published_claim_sha256": published_claim_sha256,
+    }
+    if path.is_symlink():
+        raise ValueError("completed data recovery audit uses a symlink")
+    if path.exists():
+        if json.loads(path.read_text(encoding="utf-8")) != payload:
+            raise ValueError("completed data recovery audit changed")
+        return
+    _write_json_exclusive(path, payload)
+
+
+def _write_json_exclusive(path: Path, payload: Mapping[str, object]) -> None:
+    content = (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str)
+        + "\n"
+    ).encode()
+    temporary = path.with_name(f".{path.name}.{os.urandom(8).hex()}.tmp")
+    descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.link(temporary, path)
+    except BaseException:
+        raise
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _write_json_atomic(path: Path, payload: Mapping[str, object]) -> None:
+    temporary = path.with_name(f".{path.name}.{os.urandom(8).hex()}.tmp")
+    try:
+        _write_json_exclusive(temporary, payload)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _assert_reusable_data_claim(

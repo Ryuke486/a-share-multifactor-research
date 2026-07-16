@@ -129,6 +129,8 @@ def generate_final_execution_sources(
         security_event_coverage_path,
         symbols=symbols,
     )
+    coverage_root = security_coverage["coverage_root"]
+    coverage_manifest_path = security_coverage["coverage_manifest_path"]
     raw, coverage = _download_final_dividends(
         symbols,
         years=contract.query_years,
@@ -160,14 +162,14 @@ def generate_final_execution_sources(
             shutil.copy2(event_file, temporary / "security_events.parquet")
         else:
             events.write_parquet(temporary / "security_events.parquet")
-        shutil.copy2(security_event_coverage_path, temporary / "security_event_coverage.json")
+        shutil.copy2(coverage_manifest_path, temporary / "security_event_coverage.json")
         support_paths = set(security_coverage["evidence_paths"]) | set(
             security_coverage["coverage_paths"]
         )
         if isinstance(security_coverage.get("events_file"), Path):
             support_paths.add(security_coverage["events_file"])
         for support in sorted(support_paths):
-            relative = support.relative_to(security_event_coverage_path.parent)
+            relative = support.relative_to(coverage_root)
             destination_support = temporary / relative
             destination_support.parent.mkdir(parents=True, exist_ok=True)
             if destination_support.exists():
@@ -188,7 +190,7 @@ def generate_final_execution_sources(
                 "git_tree": authorization.git_tree,
                 "data_manifest_sha256": resolution.data_manifest_sha256,
                 "security_event_coverage_sha256": sha256_file(
-                    security_event_coverage_path
+                    coverage_manifest_path
                 ),
                 "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
                 "provider": contract.provider,
@@ -225,12 +227,15 @@ def _verify_reusable_source_root(
     except (FileNotFoundError, json.JSONDecodeError) as error:
         raise ValueError("invalid reusable final execution source manifest") from error
     resolution = resolve_final_test_data_panel(final_root)
+    security_coverage = validate_security_event_coverage(security_event_coverage_path)
     expected = {
         "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
         "git_commit": authorization.git_commit,
         "git_tree": authorization.git_tree,
         "data_manifest_sha256": resolution.data_manifest_sha256,
-        "security_event_coverage_sha256": sha256_file(security_event_coverage_path),
+        "security_event_coverage_sha256": sha256_file(
+            security_coverage["coverage_manifest_path"]
+        ),
     }
     if any(manifest.get(key) != value for key, value in expected.items()):
         raise ValueError("final execution sources cannot be reused across sealed inputs")
@@ -241,8 +246,7 @@ def _verify_reusable_source_root(
 def validate_security_event_coverage(
     path: Path, *, symbols: list[str] | None = None
 ) -> dict[str, object]:
-    if path.is_symlink():
-        raise ValueError("official security-event coverage uses a symlink")
+    path, coverage_root = _resolve_coverage_manifest(path)
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as error:
@@ -266,7 +270,7 @@ def validate_security_event_coverage(
     evidence_record = payload["evidence_index"]
     if evidence_record.get("role") != "official_security_event_evidence_index":
         raise ValueError("official security-event evidence index role is invalid")
-    evidence_index_path = verify_file_record(evidence_record, root=path.parent)
+    evidence_index_path = _verify_coverage_file(evidence_record, root=coverage_root)
     evidence_index = pl.read_parquet(evidence_index_path)
     evidence_columns = {
         "evidence_id", "source", "market", "source_url", "cache_file", "sha256"
@@ -284,10 +288,11 @@ def validate_security_event_coverage(
             or not any(str(row["source_url"]).startswith(p) for p in _OFFICIAL_EVIDENCE_PREFIXES)
         ):
             raise ValueError("official security-event evidence source is invalid")
-        cached = (path.parent / str(row["cache_file"])).resolve()
+        cached_input = coverage_root / str(row["cache_file"])
+        _assert_no_symlink_path(cached_input, root=coverage_root)
+        cached = cached_input.resolve()
         if (
-            not cached.is_relative_to(path.parent.resolve())
-            or cached.is_symlink()
+            not cached.is_relative_to(coverage_root)
             or not cached.is_file()
             or sha256_file(cached) != row["sha256"]
         ):
@@ -301,7 +306,7 @@ def validate_security_event_coverage(
         ):
             raise ValueError("official security-event query coverage role is invalid")
         try:
-            coverage_paths.append(verify_file_record(record, root=path.parent))
+            coverage_paths.append(_verify_coverage_file(record, root=coverage_root))
         except (FileNotFoundError, TypeError, ValueError) as error:
             raise ValueError("official security-event query coverage changed") from error
     coverage = pl.concat([pl.read_parquet(item) for item in coverage_paths])
@@ -312,7 +317,7 @@ def validate_security_event_coverage(
     if not required.issubset(coverage.columns):
         raise ValueError("official security-event query coverage schema is invalid")
     normalized_coverage = coverage.select(
-        pl.col("symbol").cast(pl.String).str.zfill(6),
+        pl.col("symbol").cast(pl.String).str.zfill(6).alias("source_symbol"),
         pl.col("source").cast(pl.String),
         pl.col("market").cast(pl.String),
         pl.col("query_start").cast(pl.Date),
@@ -324,18 +329,19 @@ def validate_security_event_coverage(
     normalized = (
         sorted({str(symbol).zfill(6) for symbol in symbols})
         if symbols is not None
-        else sorted(normalized_coverage.get_column("symbol").unique())
+        else sorted(normalized_coverage.get_column("source_symbol").unique())
     )
     digest = hashlib.sha256(("\n".join(normalized) + "\n").encode()).hexdigest()
     if payload["symbol_count"] != len(normalized) or payload["symbols_sha256"] != digest:
         raise ValueError("official security-event coverage symbol scope changed")
-    if normalized_coverage.select(pl.col("symbol").is_duplicated().any()).item():
+    coverage_keys = ["source_symbol", "market", "source"]
+    if normalized_coverage.select(pl.struct(coverage_keys).is_duplicated().any()).item():
         raise ValueError("official security-event query coverage has duplicates")
     if symbols is not None:
-        expected = pl.DataFrame({"symbol": normalized})
+        expected = pl.DataFrame({"source_symbol": normalized})
         if (
-            normalized_coverage.join(expected, on="symbol", how="anti").height
-            or expected.join(normalized_coverage, on="symbol", how="anti").height
+            normalized_coverage.join(expected, on="source_symbol", how="anti").height
+            or expected.join(normalized_coverage, on="source_symbol", how="anti").height
         ):
             raise ValueError("official security-event query coverage is not exact")
     invalid = normalized_coverage.filter(
@@ -348,32 +354,109 @@ def validate_security_event_coverage(
         | ((pl.col("market") == "sh") != (pl.col("source") == "sse"))
     )
     if invalid.height or normalized_coverage.join(
-        evidence_index.select("evidence_id"), on="evidence_id", how="anti"
+        evidence_index.select("evidence_id", "source", "market"),
+        on=["evidence_id", "source", "market"],
+        how="anti",
     ).height or normalized_coverage.get_column("event_count").sum() != payload["event_rows"]:
         raise ValueError("official security-event query coverage is invalid")
     result = dict(payload)
     result["evidence_paths"] = evidence_paths
     result["coverage_paths"] = coverage_paths
     result["evidence_index"] = evidence_index
+    result["coverage_root"] = coverage_root
+    result["coverage_manifest_path"] = path
     event_record = payload.get("events_file")
+    normalized_events = pl.DataFrame(
+        schema={
+            "source_symbol": pl.String,
+            "market": pl.String,
+            "source": pl.String,
+            "evidence_id": pl.String,
+        }
+    )
     if payload["event_rows"]:
         if not isinstance(event_record, dict):
             raise ValueError("official security-event coverage lacks event file")
-        events_path = verify_file_record(event_record, root=path.parent)
+        events_path = _verify_coverage_file(event_record, root=coverage_root)
         events = pl.read_parquet(events_path)
         event_required = {"source_symbol", "effective_date", "source", "evidence_id"}
         if not event_required.issubset(events.columns) or events.height != payload["event_rows"]:
             raise ValueError("official security events schema or count is invalid")
-        joined = events.with_columns(
-            pl.when(pl.col("source_symbol").str.slice(0, 1).is_in(["5", "6", "9"]))
+        normalized_events = events.with_columns(
+            pl.col("source_symbol").cast(pl.String).str.zfill(6),
+            pl.col("source").cast(pl.String),
+            pl.col("evidence_id").cast(pl.String),
+            pl.when(
+                pl.col("source_symbol")
+                .cast(pl.String)
+                .str.slice(0, 1)
+                .is_in(["5", "6", "9"])
+            )
             .then(pl.lit("sh")).otherwise(pl.lit("sz")).alias("market")
-        ).join(evidence_index, on=["evidence_id", "source", "market"], how="anti")
-        if joined.height or events.filter(
+        )
+        evidence_mismatch = normalized_events.join(
+            evidence_index, on=["evidence_id", "source", "market"], how="anti"
+        )
+        coverage_mismatch = normalized_events.join(
+            normalized_coverage.select(*coverage_keys, "evidence_id"),
+            on=[*coverage_keys, "evidence_id"],
+            how="anti",
+        )
+        if evidence_mismatch.height or coverage_mismatch.height or events.filter(
             ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
         ).height:
             raise ValueError("official security event evidence join failed")
         result["events_file"] = events_path
+    _validate_event_counts(normalized_coverage, normalized_events)
     return result
+
+
+def _validate_event_counts(coverage: pl.DataFrame, events: pl.DataFrame) -> None:
+    """Require exact event counts for every official source/market/security key."""
+    keys = ["source_symbol", "market", "source"]
+    if "source_symbol" not in coverage.columns and "symbol" in coverage.columns:
+        coverage = coverage.rename({"symbol": "source_symbol"})
+    expected = coverage.select(*keys, pl.col("event_count").cast(pl.Int64))
+    actual = events.group_by(keys).len().rename({"len": "actual_event_count"})
+    reconciled = expected.join(actual, on=keys, how="full", coalesce=True).filter(
+        pl.col("event_count").is_null()
+        | (pl.col("event_count") != pl.col("actual_event_count").fill_null(0))
+    )
+    if reconciled.height:
+        raise ValueError("official security-event event counts do not match coverage")
+
+
+def _resolve_coverage_manifest(path: Path) -> tuple[Path, Path]:
+    absolute = path if path.is_absolute() else Path.cwd() / path
+    absolute = absolute.absolute()
+    for candidate in (absolute, *absolute.parents):
+        if candidate.is_symlink():
+            raise ValueError("official security-event coverage uses a symlink")
+    try:
+        resolved = absolute.resolve(strict=True)
+    except FileNotFoundError as error:
+        raise ValueError("invalid official security-event coverage") from error
+    return resolved, resolved.parent
+
+
+def _assert_no_symlink_path(path: Path, *, root: Path) -> None:
+    try:
+        relative = path.absolute().relative_to(root)
+    except ValueError as error:
+        raise ValueError("official security-event support file escapes coverage root") from error
+    current = root
+    for part in relative.parts:
+        current /= part
+        if current.is_symlink():
+            raise ValueError("official security-event support file uses a symlink")
+
+
+def _verify_coverage_file(record: dict[str, object], *, root: Path) -> Path:
+    recorded_path = record.get("path")
+    if not isinstance(recorded_path, str):
+        raise ValueError("official security-event support file path is invalid")
+    _assert_no_symlink_path(root / recorded_path, root=root)
+    return verify_file_record(record, root=root)
 
 
 def _download_final_dividends(
