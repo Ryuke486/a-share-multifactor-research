@@ -14,8 +14,8 @@
 - RED 1：新测试因缺失 `final_test.pipeline` 失败。
 - RED 2：执行源日期归一化接口缺失，测试导入失败。
 - RED 3：删除 outcome 后仍应由 authoritative `CURRENT.json` 锁定，以及失败 attempt 缺少 manifest，两项测试失败。
-- GREEN：Task 6 测试 15 项通过；final-test 相关集成测试 92 项通过。
-- 最终全量结果：`pytest -q` 776 项通过；`ruff check .` 通过；`git diff --check` 通过。
+- GREEN：Task 6 测试 17 项通过；final-test 相关集成测试 94 项通过。
+- 最终全量结果：`pytest -q` 778 项通过；`ruff check .` 通过；`git diff --check` 通过。
 
 ## 边界与关注点
 
@@ -31,3 +31,10 @@
 - attempt/release ID、根目录、指针和复制输入增加路径逃逸与 symlink 拒绝。
 - 失败后的新 attempt 只能在同 seal、Git 和完全相同 raw inventory 下复用已发布面板；执行输入改为 attempt 级绑定。
 - 权威 release 内自包含 final daily panel、raw inventory、BaoStock 原始响应/覆盖、官方证据、安全事件覆盖和执行 manifest，lineage 与 release manifest 双重绑定。
+
+## 复审追加
+
+- security-event coverage 升级为可机器解析的规范表，对 final symbol 逐一校验唯一成功查询、精确期间、市场/来源、事件数和官方证据索引；回测加载前再次验证。
+- 路径保护扩展到 attempts、attempt_inputs、execution_input_sources、data-reuse、failed-claims 和 data-recovery，复用源目录也拒绝 symlink/逃逸。
+- 无面板的 failed claim 会原子归档后允许新 attempt 重建；`publishing+完整面板` 验证 manifest 后恢复为 published 并写入不可变恢复事件。
+- orders 按首个实际订单事件日归期，并按期末最后事件提取每个 order_id 的唯一终态，避免跨年误归期和未成交重复计数。

@@ -4,7 +4,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import version
+import hashlib
 import json
+import os
 from pathlib import Path
 import platform
 import shutil
@@ -306,6 +308,11 @@ def build_or_reuse_final_test_daily_panel(
 ) -> object:
     final_root = getattr(config, "paths").processed / "final_test"
     claim_path = final_root / "data-build-claim.json"
+    claim_state = _recover_or_archive_data_claim(final_root)
+    if claim_state in {"absent", "archived_failed"}:
+        return build_final_test_daily_panel(
+            config, authorization, start, end, code_root=code_root
+        )
     if not claim_path.is_file():
         return build_final_test_daily_panel(
             config, authorization, start, end, code_root=code_root
@@ -342,6 +349,52 @@ def build_or_reuse_final_test_daily_panel(
     return resolution
 
 
+def _recover_or_archive_data_claim(final_root: Path) -> str:
+    claim_path = final_root / "data-build-claim.json"
+    if not claim_path.is_file():
+        return "absent"
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    status = claim.get("status") if isinstance(claim, dict) else None
+    panel = final_root / "daily_panel"
+    if status == "failed" and not panel.exists():
+        archive_root = final_root / "failed-claims"
+        if archive_root.is_symlink():
+            raise ValueError("failed claim archive uses a symlink")
+        archive_root.mkdir(exist_ok=True)
+        archived_attempt = validate_publication_id(str(claim.get("attempt_id", "")))
+        digest = hashlib.sha256(claim_path.read_bytes()).hexdigest()[:16]
+        destination = archive_root / f"{archived_attempt}-{digest}.json"
+        if destination.exists():
+            raise FileExistsError("failed claim archive already exists")
+        os.replace(claim_path, destination)
+        return "archived_failed"
+    if status == "publishing" and panel.is_dir():
+        resolution = resolve_final_test_data_panel(final_root)
+        if not resolution.requires_recovery:
+            raise ValueError("publishing claim recovery state is inconsistent")
+        claim["status"] = "published"
+        _write_json(claim_path, claim)
+        recovery_root = final_root / "data-recovery"
+        if recovery_root.is_symlink():
+            raise ValueError("data recovery path uses a symlink")
+        recovery_root.mkdir(exist_ok=True)
+        recovery_path = recovery_root / f"{validate_publication_id(str(claim['attempt_id']))}.json"
+        if recovery_path.exists() or recovery_path.is_symlink():
+            raise FileExistsError("data recovery event already exists")
+        _write_json(
+            recovery_path,
+            {
+                "attempt_id": claim["attempt_id"],
+                "status": "recovered_published",
+                "data_manifest": claim["data_manifest"],
+            },
+        )
+        return "recovered_published"
+    if status == "published":
+        return "published"
+    raise ValueError("final-test data claim requires manual recovery")
+
+
 def _assert_reusable_data_claim(
     claim: Mapping[str, object],
     authorization: FinalTestAuthorization,
@@ -370,6 +423,12 @@ def _assert_safe_roots(data_root: Path, final_root: Path) -> None:
         processed,
         final_root,
         final_root / "attempt_runs",
+        final_root / "attempts",
+        final_root / "attempt_inputs",
+        final_root / "execution_input_sources",
+        final_root / "data-reuse",
+        final_root / "failed-claims",
+        final_root / "data-recovery",
         final_root / "releases",
         final_root / "CURRENT.json",
     ):

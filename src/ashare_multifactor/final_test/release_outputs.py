@@ -51,7 +51,7 @@ def build_final_metrics(
         backtest=_slice_backtest_period(
             {
                 name: backtest.outputs[name]
-                for name in ("nav", "orders", "trades", "target_diagnostics")
+                for name in ("nav", "orders", "order_events", "trades", "target_diagnostics")
             },
             start=date(2022, 1, 1),
             end=date(2025, 12, 31),
@@ -147,7 +147,7 @@ def _historical_metrics(
         ic, groups = _metric_inputs(pl.read_parquet(ic_path), pl.read_parquet(groups_path))
         continuous = {
             name: pl.read_parquet(backtest_root / f"{name}.parquet")
-            for name in ("nav", "orders", "trades", "target_diagnostics")
+            for name in ("nav", "orders", "order_events", "trades", "target_diagnostics")
         }
         bounds = {
             "research": (date(2005, 1, 1), date(2016, 12, 31)),
@@ -182,7 +182,32 @@ def _slice_backtest_period(
     end: date,
 ) -> dict[str, pl.DataFrame]:
     sliced: dict[str, pl.DataFrame] = {}
+    events = frames.get("order_events")
+    orders = frames.get("orders")
+    if orders is not None:
+        if events is None or not {"order_id", "date", "event_seq", "remaining_quantity"}.issubset(
+            events.columns
+        ):
+            raise ValueError("orders require dated order event history")
+        created = events.group_by("order_id").agg(pl.col("date").min().alias("created_date"))
+        selected_ids = created.filter(pl.col("created_date").is_between(start, end)).select(
+            "order_id"
+        )
+        terminal = (
+            events.filter(pl.col("date") <= end)
+            .join(selected_ids, on="order_id", how="inner")
+            .sort("order_id", "date", "event_seq")
+            .group_by("order_id", maintain_order=True)
+            .tail(1)
+            .select("order_id", "remaining_quantity", *( ["status"] if "status" in events.columns else []))
+        )
+        drop_columns = [name for name in ("remaining_quantity", "status") if name in orders.columns]
+        sliced["orders"] = orders.drop(drop_columns).join(
+            terminal, on="order_id", how="inner", validate="1:1"
+        ).sort("order_id")
     for name, frame in frames.items():
+        if name == "orders":
+            continue
         date_column = "signal_date" if name == "orders" and "signal_date" in frame.columns else "date"
         if date_column not in frame.columns:
             raise ValueError(f"{name} lacks date for strict period slicing")

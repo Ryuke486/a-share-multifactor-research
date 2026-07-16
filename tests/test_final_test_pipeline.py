@@ -20,7 +20,9 @@ from ashare_multifactor.final_test.execution_sources import (
 from ashare_multifactor.final_test.pipeline import (
     FinalTestPipelineSteps,
     _assert_reusable_data_claim,
+    _assert_safe_roots,
     _copy_release_inputs,
+    _recover_or_archive_data_claim,
     _validate_publication_id,
     run_final_test_release,
 )
@@ -232,7 +234,21 @@ def test_portfolio_inputs_use_boundary_nav_and_strict_period_slices() -> None:
             }
         ),
         "orders": pl.DataFrame(
-            {"date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)]}
+            {
+                "order_id": ["old", "cross", "late"],
+                "signal_date": [date(2004, 12, 31), date(2004, 12, 31), date(2017, 1, 3)],
+                "quantity": [10, 20, 30],
+                "remaining_quantity": [0, 20, 30],
+            }
+        ),
+        "order_events": pl.DataFrame(
+            {
+                "order_id": ["old", "cross", "cross", "late"],
+                "date": [date(2004, 12, 31), date(2005, 1, 4), date(2005, 1, 5), date(2017, 1, 3)],
+                "event_seq": [1, 1, 2, 1],
+                "remaining_quantity": [0, 20, 5, 30],
+                "status": ["filled", "submitted", "partial", "submitted"],
+            }
         ),
         "trades": pl.DataFrame(
             {"date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)]}
@@ -250,7 +266,8 @@ def test_portfolio_inputs_use_boundary_nav_and_strict_period_slices() -> None:
         date(2004, 12, 31),
         date(2005, 1, 4),
     ]
-    assert sliced["orders"].get_column("date").to_list() == [date(2005, 1, 4)]
+    assert sliced["orders"].get_column("order_id").to_list() == ["cross"]
+    assert sliced["orders"].get_column("remaining_quantity").to_list() == [5]
 
 
 def test_research_and_validation_use_same_stage7_continuous_candidate() -> None:
@@ -271,8 +288,23 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
 ) -> None:
     evidence = tmp_path / "official.json"
     evidence.write_text('{"source":"official"}\n', encoding="utf-8")
-    query_coverage = tmp_path / "query_coverage.csv"
-    query_coverage.write_text("symbol,status\n000001,ok\n", encoding="utf-8")
+    evidence_index = tmp_path / "evidence_index.parquet"
+    pl.DataFrame(
+        {
+            "evidence_id": ["ev-1"], "source": ["szse"], "market": ["sz"],
+            "source_url": ["https://disc.static.szse.cn/download/disc/security.pdf"],
+            "cache_file": [evidence.name],
+            "sha256": [file_record(evidence, root=tmp_path, role="x").sha256],
+        }
+    ).write_parquet(evidence_index)
+    query_coverage = tmp_path / "query_coverage.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["000001"], "source": ["szse"], "market": ["sz"],
+            "query_start": [date(2022, 1, 1)], "query_end": [date(2025, 12, 31)],
+            "status": ["ok"], "event_count": [0], "evidence_id": ["ev-1"],
+        }
+    ).write_parquet(query_coverage)
     coverage = tmp_path / "coverage.json"
     coverage.write_text(
         json.dumps(
@@ -283,14 +315,11 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
                 "symbol_count": 1,
                 "symbols_sha256": hashlib.sha256(b"000001\n").hexdigest(),
                 "event_rows": 0,
-                "evidence": [
-                    {
-                        **file_record(
-                            evidence, root=tmp_path, role="official_security_event"
-                        ).to_dict(),
-                        "source_url": "https://static.cninfo.com.cn/finalpage/security.PDF",
-                    }
-                ],
+                "evidence_index": file_record(
+                    evidence_index,
+                    root=tmp_path,
+                    role="official_security_event_evidence_index",
+                ).to_dict(),
                 "coverage": [
                     file_record(
                         query_coverage,
@@ -303,11 +332,35 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
         encoding="utf-8",
     )
 
-    verified = validate_security_event_coverage(coverage)
+    verified = validate_security_event_coverage(coverage, symbols=["000001"])
     assert verified["event_rows"] == 0
+    pl.concat([pl.read_parquet(query_coverage)] * 2).write_parquet(query_coverage)
+    with pytest.raises(ValueError, match="query coverage"):
+        validate_security_event_coverage(coverage, symbols=["000001"])
     coverage.write_text('{"status":"not_ready"}\n', encoding="utf-8")
     with pytest.raises(ValueError, match="security-event coverage"):
         validate_security_event_coverage(coverage)
+
+
+def test_all_mutable_final_roots_reject_symlink_ancestors(tmp_path: Path) -> None:
+    data_root = tmp_path / "data"
+    final_root = data_root / "processed/final_test"
+    final_root.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (final_root / "attempt_inputs").symlink_to(outside)
+    with pytest.raises(ValueError, match="symlink"):
+        _assert_safe_roots(data_root, final_root)
+
+
+def test_failed_claim_without_panel_is_archived_before_retry(tmp_path: Path) -> None:
+    root = tmp_path / "final_test"
+    root.mkdir()
+    claim = root / "data-build-claim.json"
+    claim.write_text('{"attempt_id":"a","status":"failed"}\n')
+    assert _recover_or_archive_data_claim(root) == "archived_failed"
+    assert not claim.exists()
+    assert len(list((root / "failed-claims").glob("*.json"))) == 1
 
 
 @pytest.mark.parametrize("value", ["../escape", "/absolute", "a/b", "a..b", "."])

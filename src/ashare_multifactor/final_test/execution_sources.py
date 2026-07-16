@@ -45,6 +45,14 @@ def build_final_execution_inputs(
     del data_root
     source_root = final_root / "execution_input_sources"
     execution_root = final_root / "attempt_inputs" / authorization.attempt_id
+    if (
+        source_root.is_symlink()
+        or execution_root.is_symlink()
+        or source_root.resolve() != final_root.resolve() / "execution_input_sources"
+        or execution_root.resolve()
+        != final_root.resolve() / "attempt_inputs" / authorization.attempt_id
+    ):
+        raise ValueError("final execution input path uses a symlink or escapes root")
     if not source_root.exists():
         generate_final_execution_sources(
             authorization,
@@ -148,16 +156,25 @@ def generate_final_execution_sources(
         raw.write_parquet(temporary / "baostock_dividends.parquet")
         coverage.write_parquet(temporary / "baostock_query_coverage.parquet")
         actions.write_parquet(temporary / "corporate_actions.parquet")
-        events.write_parquet(temporary / "security_events.parquet")
+        if isinstance(event_file, Path):
+            shutil.copy2(event_file, temporary / "security_events.parquet")
+        else:
+            events.write_parquet(temporary / "security_events.parquet")
         shutil.copy2(security_event_coverage_path, temporary / "security_event_coverage.json")
-        evidence_root = temporary / "security_event_evidence"
-        evidence_root.mkdir()
-        for path in security_coverage["evidence_paths"]:
-            shutil.copy2(path, evidence_root / path.name)
-        coverage_root = temporary / "security_event_query_coverage"
-        coverage_root.mkdir()
-        for path in security_coverage["coverage_paths"]:
-            shutil.copy2(path, coverage_root / path.name)
+        support_paths = set(security_coverage["evidence_paths"]) | set(
+            security_coverage["coverage_paths"]
+        )
+        if isinstance(security_coverage.get("events_file"), Path):
+            support_paths.add(security_coverage["events_file"])
+        for support in sorted(support_paths):
+            relative = support.relative_to(security_event_coverage_path.parent)
+            destination_support = temporary / relative
+            destination_support.parent.mkdir(parents=True, exist_ok=True)
+            if destination_support.exists():
+                if sha256_file(destination_support) == sha256_file(support):
+                    continue
+                raise ValueError("security-event support file path collision")
+            shutil.copy2(support, destination_support)
         records = [
             file_record(path, root=temporary, role="final_execution_source").to_dict()
             for path in sorted(item for item in temporary.rglob("*") if item.is_file())
@@ -201,6 +218,8 @@ def _verify_reusable_source_root(
     security_event_coverage_path: Path,
     final_root: Path,
 ) -> None:
+    if root.is_symlink() or root.resolve() != final_root.resolve() / "execution_input_sources":
+        raise ValueError("reusable final execution source path is unsafe")
     try:
         manifest = json.loads((root / "source_manifest.json").read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as error:
@@ -239,28 +258,41 @@ def validate_security_event_coverage(
         or payload["symbol_count"] <= 0
         or not isinstance(payload.get("symbols_sha256"), str)
         or len(payload.get("symbols_sha256", "")) != 64
-        or not isinstance(payload.get("evidence"), list)
-        or not payload["evidence"]
+        or not isinstance(payload.get("evidence_index"), dict)
         or not isinstance(payload.get("coverage"), list)
         or not payload["coverage"]
     ):
         raise ValueError("official security-event coverage is not ready")
-    evidence_paths = []
-    for record in payload["evidence"]:
+    evidence_record = payload["evidence_index"]
+    if evidence_record.get("role") != "official_security_event_evidence_index":
+        raise ValueError("official security-event evidence index role is invalid")
+    evidence_index_path = verify_file_record(evidence_record, root=path.parent)
+    evidence_index = pl.read_parquet(evidence_index_path)
+    evidence_columns = {
+        "evidence_id", "source", "market", "source_url", "cache_file", "sha256"
+    }
+    if not evidence_columns.issubset(evidence_index.columns) or evidence_index.select(
+        pl.col("evidence_id").is_duplicated().any()
+    ).item():
+        raise ValueError("official security-event evidence index is invalid")
+    evidence_paths = [evidence_index_path]
+    for row in evidence_index.iter_rows(named=True):
         if (
-            not isinstance(record, dict)
-            or record.get("role") != "official_security_event"
-            or not any(
-                str(record.get("source_url", "")).startswith(prefix)
-                for prefix in _OFFICIAL_EVIDENCE_PREFIXES
-            )
+            row["source"] not in {"sse", "szse"}
+            or row["market"] not in {"sh", "sz"}
+            or (row["source"] == "sse") != (row["market"] == "sh")
+            or not any(str(row["source_url"]).startswith(p) for p in _OFFICIAL_EVIDENCE_PREFIXES)
         ):
-            raise ValueError("official security-event coverage evidence role is invalid")
-        try:
-            identity = {key: value for key, value in record.items() if key != "source_url"}
-            evidence_paths.append(verify_file_record(identity, root=path.parent))
-        except (FileNotFoundError, TypeError, ValueError) as error:
-            raise ValueError("official security-event coverage evidence changed") from error
+            raise ValueError("official security-event evidence source is invalid")
+        cached = (path.parent / str(row["cache_file"])).resolve()
+        if (
+            not cached.is_relative_to(path.parent.resolve())
+            or cached.is_symlink()
+            or not cached.is_file()
+            or sha256_file(cached) != row["sha256"]
+        ):
+            raise ValueError("official security-event evidence changed")
+        evidence_paths.append(cached)
     coverage_paths = []
     for record in payload["coverage"]:
         if (
@@ -272,19 +304,75 @@ def validate_security_event_coverage(
             coverage_paths.append(verify_file_record(record, root=path.parent))
         except (FileNotFoundError, TypeError, ValueError) as error:
             raise ValueError("official security-event query coverage changed") from error
+    coverage = pl.concat([pl.read_parquet(item) for item in coverage_paths])
+    required = {
+        "symbol", "source", "market", "query_start", "query_end", "status",
+        "event_count", "evidence_id",
+    }
+    if not required.issubset(coverage.columns):
+        raise ValueError("official security-event query coverage schema is invalid")
+    normalized_coverage = coverage.select(
+        pl.col("symbol").cast(pl.String).str.zfill(6),
+        pl.col("source").cast(pl.String),
+        pl.col("market").cast(pl.String),
+        pl.col("query_start").cast(pl.Date),
+        pl.col("query_end").cast(pl.Date),
+        pl.col("status").cast(pl.String),
+        pl.col("event_count").cast(pl.Int64),
+        pl.col("evidence_id").cast(pl.String),
+    )
+    normalized = (
+        sorted({str(symbol).zfill(6) for symbol in symbols})
+        if symbols is not None
+        else sorted(normalized_coverage.get_column("symbol").unique())
+    )
+    digest = hashlib.sha256(("\n".join(normalized) + "\n").encode()).hexdigest()
+    if payload["symbol_count"] != len(normalized) or payload["symbols_sha256"] != digest:
+        raise ValueError("official security-event coverage symbol scope changed")
+    if normalized_coverage.select(pl.col("symbol").is_duplicated().any()).item():
+        raise ValueError("official security-event query coverage has duplicates")
     if symbols is not None:
-        normalized = sorted({str(symbol).zfill(6) for symbol in symbols})
-        digest = hashlib.sha256(("\n".join(normalized) + "\n").encode()).hexdigest()
-        if payload["symbol_count"] != len(normalized) or payload["symbols_sha256"] != digest:
-            raise ValueError("official security-event coverage symbol scope changed")
+        expected = pl.DataFrame({"symbol": normalized})
+        if (
+            normalized_coverage.join(expected, on="symbol", how="anti").height
+            or expected.join(normalized_coverage, on="symbol", how="anti").height
+        ):
+            raise ValueError("official security-event query coverage is not exact")
+    invalid = normalized_coverage.filter(
+        (pl.col("status") != "ok")
+        | (pl.col("query_start") != FINAL_TEST_START)
+        | (pl.col("query_end") != FINAL_TEST_END)
+        | (pl.col("event_count") < 0)
+        | ~pl.col("market").is_in(["sh", "sz"])
+        | ~pl.col("source").is_in(["sse", "szse"])
+        | ((pl.col("market") == "sh") != (pl.col("source") == "sse"))
+    )
+    if invalid.height or normalized_coverage.join(
+        evidence_index.select("evidence_id"), on="evidence_id", how="anti"
+    ).height or normalized_coverage.get_column("event_count").sum() != payload["event_rows"]:
+        raise ValueError("official security-event query coverage is invalid")
     result = dict(payload)
     result["evidence_paths"] = evidence_paths
     result["coverage_paths"] = coverage_paths
+    result["evidence_index"] = evidence_index
     event_record = payload.get("events_file")
     if payload["event_rows"]:
         if not isinstance(event_record, dict):
             raise ValueError("official security-event coverage lacks event file")
-        result["events_file"] = verify_file_record(event_record, root=path.parent)
+        events_path = verify_file_record(event_record, root=path.parent)
+        events = pl.read_parquet(events_path)
+        event_required = {"source_symbol", "effective_date", "source", "evidence_id"}
+        if not event_required.issubset(events.columns) or events.height != payload["event_rows"]:
+            raise ValueError("official security events schema or count is invalid")
+        joined = events.with_columns(
+            pl.when(pl.col("source_symbol").str.slice(0, 1).is_in(["5", "6", "9"]))
+            .then(pl.lit("sh")).otherwise(pl.lit("sz")).alias("market")
+        ).join(evidence_index, on=["evidence_id", "source", "market"], how="anti")
+        if joined.height or events.filter(
+            ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
+        ).height:
+            raise ValueError("official security event evidence join failed")
+        result["events_file"] = events_path
     return result
 
 
