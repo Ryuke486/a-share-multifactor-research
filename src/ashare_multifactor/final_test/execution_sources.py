@@ -14,7 +14,9 @@ from ashare_multifactor.audit.records import file_record, sha256_file, verify_fi
 from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.final_test.action_source_contract import (
+    OFFICIAL_MARKET_SOURCES,
     build_execution_input_manifest,
+    evidence_url_matches_source,
     load_action_source_contract,
 )
 from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
@@ -23,14 +25,6 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
     FINAL_TEST_START,
     FinalTestAuthorization,
-)
-
-
-_OFFICIAL_EVIDENCE_PREFIXES = (
-    "https://static.cninfo.com.cn/finalpage/",
-    "https://disc.static.szse.cn/download/disc/",
-    "https://www.sse.com.cn/disclosure/listedinfo/announcement/",
-    "https://www.sse.com.cn/assortment/stock/list/info/profit/",
 )
 
 
@@ -281,12 +275,13 @@ def validate_security_event_coverage(
     ).item():
         raise ValueError("official security-event evidence index is invalid")
     evidence_paths = [evidence_index_path]
+    official_sources = dict(OFFICIAL_MARKET_SOURCES)
     for row in evidence_index.iter_rows(named=True):
         if (
-            row["source"] not in {"sse", "szse"}
-            or row["market"] not in {"sh", "sz"}
-            or (row["source"] == "sse") != (row["market"] == "sh")
-            or not any(str(row["source_url"]).startswith(p) for p in _OFFICIAL_EVIDENCE_PREFIXES)
+            official_sources.get(str(row["market"])) != row["source"]
+            or not evidence_url_matches_source(
+                str(row["source"]), str(row["source_url"])
+            )
         ):
             raise ValueError("official security-event evidence source is invalid")
         cached_input = coverage_root / str(row["cache_file"])
@@ -351,9 +346,6 @@ def validate_security_event_coverage(
         | (pl.col("query_start") != FINAL_TEST_START)
         | (pl.col("query_end") != FINAL_TEST_END)
         | (pl.col("event_count") < 0)
-        | ~pl.col("market").is_in(["sh", "sz"])
-        | ~pl.col("source").is_in(["sse", "szse"])
-        | ((pl.col("market") == "sh") != (pl.col("source") == "sse"))
     )
     if invalid.height or normalized_coverage.join(
         evidence_index.select("evidence_id", "source", "market"),
@@ -388,13 +380,11 @@ def validate_security_event_coverage(
             pl.col("source_symbol").cast(pl.String).str.zfill(6),
             pl.col("source").cast(pl.String),
             pl.col("evidence_id").cast(pl.String),
-            pl.when(
-                pl.col("source_symbol")
-                .cast(pl.String)
-                .str.slice(0, 1)
-                .is_in(["5", "6", "9"])
-            )
-            .then(pl.lit("sh")).otherwise(pl.lit("sz")).alias("market")
+            pl.col("source_symbol")
+            .cast(pl.String)
+            .str.zfill(6)
+            .map_elements(market_for_symbol, return_dtype=pl.String)
+            .alias("market"),
         )
         evidence_mismatch = normalized_events.join(
             evidence_index, on=["evidence_id", "source", "market"], how="anti"
@@ -436,14 +426,11 @@ def _validate_coverage_markets(coverage: pl.DataFrame) -> None:
     )
     if expected.filter(pl.col("market") != pl.col("expected_market")).height:
         raise ValueError("official security-event symbol market is invalid")
-    if expected.filter(
-        ~pl.struct("market", "source").is_in(
-            [
-                {"market": "sh", "source": "sse"},
-                {"market": "sz", "source": "szse"},
-            ]
-        )
-    ).height:
+    allowed = [
+        {"market": market, "source": source}
+        for market, source in OFFICIAL_MARKET_SOURCES
+    ]
+    if expected.filter(~pl.struct("market", "source").is_in(allowed)).height:
         raise ValueError("official security-event market source is invalid")
 
 
@@ -498,7 +485,7 @@ def _download_final_dividends(
     known_fields: list[str] | None = None
     try:
         for symbol in symbols:
-            prefix = "sh" if symbol.startswith(("5", "6", "9")) else "sz"
+            prefix = market_for_symbol(symbol)
             for year in years:
                 result = bs.query_dividend_data(
                     code=f"{prefix}.{symbol}",

@@ -410,6 +410,124 @@ def test_coverage_market_must_match_source_symbol() -> None:
         _validate_coverage_markets(invalid)
 
 
+@pytest.mark.parametrize("symbol", ["920001", "830001", "430001"])
+def test_bse_security_event_coverage_is_supported(tmp_path: Path, symbol: str) -> None:
+    coverage = _write_security_event_coverage(
+        tmp_path,
+        symbol=symbol,
+        market="bj",
+        source="bse",
+        source_url="https://www.bse.cn/disclosure/2024/2024-08-16/notice.pdf",
+    )
+    verified = validate_security_event_coverage(coverage, symbols=[symbol])
+    assert verified["event_rows"] == 1
+
+
+def test_bse_symbol_rejects_self_consistent_wrong_exchange(tmp_path: Path) -> None:
+    coverage = _write_security_event_coverage(
+        tmp_path,
+        symbol="920001",
+        market="sh",
+        source="sse",
+        source_url=(
+            "https://www.sse.com.cn/disclosure/listedinfo/announcement/notice.pdf"
+        ),
+    )
+    with pytest.raises(ValueError, match="symbol market"):
+        validate_security_event_coverage(coverage, symbols=["920001"])
+
+
+def test_bse_evidence_rejects_non_bse_official_url(tmp_path: Path) -> None:
+    coverage = _write_security_event_coverage(
+        tmp_path,
+        symbol="920001",
+        market="bj",
+        source="bse",
+        source_url=(
+            "https://www.sse.com.cn/disclosure/listedinfo/announcement/notice.pdf"
+        ),
+    )
+    with pytest.raises(ValueError, match="evidence source"):
+        validate_security_event_coverage(coverage, symbols=["920001"])
+
+
+def _write_security_event_coverage(
+    root: Path,
+    *,
+    symbol: str,
+    market: str,
+    source: str,
+    source_url: str,
+) -> Path:
+    evidence = root / "official.pdf"
+    evidence.write_bytes(b"official")
+    evidence_index = root / "evidence_index.parquet"
+    pl.DataFrame(
+        {
+            "evidence_id": ["ev-1"],
+            "source": [source],
+            "market": [market],
+            "source_url": [source_url],
+            "cache_file": [evidence.name],
+            "sha256": [file_record(evidence, root=root, role="x").sha256],
+        }
+    ).write_parquet(evidence_index)
+    query_coverage = root / "query_coverage.parquet"
+    pl.DataFrame(
+        {
+            "symbol": [symbol],
+            "source": [source],
+            "market": [market],
+            "query_start": [date(2022, 1, 1)],
+            "query_end": [date(2025, 12, 31)],
+            "status": ["ok"],
+            "event_count": [1],
+            "evidence_id": ["ev-1"],
+        }
+    ).write_parquet(query_coverage)
+    events = root / "security_events.parquet"
+    pl.DataFrame(
+        {
+            "source_symbol": [symbol],
+            "effective_date": [date(2024, 8, 16)],
+            "source": [source],
+            "evidence_id": ["ev-1"],
+        }
+    ).write_parquet(events)
+    coverage = root / "coverage.json"
+    coverage.write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "period": ["2022-01-01", "2025-12-31"],
+                "scope": "all_final_execution_symbols",
+                "symbol_count": 1,
+                "symbols_sha256": hashlib.sha256(f"{symbol}\n".encode()).hexdigest(),
+                "event_rows": 1,
+                "evidence_index": file_record(
+                    evidence_index,
+                    root=root,
+                    role="official_security_event_evidence_index",
+                ).to_dict(),
+                "coverage": [
+                    file_record(
+                        query_coverage,
+                        root=root,
+                        role="official_security_event_coverage",
+                    ).to_dict()
+                ],
+                "events_file": file_record(
+                    events,
+                    root=root,
+                    role="official_security_events",
+                ).to_dict(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    return coverage
+
+
 def test_publishing_recovery_writes_prepared_then_completed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

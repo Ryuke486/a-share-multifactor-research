@@ -14,8 +14,8 @@
 - RED 1：新测试因缺失 `final_test.pipeline` 失败。
 - RED 2：执行源日期归一化接口缺失，测试导入失败。
 - RED 3：删除 outcome 后仍应由 authoritative `CURRENT.json` 锁定，以及失败 attempt 缺少 manifest，两项测试失败。
-- GREEN：Task 6 测试 35 项通过；本轮 final-test 相关集成测试 88 项通过。
-- 最终全量结果：`pytest -q` 796 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
+- GREEN：本轮 final-test/协议相关集成测试 116 项通过。
+- 最终全量结果：`pytest -q` 802 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
 
 ## 边界与关注点
 
@@ -49,3 +49,9 @@
 
 - 新增唯一的六位证券代码到市场映射，覆盖沪、深、北交易所边界；coverage 必须由 `source_symbol` 推导并精确匹配 `market`，再校验 `market/source`，拒绝 `000001/sh/sse` 等自洽但错误的组合。
 - prepared recovery 绑定 attempt、approval、Git commit/tree、seal、robustness release 与 data manifest；恢复 publishing claim 时重新计算当前文件 SHA256 并以 constant-time 比较，任一身份字段或 claim 内容漂移均 fail-closed。
+
+## 第五轮复审追加
+
+- 封存执行源合同正式加入北交所：仅允许 `https://www.bse.cn/disclosure/` 官方前缀，并冻结 `sh/sse`、`sz/szse`、`bj/bse` 三组市场来源；合同文件变化继续由协议 SHA256 绑定。
+- coverage、官方 evidence、security events 与 BaoStock 查询前缀统一复用六位证券代码市场映射；`920`、`8`、`4` 边界均按北交所处理，不再落入旧的沪深首位分支。
+- 新增 BJ/BSE 成功、错误交易所、错误来源 URL 和删除 BSE 合同条目导致 hash/合同校验失败的合成反例；未读取真实最终测试数据。
