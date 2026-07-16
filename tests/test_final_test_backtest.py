@@ -288,3 +288,253 @@ def test_runtime_audit_failure_retains_stage6_outputs(
     }
     assert result.audits["shadow_nav"]["status"] == "blocked"
     assert result.audits["stale_valuation"]["status"] == "blocked"
+
+
+def test_verified_inputs_extend_stage7_ledger_with_final_manifest_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.execution.corporate_actions import (
+        normalize_corporate_actions,
+    )
+    from ashare_multifactor.final_test.backtest import _resolve_verified_inputs
+
+    final_root = tmp_path / "processed/final_test"
+    final_panel_path = final_root / "daily_panel/year=2022/part-000.parquet"
+    final_panel_path.parent.mkdir(parents=True)
+    pl.DataFrame(
+        {
+            "date": [date(2022, 1, 3), date(2022, 1, 4)],
+            "symbol": ["000001", "000001"],
+            "open_raw": [10.0, 10.1],
+            "close_raw": [10.0, 10.1],
+            "prev_close_raw": [10.0, 10.0],
+            "close_adj": [10.0, 10.1],
+            "prev_close_adj": [10.0, 10.0],
+            "amount": [300.0, 400.0],
+            "is_st": [False, False],
+        }
+    ).write_parquet(final_panel_path)
+
+    execution_inputs = final_root / "execution_inputs"
+    execution_inputs.mkdir()
+    final_actions_path = execution_inputs / "corporate_actions.parquet"
+    final_events_path = execution_inputs / "security_events.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["000001"],
+            "ex_date": [date(2022, 1, 4)],
+            "effective_date": [date(2022, 1, 4)],
+            "cash_per_share": [0.1],
+            "share_ratio": [0.0],
+            "source": ["synthetic"],
+        }
+    ).write_parquet(final_actions_path)
+    pl.DataFrame(
+        schema={
+            "effective_date": pl.Date,
+            "source_symbol": pl.String,
+            "event_type": pl.String,
+            "target_symbol": pl.String,
+            "ratio": pl.Float64,
+            "cash_per_share": pl.Float64,
+            "source": pl.String,
+        }
+    ).write_parquet(final_events_path)
+    build_execution_input_manifest(
+        execution_inputs / "manifest.json",
+        authorization=_authorization(),
+        files={
+            "corporate_actions.parquet": final_actions_path,
+            "security_events.parquet": final_events_path,
+        },
+    )
+
+    historical_actions = normalize_corporate_actions(
+        pl.DataFrame(
+            schema={
+                "symbol": pl.String,
+                "effective_date": pl.Date,
+                "cash_per_share": pl.Float64,
+                "share_ratio": pl.Float64,
+                "source": pl.String,
+            }
+        )
+    )
+    historical_events = pl.DataFrame(schema=pl.read_parquet(final_events_path).schema)
+    pretest = SimpleNamespace(
+        execution_panel=pl.DataFrame(
+            {
+                "date": [date(2021, 12, 30), date(2021, 12, 31)],
+                "symbol": ["000001", "000001"],
+                "open_raw": [9.8, 9.9],
+                "close_raw": [9.8, 9.9],
+                "prev_close_raw": [9.7, 9.8],
+                "close_adj": [9.8, 9.9],
+                "prev_close_adj": [9.7, 9.8],
+                "adv20": [90.0, 100.0],
+                "limit_rate": [0.1, 0.1],
+                "is_suspended_proxy": [False, False],
+            }
+        ),
+        target_weights=pl.DataFrame(
+            {
+                "date": [date(2021, 12, 31)],
+                "symbol": ["000001"],
+                "target_weight": [1.0],
+            }
+        ),
+        corporate_actions=historical_actions,
+        security_events=historical_events,
+        adv_lookback=20,
+        warmup_daily=pl.DataFrame(
+            {
+                "date": [date(2021, 12, 30), date(2021, 12, 31)],
+                "symbol": ["000001", "000001"],
+                "open_raw": [9.8, 9.9],
+                "close_raw": [9.8, 9.9],
+                "prev_close_raw": [9.7, 9.8],
+                "close_adj": [9.8, 9.9],
+                "prev_close_adj": [9.7, 9.8],
+                "amount": [100.0, 200.0],
+                "is_st": [False, False],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._resolve_pretest_execution_inputs",
+        lambda *_args, **_kwargs: pretest,
+        raising=False,
+    )
+
+    result = _resolve_verified_inputs(
+        SimpleNamespace(files=(final_panel_path,)),
+        _signals(),
+        authorization=_authorization(),
+        code_root=tmp_path,
+        final_root=final_root,
+    )
+
+    assert result.execution_panel.get_column("date").max() == date(2022, 1, 4)
+    assert result.execution_panel.filter(pl.col("date") == date(2022, 1, 3)).item(
+        0, "adv20"
+    ) == pytest.approx(150.0)
+    assert result.target_weights.get_column("date").to_list() == [
+        date(2021, 12, 31),
+        date(2022, 1, 31),
+    ]
+    assert result.corporate_actions.get_column("effective_date").max() == date(
+        2022, 1, 4
+    )
+    assert result.stale_evidence.schema == {"symbol": pl.String}
+
+
+def test_continuous_targets_require_exact_stage7_handoff_date() -> None:
+    from ashare_multifactor.final_test.backtest import _continuous_targets
+
+    historical = pl.DataFrame(
+        {
+            "date": [date(2021, 12, 30)],
+            "symbol": ["000001"],
+            "target_weight": [1.0],
+        }
+    )
+
+    with pytest.raises(ValueError, match="2021-12-31"):
+        _continuous_targets(historical, _signals().target_weights)
+
+
+def test_final_action_dates_must_be_non_null_and_inside_sealed_period(
+    tmp_path: Path,
+) -> None:
+    from ashare_multifactor.final_test.backtest import _load_final_actions
+
+    path = tmp_path / "corporate_actions.parquet"
+    pl.DataFrame(
+        {
+            "symbol": ["000001"],
+            "ex_date": [None],
+            "effective_date": [date(2022, 1, 4)],
+            "cash_per_share": [0.1],
+            "share_ratio": [0.0],
+            "source": ["synthetic"],
+        },
+        schema_overrides={"ex_date": pl.Date},
+    ).write_parquet(path)
+
+    with pytest.raises(ValueError, match="sealed date bounds"):
+        _load_final_actions(path)
+
+
+def test_verified_inputs_run_the_unchanged_three_scenario_stage6_engine() -> None:
+    from ashare_multifactor.execution.corporate_actions import (
+        normalize_corporate_actions,
+    )
+    from ashare_multifactor.execution.fees import load_market_rules
+    from ashare_multifactor.final_test.backtest import (
+        FinalTestBacktestInputs,
+        _execute_verified_inputs,
+    )
+
+    config = load_config(Path("configs/research_protocol.yaml"))
+    inputs = FinalTestBacktestInputs(
+        execution_panel=pl.DataFrame(
+            {
+                "date": [date(2022, 1, 3), date(2022, 1, 4), date(2022, 1, 5)],
+                "symbol": ["000001"] * 3,
+                "open_raw": [10.0, 10.0, 10.1],
+                "close_raw": [10.0, 10.1, 10.2],
+                "prev_close_raw": [10.0, 10.0, 10.1],
+                "close_adj": [10.0, 10.1, 10.2],
+                "prev_close_adj": [10.0, 10.0, 10.1],
+                "adv20": [1_000_000_000.0] * 3,
+                "limit_rate": [0.1] * 3,
+                "is_suspended_proxy": [False] * 3,
+            }
+        ),
+        target_weights=pl.DataFrame(
+            {
+                "date": [date(2022, 1, 3)],
+                "symbol": ["000001"],
+                "target_weight": [0.01],
+            }
+        ),
+        corporate_actions=normalize_corporate_actions(
+            pl.DataFrame(
+                schema={
+                    "symbol": pl.String,
+                    "effective_date": pl.Date,
+                    "cash_per_share": pl.Float64,
+                    "share_ratio": pl.Float64,
+                    "source": pl.String,
+                }
+            )
+        ),
+        security_events=pl.DataFrame(
+            schema={
+                "effective_date": pl.Date,
+                "source_symbol": pl.String,
+                "event_type": pl.String,
+                "target_symbol": pl.String,
+                "ratio": pl.Float64,
+                "cash_per_share": pl.Float64,
+                "source": pl.String,
+            }
+        ),
+        stale_evidence=pl.DataFrame(schema={"symbol": pl.String}),
+    )
+
+    result = _execute_verified_inputs(
+        inputs,
+        fees=load_market_rules(Path("configs/market_rules.yaml")),
+        formal=config.formal_backtest,
+    )
+
+    assert result.publishable is True
+    assert result.outputs["trades"].item(0, "date") == date(2022, 1, 4)
+    assert result.outputs["trades"].item(0, "quantity") % 100 == 0
+    assert set(result.outputs["scenario_nav"].get_column("scenario")) == {
+        "full_cost",
+        "explicit_fee_only",
+        "zero_cost",
+    }
+    assert result.outputs["scenario_reconciliation"]["difference"].abs().max() < 0.01

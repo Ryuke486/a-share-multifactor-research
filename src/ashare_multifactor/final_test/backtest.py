@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
-from typing import Any
 
 import polars as pl
 
+from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.config import FormalBacktestSettings
 from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
+from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.execution.fees import FeeSchedule, load_market_rules
+from ashare_multifactor.execution.market_state import build_execution_panel
 from ashare_multifactor.execution.shadow_nav import shadow_nav_audit
 from ashare_multifactor.execution.stale_audit import audit_stale_positions
 from ashare_multifactor.final_test.data_extension import (
@@ -28,6 +31,10 @@ from ashare_multifactor.final_test.signals import (
     _load_frozen_config,
     _resolve_authorized_data,
 )
+from ashare_multifactor.final_test.signal_inputs import (
+    _release_file,
+    resolve_final_test_signal_inputs,
+)
 
 
 _RECONCILIATION_THRESHOLD = 0.01
@@ -41,6 +48,25 @@ class FinalTestBacktestResult:
     preflight: dict[str, object]
     publishable: bool
     gate_failures: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FinalTestBacktestInputs:
+    execution_panel: pl.DataFrame
+    target_weights: pl.DataFrame
+    corporate_actions: pl.DataFrame
+    security_events: pl.DataFrame
+    stale_evidence: pl.DataFrame
+
+
+@dataclass(frozen=True)
+class _PretestExecutionInputs:
+    execution_panel: pl.DataFrame
+    target_weights: pl.DataFrame
+    corporate_actions: pl.DataFrame
+    security_events: pl.DataFrame
+    warmup_daily: pl.DataFrame
+    adv_lookback: int
 
 
 def run_final_test_backtest(
@@ -71,9 +97,7 @@ def run_final_test_backtest(
     if failures:
         return _blocked_preflight(failures)
 
-    # This point is deliberately unreachable under the current Stage-8 seal.
-    # Resolution happens only after all preflight checks so no 2022 file is read
-    # when the frozen fee/action contract is incomplete.
+    # Resolve test-period data only after every frozen fee/action preflight passes.
     source = _resolve_authorized_data(final_root, authorization, config.test)
     try:
         inputs = _resolve_verified_inputs(
@@ -150,15 +174,264 @@ def _resolve_verified_inputs(
     authorization: FinalTestAuthorization,
     code_root: Path,
     final_root: Path,
-) -> Any:
-    del source, signals, authorization, code_root, final_root
-    raise ValueError(
-        "Stage-8 seal must be invalidated and reissued before final execution inputs can be resolved"
+) -> FinalTestBacktestInputs:
+    verified = verify_execution_input_manifest(
+        final_root / _EXECUTION_INPUT_MANIFEST,
+        authorization,
+    )
+    pretest = _resolve_pretest_execution_inputs(
+        authorization,
+        code_root=code_root,
+        data_root=final_root.parent.parent,
+    )
+    adv_lookback = pretest.adv_lookback
+    if adv_lookback <= 0:
+        raise ValueError("frozen ADV lookback must be positive")
+
+    final_actions = _load_final_actions(verified["corporate_actions.parquet"])
+    final_events = _load_final_security_events(verified["security_events.parquet"])
+    targets = _continuous_targets(pretest.target_weights, signals.target_weights)
+    symbols = _execution_symbols(targets, pretest.security_events, final_events)
+    final_daily = _load_final_execution_daily(source, symbols)
+    final_execution = _extend_execution_panel(
+        pretest.execution_panel,
+        pretest.warmup_daily,
+        final_daily,
+        symbols=symbols,
+        adv_lookback=adv_lookback,
+    )
+    actions = pl.concat(
+        (pretest.corporate_actions, final_actions), how="vertical_relaxed"
+    ).sort("effective_date", "symbol", "action_id")
+    if actions.select(pl.col("action_id").is_duplicated().any()).item():
+        raise ValueError("continuous corporate actions contain duplicate identities")
+    events = pl.concat(
+        (pretest.security_events, final_events), how="vertical_relaxed"
+    ).sort("effective_date", "source_symbol")
+    if events.select(
+        pl.struct("effective_date", "source_symbol").is_duplicated().any()
+    ).item():
+        raise ValueError("continuous security events contain duplicate keys")
+    return FinalTestBacktestInputs(
+        execution_panel=final_execution,
+        target_weights=targets,
+        corporate_actions=actions,
+        security_events=events,
+        stale_evidence=pl.DataFrame(schema={"symbol": pl.String}),
     )
 
 
+def _resolve_pretest_execution_inputs(
+    authorization: FinalTestAuthorization,
+    *,
+    code_root: Path,
+    data_root: Path,
+) -> _PretestExecutionInputs:
+    config = _load_frozen_config(code_root, data_root)
+    formal = config.formal_backtest
+    if formal is None:
+        raise ValueError("frozen formal-backtest settings are missing")
+    signal_inputs = resolve_final_test_signal_inputs(
+        config,
+        authorization,
+        data_root=data_root,
+    )
+    validation = resolve_current(data_root / "processed/validation_evaluation")
+    paths = {
+        name: _release_file(validation, f"datasets/inputs/{name}.parquet")
+        for name in (
+            "execution_panel",
+            f"continuous_targets_{MAIN_CANDIDATE}",
+            "corporate_actions",
+            "security_events",
+        )
+    }
+    return _PretestExecutionInputs(
+        execution_panel=pl.read_parquet(paths["execution_panel"]),
+        target_weights=pl.read_parquet(
+            paths[f"continuous_targets_{MAIN_CANDIDATE}"]
+        ),
+        corporate_actions=pl.read_parquet(paths["corporate_actions"]),
+        security_events=pl.read_parquet(paths["security_events"]),
+        warmup_daily=signal_inputs.historical_daily,
+        adv_lookback=formal.adv_lookback,
+    )
+
+
+def _load_final_actions(path: Path) -> pl.DataFrame:
+    frame = pl.read_parquet(path)
+    required_dates = {"ex_date", "effective_date"}
+    invalid_dates = (
+        pl.col("ex_date").is_null()
+        | pl.col("effective_date").is_null()
+        | ~pl.col("ex_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
+        | ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
+    )
+    if not required_dates.issubset(frame.columns) or frame.filter(invalid_dates).height:
+        raise ValueError("final corporate actions cross the sealed date bounds")
+    return normalize_corporate_actions(frame, maximum_date=FINAL_TEST_END)
+
+
+def _load_final_security_events(path: Path) -> pl.DataFrame:
+    frame = pl.read_parquet(path)
+    schema = {
+        "effective_date": pl.Date,
+        "source_symbol": pl.String,
+        "event_type": pl.String,
+        "target_symbol": pl.String,
+        "ratio": pl.Float64,
+        "cash_per_share": pl.Float64,
+        "source": pl.String,
+    }
+    missing = set(schema) - set(frame.columns)
+    if missing:
+        raise ValueError(f"final security events lack fields: {sorted(missing)}")
+    events = frame.select(
+        pl.col(name).cast(dtype, strict=False).alias(name)
+        for name, dtype in schema.items()
+    )
+    invalid = events.filter(
+        pl.col("effective_date").is_null()
+        | pl.col("source_symbol").is_null()
+        | pl.col("ratio").is_null()
+        | ~pl.col("ratio").is_finite()
+        | pl.col("cash_per_share").is_null()
+        | ~pl.col("cash_per_share").is_finite()
+        | ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
+        | ~pl.col("event_type").is_in(["stock_merger", "write_off"])
+        | (
+            (pl.col("event_type") == "stock_merger")
+            & (
+                pl.col("target_symbol").is_null()
+                | (pl.col("ratio") <= 0)
+                | (pl.col("cash_per_share") != 0)
+            )
+        )
+        | (
+            (pl.col("event_type") == "write_off")
+            & (
+                pl.col("target_symbol").is_not_null()
+                | (pl.col("ratio") != 0)
+                | (pl.col("cash_per_share") != 0)
+            )
+        )
+    )
+    if invalid.height or events.select(
+        pl.struct("effective_date", "source_symbol").is_duplicated().any()
+    ).item():
+        raise ValueError("invalid final security event contract")
+    return events.sort("effective_date", "source_symbol")
+
+
+def _continuous_targets(
+    historical: pl.DataFrame,
+    final: pl.DataFrame,
+) -> pl.DataFrame:
+    required = {"date", "symbol", "target_weight"}
+    if not required.issubset(historical.columns):
+        raise ValueError("Stage-7 continuous targets have an invalid schema")
+    historical = historical.select(*sorted(required))
+    if historical.is_empty() or historical.filter(
+        pl.col("date") >= FINAL_TEST_START
+    ).height:
+        raise ValueError("Stage-7 continuous targets cross the final-test boundary")
+    if historical.get_column("date").max() != date(2021, 12, 31):
+        raise ValueError("Stage-7 continuous targets must end on 2021-12-31")
+    historical_totals = historical.group_by("date").agg(
+        pl.col("target_weight").sum().alias("weight")
+    )
+    if historical.filter(pl.col("target_weight") < 0).height or historical_totals.filter(
+        (pl.col("weight") - 1.0).abs() > 1e-12
+    ).height:
+        raise ValueError("Stage-7 continuous targets fail the weight contract")
+    combined = pl.concat(
+        (historical, final.select(*sorted(required))), how="vertical_relaxed"
+    ).sort("date", "symbol")
+    if combined.select(pl.struct("date", "symbol").is_duplicated().any()).item():
+        raise ValueError("continuous final targets contain duplicate keys")
+    return combined
+
+
+def _execution_symbols(
+    targets: pl.DataFrame,
+    historical_events: pl.DataFrame,
+    final_events: pl.DataFrame,
+) -> list[str]:
+    symbols = set(targets.get_column("symbol"))
+    for events in (historical_events, final_events):
+        if events.is_empty():
+            continue
+        symbols.update(events.get_column("source_symbol").drop_nulls())
+        symbols.update(events.get_column("target_symbol").drop_nulls())
+    return sorted(str(symbol) for symbol in symbols)
+
+
+def _load_final_execution_daily(source: object, symbols: list[str]) -> pl.DataFrame:
+    files = getattr(source, "files", None)
+    if not isinstance(files, tuple) or not files:
+        raise ValueError("verified final daily-panel source is empty")
+    columns = (
+        "date",
+        "symbol",
+        "open_raw",
+        "close_raw",
+        "prev_close_raw",
+        "close_adj",
+        "prev_close_adj",
+        "amount",
+        "is_st",
+    )
+    daily = (
+        pl.scan_parquet(files)
+        .filter(pl.col("symbol").is_in(symbols))
+        .select(*columns)
+        .collect()
+        .sort("date", "symbol")
+    )
+    if daily.is_empty() or daily.filter(
+        ~pl.col("date").is_between(FINAL_TEST_START, FINAL_TEST_END)
+    ).height:
+        raise ValueError("final execution daily panel crosses the sealed date bounds")
+    if daily.select(pl.struct("date", "symbol").is_duplicated().any()).item():
+        raise ValueError("final execution daily panel contains duplicate keys")
+    return daily
+
+
+def _extend_execution_panel(
+    historical_execution: pl.DataFrame,
+    warmup_daily: pl.DataFrame,
+    final_daily: pl.DataFrame,
+    *,
+    symbols: list[str],
+    adv_lookback: int,
+) -> pl.DataFrame:
+    raw_columns = final_daily.columns
+    warmup = (
+        warmup_daily.filter(pl.col("symbol").is_in(symbols))
+        .select(*raw_columns)
+        .sort("symbol", "date")
+        .group_by("symbol", maintain_order=True)
+        .tail(adv_lookback)
+        .select(*raw_columns)
+    )
+    raw = pl.concat((warmup, final_daily), how="vertical_relaxed").sort(
+        "date", "symbol"
+    )
+    extension = (
+        build_execution_panel(raw, adv_lookback=adv_lookback)
+        .filter(pl.col("date") >= FINAL_TEST_START)
+        .select(historical_execution.columns)
+    )
+    combined = pl.concat(
+        (historical_execution, extension), how="vertical_relaxed"
+    ).sort("date", "symbol")
+    if combined.select(pl.struct("date", "symbol").is_duplicated().any()).item():
+        raise ValueError("continuous execution panel contains duplicate keys")
+    return combined
+
+
 def _execute_verified_inputs(
-    inputs: Any,
+    inputs: FinalTestBacktestInputs,
     *,
     fees: FeeSchedule,
     formal: FormalBacktestSettings | None,
