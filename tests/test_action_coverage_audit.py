@@ -72,6 +72,31 @@ def test_action_audit_accepts_complete_coverage_zero_diffs_and_samples() -> None
     assert result.event_differences.is_empty()
 
 
+def test_official_sample_matches_equivalent_float_representation() -> None:
+    actions = _actions().with_columns(
+        pl.when(pl.col("action_id") == "shares-2018")
+        .then(pl.lit(0.1) + pl.lit(0.2))
+        .otherwise(pl.col("share_ratio"))
+        .alias("share_ratio")
+    )
+    evidence = _evidence().with_columns(
+        pl.when(pl.col("event_type") == "shares")
+        .then(0.3)
+        .otherwise(pl.col("share_ratio"))
+        .alias("share_ratio")
+    )
+
+    result = audit_validation_action_coverage(
+        symbols=["000001"],
+        query_coverage=_coverage(),
+        candidate_actions=actions,
+        published_actions=actions,
+        official_evidence=evidence,
+    )
+
+    assert result.status == "ready"
+
+
 def test_action_audit_rejects_missing_symbol_year_query() -> None:
     with pytest.raises(ValueError, match="query coverage"):
         audit_validation_action_coverage(

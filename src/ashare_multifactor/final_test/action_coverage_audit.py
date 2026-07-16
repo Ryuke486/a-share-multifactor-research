@@ -282,6 +282,8 @@ def _validate_official_samples(
         raise ValueError(f"official action evidence fields missing: {missing}")
     indexed = candidate.with_columns(
         pl.col("ex_date").dt.year().alias("year"),
+        pl.col("cash_per_share").round(12),
+        pl.col("share_ratio").round(12),
         pl.when(
             (pl.col("cash_per_share") > 0) & (pl.col("share_ratio") > 0)
         )
@@ -297,8 +299,8 @@ def _validate_official_samples(
         pl.col("symbol").cast(pl.String).str.zfill(6),
         pl.col("ex_date").cast(pl.Date),
         pl.col("effective_date").cast(pl.Date),
-        pl.col("cash_per_share").cast(pl.Float64),
-        pl.col("share_ratio").cast(pl.Float64),
+        pl.col("cash_per_share").cast(pl.Float64).round(12),
+        pl.col("share_ratio").cast(pl.Float64).round(12),
         pl.col("source_url").cast(pl.String),
         pl.col("sha256").cast(pl.String),
     )
