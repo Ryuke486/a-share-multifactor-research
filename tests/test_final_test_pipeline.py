@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import inspect
 import json
 import hashlib
 from pathlib import Path
@@ -21,8 +22,8 @@ from ashare_multifactor.final_test.execution_sources import (
     validate_security_event_coverage,
 )
 from ashare_multifactor.final_test.pipeline import (
-    FinalTestPipelineSteps,
     _assert_reusable_data_claim,
+    _assert_release_date_bounds,
     _assert_safe_roots,
     _copy_release_inputs,
     _recover_or_archive_data_claim,
@@ -54,11 +55,11 @@ def _authorization(attempt_id: str = "attempt-001") -> FinalTestAuthorization:
 
 
 def _signals() -> FinalTestSignals:
-    empty = pl.DataFrame()
-    return FinalTestSignals(empty, empty, empty, empty)
+    bounded = pl.DataFrame({"date": [date(2022, 1, 4)]})
+    return FinalTestSignals(bounded, bounded, bounded, bounded)
 
 
-def _steps(*, publishable: bool) -> FinalTestPipelineSteps:
+def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
     def authorize(**_kwargs: object) -> FinalTestAuthorization:
         return _authorization()
 
@@ -103,20 +104,30 @@ def _steps(*, publishable: bool) -> FinalTestPipelineSteps:
     def report(*_args: object, **_kwargs: object) -> str:
         return "# sealed final-test report\n"
 
-    return FinalTestPipelineSteps(
-        authorize=authorize,
-        build_data=build_data,
-        build_execution_inputs=build_execution_inputs,
-        build_signals=build_signals,
-        run_backtest=backtest,
-        build_metrics=metrics,
-        render_report=report,
-    )
+    for name, value in {
+        "authorize_final_test": authorize,
+        "build_or_reuse_final_test_daily_panel": build_data,
+        "build_final_execution_inputs": build_execution_inputs,
+        "build_final_test_signals": build_signals,
+        "run_final_test_backtest": backtest,
+        "build_final_metrics": metrics,
+        "build_final_report": report,
+        "_copy_release_inputs": lambda **_kwargs: None,
+        "resolve_final_test_data_panel": lambda final_root: SimpleNamespace(
+            root=final_root / "daily_panel"
+        ),
+        "_upstream_identity": lambda *_args, **_kwargs: {
+            "robustness_release": "stage8-successor",
+            "self_contained_inputs": [],
+        },
+    }.items():
+        monkeypatch.setattr(f"ashare_multifactor.final_test.pipeline.{name}", value)
 
 
 def test_success_publishes_immutable_release_and_locks_another_attempt(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _patch_steps(monkeypatch, publishable=True)
     result = run_final_test_release(
         code_root=Path.cwd(),
         data_root=tmp_path,
@@ -124,7 +135,8 @@ def test_success_publishes_immutable_release_and_locks_another_attempt(
         approval_key=b"synthetic-approval-key",
         attempt_id="attempt-001",
         run_id="final-release",
-        steps=_steps(publishable=True),
+        security_event_coverage_path=tmp_path / "security-coverage.json",
+        corporate_action_coverage_root=tmp_path / "action-coverage",
     )
 
     assert result.publishable is True
@@ -162,15 +174,17 @@ def test_success_publishes_immutable_release_and_locks_another_attempt(
         approval_key=b"synthetic-approval-key",
         attempt_id="attempt-002",
         run_id="another-release",
-        steps=_steps(publishable=True),
+        security_event_coverage_path=tmp_path / "security-coverage.json",
+        corporate_action_coverage_root=tmp_path / "action-coverage",
     )
     assert recovered.release == current
     assert recovered.attempt_id == "attempt-001"
 
 
 def test_non_publishable_attempt_is_retained_without_switching_current(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    _patch_steps(monkeypatch, publishable=False)
     result = run_final_test_release(
         code_root=Path.cwd(),
         data_root=tmp_path,
@@ -178,7 +192,8 @@ def test_non_publishable_attempt_is_retained_without_switching_current(
         approval_key=b"synthetic-approval-key",
         attempt_id="attempt-001",
         run_id="blocked-release",
-        steps=_steps(publishable=False),
+        security_event_coverage_path=tmp_path / "security-coverage.json",
+        corporate_action_coverage_root=tmp_path / "action-coverage",
     )
 
     assert result.publishable is False
@@ -198,8 +213,16 @@ def test_cli_exposes_only_the_authorized_one_shot_entrypoint() -> None:
     assert "opening-token" in source
     assert "approval-key-file" in source
     assert "security-event-coverage" in source
+    assert "corporate-action-coverage" in source
     assert "parameter" not in source
     assert "search" not in source
+
+
+def test_final_pipeline_signature_has_no_security_step_injection() -> None:
+    parameters = inspect.signature(run_final_test_release).parameters
+    assert "steps" not in parameters
+    assert "security_event_coverage_path" in parameters
+    assert "corporate_action_coverage_root" in parameters
 
 
 def test_final_execution_source_normalization_is_exactly_date_bounded() -> None:
@@ -271,6 +294,14 @@ def test_portfolio_inputs_use_boundary_nav_and_strict_period_slices() -> None:
     ]
     assert sliced["orders"].get_column("order_id").to_list() == ["cross"]
     assert sliced["orders"].get_column("remaining_quantity").to_list() == [5]
+
+
+def test_release_date_scan_rejects_pretest_rows(tmp_path: Path) -> None:
+    pl.DataFrame(
+        {"date": [date(2021, 12, 31)], "symbol": ["000001"]}
+    ).write_parquet(tmp_path / "leaked.parquet")
+    with pytest.raises(ValueError, match="leaked.parquet.*outside"):
+        _assert_release_date_bounds(tmp_path)
 
 
 def test_research_and_validation_use_same_stage7_continuous_candidate() -> None:

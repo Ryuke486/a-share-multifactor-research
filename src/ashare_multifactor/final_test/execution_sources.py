@@ -35,9 +35,11 @@ def build_final_execution_inputs(
     data_root: Path,
     final_root: Path,
     security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
 ) -> dict[str, object]:
     """Generate, then bind, the frozen action/event inputs to this attempt."""
     del data_root
+    del corporate_action_coverage_root
     source_root = final_root / "execution_input_sources"
     execution_root = final_root / "attempt_inputs" / authorization.attempt_id
     if (

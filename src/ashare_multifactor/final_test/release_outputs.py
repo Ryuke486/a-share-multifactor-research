@@ -181,39 +181,63 @@ def _slice_backtest_period(
     *,
     start: date,
     end: date,
+    include_nav_boundary: bool = True,
 ) -> dict[str, pl.DataFrame]:
     sliced: dict[str, pl.DataFrame] = {}
-    events = frames.get("order_events")
-    orders = frames.get("orders")
-    if orders is not None:
-        if events is None or not {"order_id", "date", "event_seq", "remaining_quantity"}.issubset(
-            events.columns
-        ):
-            raise ValueError("orders require dated order event history")
-        created = events.group_by("order_id").agg(pl.col("date").min().alias("created_date"))
-        selected_ids = created.filter(pl.col("created_date").is_between(start, end)).select(
-            "order_id"
+    order_names = tuple(name for name in frames if name.endswith("orders"))
+    for order_name in order_names:
+        events_name = order_name.replace("orders", "order_events")
+        orders = frames[order_name]
+        events = frames.get(events_name)
+        required = {"order_id", "date", "event_seq", "remaining_quantity"}
+        if events is None or not required.issubset(events.columns):
+            raise ValueError(f"{order_name} require dated {events_name} history")
+        keys = ["order_id"]
+        if "scenario" in orders.columns and "scenario" in events.columns:
+            keys.insert(0, "scenario")
+        created = events.group_by(keys).agg(
+            pl.col("date").min().alias("first_event_date")
+        )
+        selected_ids = created.filter(
+            pl.col("first_event_date").is_between(start, end)
         )
         terminal = (
             events.filter(pl.col("date") <= end)
-            .join(selected_ids, on="order_id", how="inner")
-            .sort("order_id", "date", "event_seq")
-            .group_by("order_id", maintain_order=True)
+            .join(selected_ids, on=keys, how="inner")
+            .sort(*keys, "date", "event_seq")
+            .group_by(keys, maintain_order=True)
             .tail(1)
-            .select("order_id", "remaining_quantity", *( ["status"] if "status" in events.columns else []))
+            .select(
+                *keys,
+                pl.col("date").alias("terminal_event_date"),
+                "remaining_quantity",
+                *(["status"] if "status" in events.columns else []),
+            )
         )
-        drop_columns = [name for name in ("remaining_quantity", "status") if name in orders.columns]
-        sliced["orders"] = orders.drop(drop_columns).join(
-            terminal, on="order_id", how="inner", validate="1:1"
-        ).sort("order_id")
+        temporal_columns = [
+            name
+            for name, dtype in orders.schema.items()
+            if dtype == pl.Date or isinstance(dtype, pl.Datetime)
+        ]
+        drop_columns = [
+            name
+            for name in (*temporal_columns, "remaining_quantity", "status")
+            if name in orders.columns
+        ]
+        sliced[order_name] = (
+            orders.drop(drop_columns)
+            .join(selected_ids, on=keys, how="inner", validate="1:1")
+            .join(terminal, on=keys, how="inner", validate="1:1")
+            .sort(*keys)
+        )
     for name, frame in frames.items():
-        if name == "orders":
+        if name in order_names:
             continue
-        date_column = "signal_date" if name == "orders" and "signal_date" in frame.columns else "date"
+        date_column = "date"
         if date_column not in frame.columns:
             raise ValueError(f"{name} lacks date for strict period slicing")
         within = frame.filter(pl.col(date_column).is_between(start, end)).sort(date_column)
-        if name == "nav":
+        if name == "nav" and include_nav_boundary:
             boundary = frame.filter(pl.col(date_column) < start).sort(date_column).tail(1)
             if boundary.is_empty():
                 if within.is_empty():

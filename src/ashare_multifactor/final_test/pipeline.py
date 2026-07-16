@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.metadata import version
@@ -40,6 +40,7 @@ from ashare_multifactor.final_test.registry import (
     validate_publication_id,
 )
 from ashare_multifactor.final_test.release_outputs import (
+    _slice_backtest_period,
     build_final_metrics,
     build_final_report,
 )
@@ -69,19 +70,6 @@ class FinalTestPipelineResult:
     gate_failures: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class FinalTestPipelineSteps:
-    """Internal seam for synthetic tests; the CLI always uses the sealed defaults."""
-
-    authorize: Callable[..., FinalTestAuthorization]
-    build_data: Callable[..., object]
-    build_execution_inputs: Callable[..., Mapping[str, object]]
-    build_signals: Callable[..., FinalTestSignals]
-    run_backtest: Callable[..., FinalTestBacktestResult]
-    build_metrics: Callable[..., tuple[pl.DataFrame, pl.DataFrame]]
-    render_report: Callable[..., str]
-
-
 def run_final_test_release(
     *,
     code_root: Path,
@@ -90,8 +78,8 @@ def run_final_test_release(
     approval_key: bytes,
     attempt_id: str | None = None,
     run_id: str | None = None,
-    security_event_coverage_path: Path | None = None,
-    steps: FinalTestPipelineSteps | None = None,
+    security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
 ) -> FinalTestPipelineResult:
     """Run and publish the single authorized 2022--2025 final-test attempt."""
     code_root = code_root.resolve()
@@ -106,10 +94,7 @@ def run_final_test_release(
         _validate_publication_id(attempt_id)
     if run_id is not None:
         _validate_publication_id(run_id)
-    if steps is None and security_event_coverage_path is None:
-        raise ValueError("official security-event coverage path is required")
-    selected = steps or _default_steps()
-    authorization = selected.authorize(
+    authorization = authorize_final_test(
         code_root=code_root,
         robustness_root=data_root / "processed/robustness",
         validation_root=data_root / "processed/validation_evaluation",
@@ -134,26 +119,27 @@ def run_final_test_release(
     published_release: PublishedRelease | None = None
     try:
         config = _load_frozen_config(code_root, data_root)
-        selected.build_data(
+        build_or_reuse_final_test_daily_panel(
             config,
             authorization,
             FINAL_TEST_START,
             FINAL_TEST_END,
             code_root=code_root,
         )
-        execution_manifest = selected.build_execution_inputs(
+        execution_manifest = build_final_execution_inputs(
             authorization,
             code_root=code_root,
             data_root=data_root,
             final_root=final_root,
             security_event_coverage_path=security_event_coverage_path,
+            corporate_action_coverage_root=corporate_action_coverage_root,
         )
-        signals = selected.build_signals(
+        signals = build_final_test_signals(
             authorization,
             code_root=code_root,
             final_root=final_root,
         )
-        backtest = selected.run_backtest(
+        backtest = run_final_test_backtest(
             authorization,
             signals,
             code_root=code_root,
@@ -183,7 +169,7 @@ def run_final_test_release(
                 backtest.gate_failures,
             )
 
-        test_metrics, comparison = selected.build_metrics(
+        test_metrics, comparison = build_final_metrics(
             authorization,
             signals,
             backtest,
@@ -193,23 +179,19 @@ def run_final_test_release(
         test_metrics.write_parquet(datasets / "final_test_metrics.parquet")
         comparison.write_parquet(datasets / "period_comparison.parquet")
         completed_at = datetime.now(timezone.utc).isoformat()
-        if steps is None:
-            resolution = resolve_final_test_data_panel(final_root)
-            _copy_release_inputs(
-                panel_root=resolution.root,
-                execution_root=(
-                    final_root / "attempt_inputs" / authorization.attempt_id
-                ),
-                source_root=final_root / "execution_input_sources",
-                datasets=datasets,
-                artifacts=artifacts,
-            )
+        resolution = resolve_final_test_data_panel(final_root)
+        _copy_release_inputs(
+            panel_root=resolution.root,
+            execution_root=(final_root / "attempt_inputs" / authorization.attempt_id),
+            source_root=final_root / "execution_input_sources",
+            datasets=datasets,
+            artifacts=artifacts,
+        )
         upstream = _upstream_identity(
             data_root,
             authorization,
             execution_manifest,
-            allow_missing=steps is not None,
-            staged_root=attempt_root if steps is None else None,
+            staged_root=attempt_root,
         )
         lineage = _lineage(
             authorization,
@@ -218,7 +200,7 @@ def run_final_test_release(
             started_at=started_at,
             completed_at=completed_at,
         )
-        report = selected.render_report(
+        report = build_final_report(
             authorization,
             comparison,
             code_root=code_root,
@@ -247,6 +229,7 @@ def run_final_test_release(
             release_run_id=actual_run_id,
             sealed_protocol_sha256=authorization.sealed_protocol_sha256,
         )
+        _assert_release_date_bounds(datasets)
         release = publish_release(
             final_root,
             run_id=actual_run_id,
@@ -296,18 +279,6 @@ def run_final_test_release(
                 reason=f"{type(error).__name__}: {error}",
             )
         raise
-
-
-def _default_steps() -> FinalTestPipelineSteps:
-    return FinalTestPipelineSteps(
-        authorize=authorize_final_test,
-        build_data=build_or_reuse_final_test_daily_panel,
-        build_execution_inputs=build_final_execution_inputs,
-        build_signals=build_final_test_signals,
-        run_backtest=run_final_test_backtest,
-        build_metrics=build_final_metrics,
-        render_report=build_final_report,
-    )
 
 
 def build_or_reuse_final_test_daily_panel(
@@ -647,12 +618,18 @@ def _write_attempt_core(
     signals: FinalTestSignals,
     backtest: FinalTestBacktestResult,
 ) -> None:
+    release_outputs = _slice_backtest_period(
+        backtest.outputs,
+        start=FINAL_TEST_START,
+        end=FINAL_TEST_END,
+        include_nav_boundary=False,
+    )
     for name, frame in {
         "factor_panel": signals.factor_panel,
         "composite_scores": signals.composite_scores,
         "composite_weights": signals.composite_weights,
         "target_weights": signals.target_weights,
-        **backtest.outputs,
+        **release_outputs,
     }.items():
         frame.write_parquet(datasets / f"{name}.parquet")
     _write_json(artifacts / "preflight.json", backtest.preflight)
@@ -663,6 +640,60 @@ def _write_attempt_core(
     for name, value in backtest.audits.items():
         if isinstance(value, pl.DataFrame):
             value.write_parquet(artifacts / f"{name}.parquet")
+
+
+def _assert_release_date_bounds(root: Path) -> None:
+    """Reject any dated release row outside the one-shot final-test period."""
+    parquet_paths = sorted(root.rglob("*.parquet"))
+    for path in parquet_paths:
+        schema = pl.read_parquet_schema(path)
+        date_columns = [
+            name
+            for name, dtype in schema.items()
+            if dtype == pl.Date or isinstance(dtype, pl.Datetime)
+        ]
+        if not date_columns:
+            _assert_undated_release_relation(path, root=root)
+            continue
+        frame = pl.read_parquet(path, columns=date_columns)
+        for column in date_columns:
+            invalid = frame.filter(
+                pl.col(column).is_not_null()
+                & ~pl.col(column).cast(pl.Date).is_between(FINAL_TEST_START, FINAL_TEST_END)
+            )
+            if not invalid.is_empty():
+                relative = path.relative_to(root)
+                raise ValueError(
+                    f"{relative}: date column {column} contains rows outside final-test period"
+                )
+
+
+def _assert_undated_release_relation(path: Path, *, root: Path) -> None:
+    """Require an explicit bounded-table relation for datasets without date columns."""
+    relative = path.relative_to(root)
+    if relative.name == "final_test_metrics.parquet":
+        if "period" not in pl.read_parquet_schema(path):
+            raise ValueError(f"{relative}: undated metric table lacks period identity")
+        return
+    if relative.name == "period_comparison.parquet":
+        if "test" not in pl.read_parquet_schema(path):
+            raise ValueError(f"{relative}: undated comparison lacks final-test metric relation")
+        return
+    if relative.name in {"orders.parquet", "scenario_orders.parquet"}:
+        frame = pl.read_parquet(path)
+        event_name = relative.name.replace("orders", "order_events")
+        event_path = path.with_name(event_name)
+        if not event_path.is_file():
+            raise ValueError(f"{relative}: undated terminal table lacks event history")
+        keys = ["order_id"]
+        if "scenario" in frame.columns:
+            keys.insert(0, "scenario")
+        events = pl.read_parquet(event_path, columns=keys)
+        missing = frame.select(keys).join(events.unique(), on=keys, how="anti")
+        if not missing.is_empty():
+            raise ValueError(f"{relative}: terminal rows lack dated event relation")
+        return
+    raise ValueError(f"{relative}: parquet has no date-like column or explicit period relation")
 
 
 def _write_attempt_manifest(
@@ -697,8 +728,7 @@ def _upstream_identity(
     authorization: FinalTestAuthorization,
     execution_manifest: Mapping[str, object],
     *,
-    allow_missing: bool,
-    staged_root: Path | None,
+    staged_root: Path,
 ) -> dict[str, object]:
     final_root = data_root / "processed/final_test"
     if (final_root / "data-build-claim.json").is_file():
@@ -710,12 +740,9 @@ def _upstream_identity(
                 resolution.root / "input_files.json",
             )
         ]
-    elif allow_missing:
-        final_data = []
     else:
         raise ValueError("final-test data identity is incomplete")
-    staged_inputs = (
-        [
+    staged_inputs = [
             file_record(path, root=staged_root, role="self_contained_final_input").to_dict()
             for path in sorted(
                 item
@@ -728,21 +755,11 @@ def _upstream_identity(
                 if item.is_file()
             )
         ]
-        if staged_root is not None
-        else []
-    )
     try:
         robustness = resolve_current(data_root / "processed/robustness")
         validation = resolve_current(data_root / "processed/validation_evaluation")
     except FileNotFoundError:
-        if not allow_missing:
-            raise ValueError("final-test upstream release identity is incomplete") from None
-        return {
-            "robustness_release": authorization.robustness_release,
-            "final_test_data": final_data,
-            "self_contained_inputs": staged_inputs,
-            "execution_inputs": dict(execution_manifest),
-        }
+        raise ValueError("final-test upstream release identity is incomplete") from None
     if robustness.run_id != authorization.robustness_release:
         raise ValueError("authorized robustness release changed")
     sealed = json.loads(
