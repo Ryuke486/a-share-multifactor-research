@@ -7,7 +7,10 @@ from uuid import uuid4
 
 import polars as pl
 
-from ashare_multifactor.audit.records import file_record
+import json
+import hashlib
+
+from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.final_test.action_source_contract import (
     build_execution_input_manifest,
@@ -22,21 +25,38 @@ from ashare_multifactor.final_test.gate import (
 )
 
 
+_OFFICIAL_EVIDENCE_PREFIXES = (
+    "https://static.cninfo.com.cn/finalpage/",
+    "https://disc.static.szse.cn/download/disc/",
+    "https://www.sse.com.cn/disclosure/listedinfo/announcement/",
+    "https://www.sse.com.cn/assortment/stock/list/info/profit/",
+)
+
+
 def build_final_execution_inputs(
     authorization: FinalTestAuthorization,
     *,
     code_root: Path,
     data_root: Path,
     final_root: Path,
+    security_event_coverage_path: Path,
 ) -> dict[str, object]:
     """Generate, then bind, the frozen action/event inputs to this attempt."""
     del data_root
     source_root = final_root / "execution_input_sources"
-    execution_root = final_root / "execution_inputs"
+    execution_root = final_root / "attempt_inputs" / authorization.attempt_id
     if not source_root.exists():
         generate_final_execution_sources(
             authorization,
             code_root=code_root,
+            final_root=final_root,
+            security_event_coverage_path=security_event_coverage_path,
+        )
+    else:
+        _verify_reusable_source_root(
+            source_root,
+            authorization=authorization,
+            security_event_coverage_path=security_event_coverage_path,
             final_root=final_root,
         )
     source_actions = source_root / "corporate_actions.parquet"
@@ -45,7 +65,7 @@ def build_final_execution_inputs(
         raise ValueError(
             "authoritative final execution source files must be generated before execution"
         )
-    if execution_root.exists():
+    if execution_root.exists() or execution_root.is_symlink():
         raise FileExistsError("final execution inputs are already bound")
     execution_root.mkdir(parents=True)
     files = {}
@@ -65,7 +85,7 @@ def build_final_execution_inputs(
     ).to_dict()
     manifest["source_files"] = [
         file_record(path, root=source_root, role="final_execution_source").to_dict()
-        for path in (source_actions, source_events, source_root / "source_manifest.json")
+        for path in sorted(item for item in source_root.rglob("*") if item.is_file())
     ]
     return manifest
 
@@ -75,6 +95,7 @@ def generate_final_execution_sources(
     *,
     code_root: Path,
     final_root: Path,
+    security_event_coverage_path: Path,
 ) -> Path:
     """Acquire every frozen BaoStock query and create canonical execution inputs."""
     _assert_authorization(authorization)
@@ -96,13 +117,18 @@ def generate_final_execution_sources(
     )
     if not symbols:
         raise ValueError("final execution input acquisition requires symbols")
+    security_coverage = validate_security_event_coverage(
+        security_event_coverage_path,
+        symbols=symbols,
+    )
     raw, coverage = _download_final_dividends(
         symbols,
         years=contract.query_years,
         year_type=contract.query_year_type,
     )
     actions = _normalize_final_dividends(raw, symbols=set(symbols))
-    events = pl.DataFrame(
+    event_file = security_coverage.get("events_file")
+    events = pl.read_parquet(event_file) if isinstance(event_file, Path) else pl.DataFrame(
         schema={
             "effective_date": pl.Date,
             "source_symbol": pl.String,
@@ -113,6 +139,8 @@ def generate_final_execution_sources(
             "source": pl.String,
         }
     )
+    if events.height != security_coverage["event_rows"]:
+        raise ValueError("official security-event row count changed")
     destination = final_root / "execution_input_sources"
     temporary = final_root / f".execution-input-sources-{uuid4().hex}.tmp"
     temporary.mkdir(parents=True)
@@ -121,22 +149,39 @@ def generate_final_execution_sources(
         coverage.write_parquet(temporary / "baostock_query_coverage.parquet")
         actions.write_parquet(temporary / "corporate_actions.parquet")
         events.write_parquet(temporary / "security_events.parquet")
+        shutil.copy2(security_event_coverage_path, temporary / "security_event_coverage.json")
+        evidence_root = temporary / "security_event_evidence"
+        evidence_root.mkdir()
+        for path in security_coverage["evidence_paths"]:
+            shutil.copy2(path, evidence_root / path.name)
+        coverage_root = temporary / "security_event_query_coverage"
+        coverage_root.mkdir()
+        for path in security_coverage["coverage_paths"]:
+            shutil.copy2(path, coverage_root / path.name)
         records = [
             file_record(path, root=temporary, role="final_execution_source").to_dict()
-            for path in sorted(temporary.iterdir())
+            for path in sorted(item for item in temporary.rglob("*") if item.is_file())
         ]
         write_json(
             temporary / "source_manifest.json",
             {
                 "attempt_id": authorization.attempt_id,
                 "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+                "git_commit": authorization.git_commit,
+                "git_tree": authorization.git_tree,
+                "data_manifest_sha256": resolution.data_manifest_sha256,
+                "security_event_coverage_sha256": sha256_file(
+                    security_event_coverage_path
+                ),
                 "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
                 "provider": contract.provider,
                 "query_year_type": contract.query_year_type,
                 "query_years": list(contract.query_years),
                 "symbol_count": len(symbols),
                 "successful_query_count": coverage.height,
-                "security_event_source": "explicit_no_events_identified",
+                "security_event_source": (
+                    "official_events" if events.height else "official_zero_event_coverage"
+                ),
                 "files": records,
             },
         )
@@ -147,6 +192,100 @@ def generate_final_execution_sources(
         shutil.rmtree(temporary, ignore_errors=True)
         raise
     return destination
+
+
+def _verify_reusable_source_root(
+    root: Path,
+    *,
+    authorization: FinalTestAuthorization,
+    security_event_coverage_path: Path,
+    final_root: Path,
+) -> None:
+    try:
+        manifest = json.loads((root / "source_manifest.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("invalid reusable final execution source manifest") from error
+    resolution = resolve_final_test_data_panel(final_root)
+    expected = {
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "data_manifest_sha256": resolution.data_manifest_sha256,
+        "security_event_coverage_sha256": sha256_file(security_event_coverage_path),
+    }
+    if any(manifest.get(key) != value for key, value in expected.items()):
+        raise ValueError("final execution sources cannot be reused across sealed inputs")
+    for record in manifest.get("files", []):
+        verify_file_record(record, root=root)
+
+
+def validate_security_event_coverage(
+    path: Path, *, symbols: list[str] | None = None
+) -> dict[str, object]:
+    if path.is_symlink():
+        raise ValueError("official security-event coverage uses a symlink")
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("invalid official security-event coverage") from error
+    if (
+        not isinstance(payload, dict)
+        or payload.get("status") != "ready"
+        or payload.get("period") != [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()]
+        or payload.get("scope") != "all_final_execution_symbols"
+        or not isinstance(payload.get("event_rows"), int)
+        or payload["event_rows"] < 0
+        or not isinstance(payload.get("symbol_count"), int)
+        or payload["symbol_count"] <= 0
+        or not isinstance(payload.get("symbols_sha256"), str)
+        or len(payload.get("symbols_sha256", "")) != 64
+        or not isinstance(payload.get("evidence"), list)
+        or not payload["evidence"]
+        or not isinstance(payload.get("coverage"), list)
+        or not payload["coverage"]
+    ):
+        raise ValueError("official security-event coverage is not ready")
+    evidence_paths = []
+    for record in payload["evidence"]:
+        if (
+            not isinstance(record, dict)
+            or record.get("role") != "official_security_event"
+            or not any(
+                str(record.get("source_url", "")).startswith(prefix)
+                for prefix in _OFFICIAL_EVIDENCE_PREFIXES
+            )
+        ):
+            raise ValueError("official security-event coverage evidence role is invalid")
+        try:
+            identity = {key: value for key, value in record.items() if key != "source_url"}
+            evidence_paths.append(verify_file_record(identity, root=path.parent))
+        except (FileNotFoundError, TypeError, ValueError) as error:
+            raise ValueError("official security-event coverage evidence changed") from error
+    coverage_paths = []
+    for record in payload["coverage"]:
+        if (
+            not isinstance(record, dict)
+            or record.get("role") != "official_security_event_coverage"
+        ):
+            raise ValueError("official security-event query coverage role is invalid")
+        try:
+            coverage_paths.append(verify_file_record(record, root=path.parent))
+        except (FileNotFoundError, TypeError, ValueError) as error:
+            raise ValueError("official security-event query coverage changed") from error
+    if symbols is not None:
+        normalized = sorted({str(symbol).zfill(6) for symbol in symbols})
+        digest = hashlib.sha256(("\n".join(normalized) + "\n").encode()).hexdigest()
+        if payload["symbol_count"] != len(normalized) or payload["symbols_sha256"] != digest:
+            raise ValueError("official security-event coverage symbol scope changed")
+    result = dict(payload)
+    result["evidence_paths"] = evidence_paths
+    result["coverage_paths"] = coverage_paths
+    event_record = payload.get("events_file")
+    if payload["event_rows"]:
+        if not isinstance(event_record, dict):
+            raise ValueError("official security-event coverage lacks event file")
+        result["events_file"] = verify_file_record(event_record, root=path.parent)
+    return result
 
 
 def _download_final_dividends(

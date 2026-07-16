@@ -12,6 +12,18 @@ from typing import Any
 _ATTEMPT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 
 
+def validate_publication_id(value: str) -> str:
+    if (
+        _ATTEMPT_ID.fullmatch(value) is None
+        or value in {".", ".."}
+        or ".." in value
+        or "/" in value
+        or "\\" in value
+    ):
+        raise ValueError("invalid final-test publication identifier")
+    return value
+
+
 def assert_no_authoritative_success(registry_root: Path) -> None:
     if not registry_root.exists():
         return
@@ -35,8 +47,7 @@ def append_attempt_outcome(
     release_manifest_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Append one terminal outcome without rewriting the opening attempt record."""
-    if _ATTEMPT_ID.fullmatch(attempt_id) is None:
-        raise ValueError("invalid final-test attempt ID")
+    validate_publication_id(attempt_id)
     if status not in {"failed", "succeeded"}:
         raise ValueError("invalid final-test attempt outcome")
     if authoritative != (status == "succeeded"):
@@ -80,8 +91,7 @@ def register_attempt(
     token_sha256: str,
 ) -> dict[str, Any]:
     """Create one immutable attempt record; existing records are never rewritten."""
-    if _ATTEMPT_ID.fullmatch(attempt_id) is None:
-        raise ValueError("invalid final-test attempt ID")
+    validate_publication_id(attempt_id)
     assert_no_authoritative_success(registry_root)
     registry_root.mkdir(parents=True, exist_ok=True)
     record: dict[str, Any] = {
@@ -105,6 +115,59 @@ def register_attempt(
     except FileExistsError as exc:
         raise ValueError("final-test attempt ID is already registered") from exc
     return record
+
+
+def append_prepared_publication(
+    registry_root: Path,
+    *,
+    attempt_id: str,
+    release_run_id: str,
+    sealed_protocol_sha256: str,
+) -> dict[str, Any]:
+    validate_publication_id(attempt_id)
+    validate_publication_id(release_run_id)
+    payload = {
+        "attempt_id": attempt_id,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "status": "prepared",
+        "authoritative": False,
+        "release_run_id": release_run_id,
+        "sealed_protocol_sha256": sealed_protocol_sha256,
+    }
+    registry_root.mkdir(parents=True, exist_ok=True)
+    _write_exclusive(
+        registry_root / f"{attempt_id}.prepared.json",
+        (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode(),
+    )
+    return payload
+
+
+def recover_prepared_publication(
+    registry_root: Path,
+    *,
+    attempt_id: str,
+    current: dict[str, object],
+) -> dict[str, Any]:
+    validate_publication_id(attempt_id)
+    prepared = json.loads(
+        (registry_root / f"{attempt_id}.prepared.json").read_text(encoding="utf-8")
+    )
+    if (
+        prepared.get("status") != "prepared"
+        or prepared.get("attempt_id") != attempt_id
+        or current.get("run_id") != prepared.get("release_run_id")
+        or not re.fullmatch(r"[0-9a-f]{64}", str(current.get("manifest_sha256", "")))
+    ):
+        raise ValueError("prepared final-test publication differs from CURRENT")
+    return append_attempt_outcome(
+        registry_root,
+        attempt_id=attempt_id,
+        status="succeeded",
+        authoritative=True,
+        reason="recovered verified prepared final-test publication",
+        release_run_id=str(current["run_id"]),
+        release_manifest_sha256=str(current["manifest_sha256"]),
+    )
 
 
 def save_token_snapshot(

@@ -2,18 +2,35 @@ from __future__ import annotations
 
 from datetime import date
 import json
+import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import polars as pl
 import pytest
 
 from ashare_multifactor.audit.publication import resolve_current
+from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.final_test.backtest import FinalTestBacktestResult
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
-from ashare_multifactor.final_test.execution_sources import _normalize_final_dividends
+from ashare_multifactor.final_test.execution_sources import (
+    _normalize_final_dividends,
+    validate_security_event_coverage,
+)
 from ashare_multifactor.final_test.pipeline import (
     FinalTestPipelineSteps,
+    _assert_reusable_data_claim,
+    _copy_release_inputs,
+    _validate_publication_id,
     run_final_test_release,
+)
+from ashare_multifactor.final_test.registry import (
+    append_prepared_publication,
+    recover_prepared_publication,
+)
+from ashare_multifactor.final_test.release_outputs import (
+    _historical_backtest_root,
+    _slice_backtest_period,
 )
 from ashare_multifactor.final_test.signals import FinalTestSignals
 
@@ -133,16 +150,17 @@ def test_success_publishes_immutable_release_and_locks_another_attempt(
     assert outcome["authoritative"] is True
     (tmp_path / "processed/final_test/attempts/attempt-001.outcome.json").unlink()
 
-    with pytest.raises(ValueError, match="already succeeded"):
-        run_final_test_release(
-            code_root=Path.cwd(),
-            data_root=tmp_path,
-            opening_token_path=tmp_path / "second-token.json",
-            approval_key=b"synthetic-approval-key",
-            attempt_id="attempt-002",
-            run_id="another-release",
-            steps=_steps(publishable=True),
-        )
+    recovered = run_final_test_release(
+        code_root=Path.cwd(),
+        data_root=tmp_path,
+        opening_token_path=tmp_path / "second-token.json",
+        approval_key=b"synthetic-approval-key",
+        attempt_id="attempt-002",
+        run_id="another-release",
+        steps=_steps(publishable=True),
+    )
+    assert recovered.release == current
+    assert recovered.attempt_id == "attempt-001"
 
 
 def test_non_publishable_attempt_is_retained_without_switching_current(
@@ -174,6 +192,7 @@ def test_cli_exposes_only_the_authorized_one_shot_entrypoint() -> None:
 
     assert "opening-token" in source
     assert "approval-key-file" in source
+    assert "security-event-coverage" in source
     assert "parameter" not in source
     assert "search" not in source
 
@@ -201,4 +220,166 @@ def test_final_execution_source_normalization_is_exactly_date_bounded() -> None:
         _normalize_final_dividends(
             raw.with_columns(pl.lit(2026).alias("query_year")),
             symbols={"000001"},
+        )
+
+
+def test_portfolio_inputs_use_boundary_nav_and_strict_period_slices() -> None:
+    frames = {
+        "nav": pl.DataFrame(
+            {
+                "date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)],
+                "nav": [100.0, 101.0, 999.0],
+            }
+        ),
+        "orders": pl.DataFrame(
+            {"date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)]}
+        ),
+        "trades": pl.DataFrame(
+            {"date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)]}
+        ),
+        "target_diagnostics": pl.DataFrame(
+            {"date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)]}
+        ),
+    }
+
+    sliced = _slice_backtest_period(
+        frames, start=date(2005, 1, 1), end=date(2016, 12, 31)
+    )
+
+    assert sliced["nav"].get_column("date").to_list() == [
+        date(2004, 12, 31),
+        date(2005, 1, 4),
+    ]
+    assert sliced["orders"].get_column("date").to_list() == [date(2005, 1, 4)]
+
+
+def test_research_and_validation_use_same_stage7_continuous_candidate() -> None:
+    validation = SimpleNamespace(datasets=Path("validation/datasets"))
+
+    research = _historical_backtest_root(validation, period="research")
+    holdout = _historical_backtest_root(validation, period="validation")
+
+    expected = Path(
+        "validation/datasets/backtests/rolling_ic_family_size_stratified_buffered"
+    )
+    assert research == expected
+    assert holdout == expected
+
+
+def test_security_event_zero_rows_still_require_ready_official_coverage(
+    tmp_path: Path,
+) -> None:
+    evidence = tmp_path / "official.json"
+    evidence.write_text('{"source":"official"}\n', encoding="utf-8")
+    query_coverage = tmp_path / "query_coverage.csv"
+    query_coverage.write_text("symbol,status\n000001,ok\n", encoding="utf-8")
+    coverage = tmp_path / "coverage.json"
+    coverage.write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "period": ["2022-01-01", "2025-12-31"],
+                "scope": "all_final_execution_symbols",
+                "symbol_count": 1,
+                "symbols_sha256": hashlib.sha256(b"000001\n").hexdigest(),
+                "event_rows": 0,
+                "evidence": [
+                    {
+                        **file_record(
+                            evidence, root=tmp_path, role="official_security_event"
+                        ).to_dict(),
+                        "source_url": "https://static.cninfo.com.cn/finalpage/security.PDF",
+                    }
+                ],
+                "coverage": [
+                    file_record(
+                        query_coverage,
+                        root=tmp_path,
+                        role="official_security_event_coverage",
+                    ).to_dict()
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    verified = validate_security_event_coverage(coverage)
+    assert verified["event_rows"] == 0
+    coverage.write_text('{"status":"not_ready"}\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="security-event coverage"):
+        validate_security_event_coverage(coverage)
+
+
+@pytest.mark.parametrize("value", ["../escape", "/absolute", "a/b", "a..b", "."])
+def test_publication_identifiers_reject_escape_forms(value: str) -> None:
+    with pytest.raises(ValueError, match="identifier"):
+        _validate_publication_id(value)
+
+
+def test_prepared_publication_recovers_from_verified_current(tmp_path: Path) -> None:
+    registry = tmp_path / "attempts"
+    append_prepared_publication(
+        registry,
+        attempt_id="attempt-001",
+        release_run_id="release-001",
+        sealed_protocol_sha256="c" * 64,
+    )
+    current = {
+        "run_id": "release-001",
+        "manifest_sha256": "d" * 64,
+    }
+
+    outcome = recover_prepared_publication(
+        registry,
+        attempt_id="attempt-001",
+        current=current,
+    )
+
+    assert outcome["status"] == "succeeded"
+    assert outcome["release_manifest_sha256"] == "d" * 64
+
+
+def test_release_copies_final_data_and_execution_evidence(tmp_path: Path) -> None:
+    panel = tmp_path / "daily_panel"
+    panel.mkdir()
+    (panel / "data_manifest.json").write_text("{}\n")
+    (panel / "input_files.json").write_text("{}\n")
+    execution = tmp_path / "attempt_inputs"
+    execution.mkdir()
+    (execution / "manifest.json").write_text("{}\n")
+    (execution / "coverage.json").write_text("{}\n")
+    datasets = tmp_path / "staged/datasets"
+    artifacts = tmp_path / "staged/artifacts"
+    datasets.mkdir(parents=True)
+    artifacts.mkdir()
+
+    _copy_release_inputs(
+        panel_root=panel,
+        execution_root=execution,
+        datasets=datasets,
+        artifacts=artifacts,
+    )
+
+    assert (datasets / "final_daily_panel/data_manifest.json").is_file()
+    assert (datasets / "final_daily_panel/input_files.json").is_file()
+    assert (artifacts / "execution_inputs/coverage.json").is_file()
+
+
+def test_failed_attempt_data_reuse_requires_same_seal_git_and_raw_inventory() -> None:
+    authorization = _authorization("attempt-002")
+    claim = {
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "robustness_release": authorization.robustness_release,
+    }
+    inventory = {"files": [{"path": "2022.csv", "sha256": "d" * 64}]}
+
+    _assert_reusable_data_claim(claim, authorization, inventory, inventory)
+    with pytest.raises(ValueError, match="raw inventory"):
+        _assert_reusable_data_claim(
+            claim,
+            authorization,
+            inventory,
+            {"files": [{"path": "2022.csv", "sha256": "e" * 64}]},
         )

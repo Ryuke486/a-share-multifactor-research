@@ -11,6 +11,7 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--opening-token", type=Path, required=True)
     parser.add_argument("--approval-key-file", type=Path, required=True)
+    parser.add_argument("--security-event-coverage", type=Path, required=True)
     parser.add_argument("--attempt-id")
     parser.add_argument("--run-id")
     args = parser.parse_args()
@@ -21,6 +22,7 @@ def main() -> None:
         approval_key=args.approval_key_file.read_bytes(),
         attempt_id=args.attempt_id,
         run_id=args.run_id,
+        security_event_coverage_path=args.security_event_coverage,
     )
     print(result.release.root if result.release is not None else result.attempt_root)
 

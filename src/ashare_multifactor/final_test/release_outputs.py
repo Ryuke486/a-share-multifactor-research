@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 from pathlib import Path
 
 import polars as pl
@@ -47,7 +48,14 @@ def build_final_metrics(
         period="test",
         factor_rank_ic=rank_ic,
         factor_groups=groups,
-        backtest=backtest.outputs,
+        backtest=_slice_backtest_period(
+            {
+                name: backtest.outputs[name]
+                for name in ("nav", "orders", "trades", "target_diagnostics")
+            },
+            start=date(2022, 1, 1),
+            end=date(2025, 12, 31),
+        ),
         metric_manifest=metrics,
         sealed_protocol=sealed,
     )
@@ -119,29 +127,35 @@ def _historical_metrics(
     metrics: tuple[str, ...],
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     stage_five = resolve_current(data_root / "processed/factor_combination")
-    stage_six = resolve_current(data_root / "processed/formal_backtest")
     validation = resolve_current(data_root / "processed/validation_evaluation")
     sources = (
         (
             "research",
             stage_five.artifacts / "composite_ic.parquet",
             stage_five.artifacts / "composite_quantiles.parquet",
-            stage_six.datasets,
+            _historical_backtest_root(validation, period="research"),
         ),
         (
             "validation",
             validation.artifacts / "research/composite_rank_ic.parquet",
             validation.artifacts / "research/composite_quantile_returns.parquet",
-            validation.datasets / f"backtests/{MAIN_CANDIDATE}",
+            _historical_backtest_root(validation, period="validation"),
         ),
     )
     result = []
     for period, ic_path, groups_path, backtest_root in sources:
         ic, groups = _metric_inputs(pl.read_parquet(ic_path), pl.read_parquet(groups_path))
-        backtest = {
+        continuous = {
             name: pl.read_parquet(backtest_root / f"{name}.parquet")
             for name in ("nav", "orders", "trades", "target_diagnostics")
         }
+        bounds = {
+            "research": (date(2005, 1, 1), date(2016, 12, 31)),
+            "validation": (date(2017, 1, 1), date(2021, 12, 31)),
+        }
+        backtest = _slice_backtest_period(
+            continuous, start=bounds[period][0], end=bounds[period][1]
+        )
         result.append(
             compute_final_test_metrics(
                 period=period,
@@ -153,3 +167,32 @@ def _historical_metrics(
             )
         )
     return result[0], result[1]
+
+
+def _historical_backtest_root(validation: object, *, period: str) -> Path:
+    if period not in {"research", "validation"}:
+        raise ValueError("unknown historical metric period")
+    return Path(getattr(validation, "datasets")) / f"backtests/{MAIN_CANDIDATE}"
+
+
+def _slice_backtest_period(
+    frames: dict[str, pl.DataFrame],
+    *,
+    start: date,
+    end: date,
+) -> dict[str, pl.DataFrame]:
+    sliced: dict[str, pl.DataFrame] = {}
+    for name, frame in frames.items():
+        date_column = "signal_date" if name == "orders" and "signal_date" in frame.columns else "date"
+        if date_column not in frame.columns:
+            raise ValueError(f"{name} lacks date for strict period slicing")
+        within = frame.filter(pl.col(date_column).is_between(start, end)).sort(date_column)
+        if name == "nav":
+            boundary = frame.filter(pl.col(date_column) < start).sort(date_column).tail(1)
+            if boundary.is_empty():
+                if within.is_empty():
+                    raise ValueError("portfolio metrics require opening boundary NAV")
+            else:
+                within = pl.concat((boundary, within), how="vertical_relaxed")
+        sliced[name] = within
+    return sliced

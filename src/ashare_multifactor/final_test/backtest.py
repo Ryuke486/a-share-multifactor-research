@@ -155,7 +155,7 @@ def _execution_input_failures(
     final_root: Path,
     authorization: FinalTestAuthorization,
 ) -> list[str]:
-    manifest_path = final_root / _EXECUTION_INPUT_MANIFEST
+    manifest_path = _execution_manifest_path(final_root, authorization)
     if not manifest_path.is_file():
         return [
             "authoritative 2022-2025 corporate-action inputs are missing",
@@ -168,6 +168,15 @@ def _execution_input_failures(
     return []
 
 
+def _execution_manifest_path(
+    final_root: Path, authorization: FinalTestAuthorization
+) -> Path:
+    attempt = final_root / "attempt_inputs" / authorization.attempt_id / "manifest.json"
+    if attempt.is_file():
+        return attempt
+    return final_root / _EXECUTION_INPUT_MANIFEST
+
+
 def _resolve_verified_inputs(
     source: object,
     signals: FinalTestSignals,
@@ -177,7 +186,7 @@ def _resolve_verified_inputs(
     final_root: Path,
 ) -> FinalTestBacktestInputs:
     verified = verify_execution_input_manifest(
-        final_root / _EXECUTION_INPUT_MANIFEST,
+        _execution_manifest_path(final_root, authorization),
         authorization,
     )
     pretest = _resolve_pretest_execution_inputs(
