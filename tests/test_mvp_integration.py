@@ -154,6 +154,9 @@ periods:
   smoke_data: [2012-01-01, {analysis_end.isoformat()}]
   smoke_analysis: [2014-01-01, {analysis_end.isoformat()}]
 
+research_scope:
+  supported_markets: [sh, sz]
+
 mvp:
   universe_size: 25
   momentum_lookback: 60

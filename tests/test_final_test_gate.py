@@ -199,6 +199,7 @@ def _fixture(tmp_path: Path, *, successor: bool = True) -> dict[str, Path]:
             "action_coverage_audit_sha256": successor_args[
                 "action_coverage_audit_sha256"
             ],
+            "supported_markets": ["sh", "sz"],
             "status": "ready_for_new_final_test_authorization",
         }
     publish_release(

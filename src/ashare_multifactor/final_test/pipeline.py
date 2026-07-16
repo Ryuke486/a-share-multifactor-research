@@ -214,6 +214,7 @@ def run_final_test_release(
         lineage = _lineage(
             authorization,
             upstream=upstream,
+            supported_markets=config.supported_markets,
             started_at=started_at,
             completed_at=completed_at,
         )
@@ -768,12 +769,14 @@ def _lineage(
     authorization: FinalTestAuthorization,
     *,
     upstream: Mapping[str, object],
+    supported_markets: tuple[str, ...],
     started_at: str,
     completed_at: str,
 ) -> dict[str, object]:
     return {
         "stage": "final_test",
         "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
+        "supported_markets": list(supported_markets),
         "authorization": {
             "attempt_id": authorization.attempt_id,
             "approval_id": authorization.approval_id,

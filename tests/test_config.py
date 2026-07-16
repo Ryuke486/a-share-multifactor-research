@@ -19,6 +19,8 @@ periods:
   test: [2022-01-01, 2025-12-31]
   smoke_data: [2012-01-01, 2015-12-31]
   smoke_analysis: [2014-01-01, 2015-12-31]
+research_scope:
+  supported_markets: [sh, sz]
 mvp:
   universe_size: 200
   momentum_lookback: 60
@@ -55,6 +57,7 @@ def test_official_config_loads_unquoted_yaml_dates():
     assert config.formal_backtest.analysis_end == date(2016, 12, 31)
     assert config.formal_backtest.maximum_participation == 0.10
     assert config.formal_backtest.stale_review_days == 30
+    assert config.supported_markets == ("sh", "sz")
 
 
 def test_config_is_immutable():

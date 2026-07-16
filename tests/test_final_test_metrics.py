@@ -288,6 +288,7 @@ def test_report_verifies_frozen_template_and_traces_words_to_machine_rows(
             "attempt_id": "attempt-1",
             "git_commit": "def",
             "robustness_release": "stage8",
+            "supported_markets": "sh,sz",
         },
         failed_runs=(),
     )
@@ -327,6 +328,7 @@ def test_report_verifies_frozen_template_and_traces_words_to_machine_rows(
                 "attempt_id": "attempt-1",
                 "git_commit": "def",
                 "robustness_release": "stage8",
+                "supported_markets": "sh,sz",
             },
             failed_runs=(),
         )

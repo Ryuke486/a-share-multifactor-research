@@ -23,12 +23,15 @@ def seal_test_protocol(
     action_source_contract_sha256: str | None = None,
     action_coverage_audit_sha256: str | None = None,
     predecessor: dict[str, object] | None = None,
+    supported_markets: tuple[str, ...] = ("sh", "sz"),
 ) -> dict[str, Any]:
     """Write the complete Stage-9 contract without opening or scanning test data."""
     if code_identity.get("dirty") is not False:
         raise ValueError("sealed test protocol requires a clean Git identity")
     if gate.get("sealed_test_protocol_allowed") is not True:
         raise ValueError("robustness gate does not allow test protocol sealing")
+    if supported_markets != ("sh", "sz"):
+        raise ValueError("sealed protocol supported markets differ from research scope")
     if validation_pointer.get("run_id") != protocol.validation_release:
         raise ValueError("validation release differs from the frozen robustness protocol")
     successor_values = (
@@ -64,6 +67,7 @@ def seal_test_protocol(
             protocol.sealed_test_end.isoformat(),
         ],
         "cost_model": "full_audited_cost_model",
+        "supported_markets": list(supported_markets),
         "metrics": list(protocol.final_test_metrics),
         "market_rules_sha256": market_rules_sha256,
         "report_template_sha256": report_template_sha256,

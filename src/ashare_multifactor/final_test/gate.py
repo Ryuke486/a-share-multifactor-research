@@ -13,6 +13,7 @@ import uuid
 
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import sha256_file, verify_file_record
+from ashare_multifactor.config import load_config
 from ashare_multifactor.final_test.registry import (
     assert_no_authoritative_success,
     register_attempt,
@@ -124,6 +125,7 @@ def _verify_sealed_payload(sealed: dict[str, object]) -> str:
         or not _valid_sha256(str(sealed.get("action_source_contract_sha256", "")))
         or not _valid_sha256(str(sealed.get("action_coverage_audit_sha256", "")))
         or not isinstance(sealed.get("predecessor"), dict)
+        or sealed.get("supported_markets") != ["sh", "sz"]
     ):
         raise ValueError(
             "final-test authorization requires Stage-8 successor protocol v2"
@@ -151,6 +153,9 @@ def _verify_frozen_contract(
     robustness_lineage_path: Path,
 ) -> None:
     protocol = load_robustness_protocol(code_root / "configs/robustness_protocol.yaml")
+    research_config = load_config(code_root / "configs/research_protocol.yaml")
+    if list(research_config.supported_markets) != sealed.get("supported_markets"):
+        raise ValueError("research supported markets differ from sealed protocol")
     if protocol.protocol_sha256 != sealed.get("robustness_protocol_sha256"):
         raise ValueError("robustness protocol hash changed; refreezing is forbidden")
     if list(protocol.final_test_metrics) != sealed.get("metrics"):
@@ -223,6 +228,8 @@ def _verify_frozen_contract(
         != sealed.get("action_source_contract_sha256")
         or execution_protocol.get("action_coverage_audit_sha256")
         != sealed.get("action_coverage_audit_sha256")
+        or execution_protocol.get("supported_markets")
+        != sealed.get("supported_markets")
         or execution_protocol.get("status")
         != "ready_for_new_final_test_authorization"
     ):

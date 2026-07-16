@@ -94,6 +94,7 @@ def build_final_report(
             "attempt_id": authorization.attempt_id,
             "git_commit": authorization.git_commit,
             "robustness_release": authorization.robustness_release,
+            "supported_markets": ",".join(sealed["supported_markets"]),
         },
         failed_runs=failures,
     )

@@ -167,6 +167,21 @@ def test_research_universe_breaks_liquidity_ties_by_symbol_ascending() -> None:
     ]
 
 
+def test_research_universe_excludes_bj_before_history_and_ranking() -> None:
+    from ashare_multifactor.research.research_universe import build_research_universe
+
+    day = date(2004, 1, 5)
+    panel = pl.DataFrame(
+        [_universe_row(day, symbol) for symbol in ("000001", "600000", "430001", "830001", "920001")]
+    )
+    rows = build_research_universe(
+        panel,
+        _settings(minimum_history=1, liquidity_lookback=1),
+    )
+
+    assert rows.get_column("symbol").sort().to_list() == ["000001", "600000"]
+
+
 def test_research_universe_requires_exactly_252_valid_history_observations() -> None:
     from ashare_multifactor.research.research_universe import build_research_universe
 

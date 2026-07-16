@@ -57,6 +57,7 @@ class FactorResearchSettings:
     minimum_valid_months: int
     fdr_q_threshold: float
     redundancy_threshold: float
+    supported_markets: tuple[str, ...] = ("sh", "sz")
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ class ResearchConfig:
     portfolio_construction: PortfolioConstructionSettings | None = None
     formal_backtest: FormalBacktestSettings | None = None
     validation_evaluation: ValidationEvaluationSettings | None = None
+    supported_markets: tuple[str, ...] = ("sh", "sz")
 
 
 def _as_date(value: object) -> date:
@@ -147,7 +149,9 @@ def _period(value: list[str | date]) -> Period:
     return period
 
 
-def _factor_research(value: dict[str, object]) -> FactorResearchSettings:
+def _factor_research(
+    value: dict[str, object], *, supported_markets: tuple[str, ...]
+) -> FactorResearchSettings:
     horizons = value["forward_horizons"]
     if not isinstance(horizons, (list, tuple)):
         raise ValueError("factor_research.forward_horizons must be a non-empty sequence")
@@ -169,6 +173,7 @@ def _factor_research(value: dict[str, object]) -> FactorResearchSettings:
         minimum_valid_months=value["minimum_valid_months"],
         fdr_q_threshold=value["fdr_q_threshold"],
         redundancy_threshold=value["redundancy_threshold"],
+        supported_markets=supported_markets,
     )
 
 
@@ -334,6 +339,9 @@ def _validate_stage_five(
 
 def load_config(path: Path) -> ResearchConfig:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    supported_markets = tuple(raw["research_scope"]["supported_markets"])
+    if supported_markets != ("sh", "sz"):
+        raise ValueError("research_scope.supported_markets must be ordered [sh, sz]")
     periods = raw["periods"]
     factor_research = raw.get("factor_research")
     factor_combination = raw.get("factor_combination")
@@ -349,7 +357,9 @@ def load_config(path: Path) -> ResearchConfig:
         smoke_analysis=_period(periods["smoke_analysis"]),
         mvp=MvpSettings(**raw["mvp"]),
         factor_research=(
-            _factor_research(factor_research) if factor_research is not None else None
+            _factor_research(factor_research, supported_markets=supported_markets)
+            if factor_research is not None
+            else None
         ),
         factor_combination=(
             _factor_combination(factor_combination) if factor_combination is not None else None
@@ -376,6 +386,7 @@ def load_config(path: Path) -> ResearchConfig:
             if validation_evaluation is not None
             else None
         ),
+        supported_markets=supported_markets,
     )
     if config.research.overlaps(config.validation):
         raise ValueError("research and validation periods overlap")

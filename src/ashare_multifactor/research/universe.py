@@ -3,6 +3,7 @@ from __future__ import annotations
 import polars as pl
 
 from ashare_multifactor.config import ResearchConfig
+from ashare_multifactor.data.security import filter_supported_markets
 
 
 _MIN_HISTORY_OBSERVATIONS = 252
@@ -12,6 +13,7 @@ _RAW_PRICE_COLUMNS = ("open_raw", "high_raw", "low_raw", "close_raw")
 
 def build_universe(frame: pl.DataFrame, config: ResearchConfig) -> pl.DataFrame:
     """Add point-in-time history, liquidity, and eligibility fields."""
+    frame = filter_supported_markets(frame, config.supported_markets)
     finite_amount = pl.when(pl.col("amount").is_not_null() & pl.col("amount").is_finite()).then(
         pl.col("amount")
     )

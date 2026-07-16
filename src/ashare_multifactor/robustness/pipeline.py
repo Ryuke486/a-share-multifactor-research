@@ -280,6 +280,7 @@ def publish_robustness_release(
     if gate.get("sealed_test_protocol_allowed") is not True:
         raise ValueError("robustness gate does not allow publication")
     protocol = load_robustness_protocol(code_root / "configs/robustness_protocol.yaml")
+    research_config = load_config(code_root / "configs/research_protocol.yaml")
     validation_pointer = json.loads(
         (data_root / "processed/validation_evaluation/CURRENT.json").read_text(
             encoding="utf-8"
@@ -310,6 +311,7 @@ def publish_robustness_release(
             data_root / "processed/robustness/final_test_opening_ledger"
         ),
         gate=gate,
+        supported_markets=research_config.supported_markets,
         action_source_contract_sha256=(
             str(successor_contract["action_source_contract_sha256"])
             if successor_contract is not None
@@ -335,6 +337,7 @@ def publish_robustness_release(
         "inputs": reproducibility["inputs"],
         "reproducibility": reproducibility,
         "sealed_protocol_sha256": sealed["sealed_protocol_sha256"],
+        "supported_markets": list(research_config.supported_markets),
     }
     if successor_contract is not None:
         lineage = build_stage8_successor_lineage(
@@ -346,6 +349,9 @@ def publish_robustness_release(
             action_coverage_audit_sha256=str(
                 successor_contract["action_coverage_audit_sha256"]
             ),
+        )
+        lineage["execution_protocol"]["supported_markets"] = list(
+            research_config.supported_markets
         )
     return publish_release(
         data_root / "processed/robustness",

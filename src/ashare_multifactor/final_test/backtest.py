@@ -9,6 +9,7 @@ import polars as pl
 
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.config import FormalBacktestSettings
+from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.execution.fees import FeeSchedule, load_market_rules
@@ -88,11 +89,12 @@ def run_final_test_backtest(
         raise ValueError("authorization period differs from the sealed final-test period")
     if not isinstance(signals, FinalTestSignals):
         raise TypeError("signals must be FinalTestSignals from Task 3")
-    _validate_final_targets(signals.target_weights)
-
     code_root = code_root.resolve()
     final_root = final_root.resolve()
     config = _load_frozen_config(code_root, final_root.parent.parent)
+    _validate_final_targets(
+        signals.target_weights, supported_markets=config.supported_markets
+    )
     if final_root != config.paths.processed / "final_test":
         raise ValueError("final-test root is not canonical")
     _verify_data_authorization(config, authorization, code_root)
@@ -120,12 +122,22 @@ def run_final_test_backtest(
     return _execute_verified_inputs(inputs, fees=fees, formal=config.formal_backtest)
 
 
-def _validate_final_targets(targets: pl.DataFrame) -> None:
+def _validate_final_targets(
+    targets: pl.DataFrame, *, supported_markets: tuple[str, ...]
+) -> None:
     required = {"date", "candidate", "symbol", "target_weight"}
     if not required.issubset(targets.columns) or targets.is_empty():
         raise ValueError("Task 3 final targets are empty or have an invalid schema")
     if set(targets.get_column("candidate")) != {MAIN_CANDIDATE}:
         raise ValueError("Task 3 targets substitute the sealed main candidate")
+    if targets.filter(
+        ~pl.col("symbol")
+        .cast(pl.String)
+        .str.zfill(6)
+        .map_elements(market_for_symbol, return_dtype=pl.String)
+        .is_in(supported_markets)
+    ).height:
+        raise ValueError("Task 3 final targets escape supported market scope")
     if targets.filter(
         ~pl.col("date").is_between(FINAL_TEST_START, FINAL_TEST_END)
     ).height:

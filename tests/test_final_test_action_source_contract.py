@@ -101,8 +101,8 @@ def test_source_contract_freezes_scope_and_official_domains() -> None:
     assert dict(contract.market_sources) == {
         "sh": "sse",
         "sz": "szse",
-        "bj": "bse",
     }
+    assert contract.supported_markets == ("sh", "sz")
     assert_allowed_evidence_url(
         "https://static.cninfo.com.cn/finalpage/2024-05-10/notice.PDF",
         contract,
@@ -112,23 +112,24 @@ def test_source_contract_freezes_scope_and_official_domains() -> None:
         "index.shtml?COMPANY_CODE=600276",
         contract,
     )
-    assert_allowed_evidence_url(
-        "https://www.bse.cn/disclosure/2025/2025-01-15/notice.pdf",
-        contract,
-    )
+    with pytest.raises(ValueError, match="official evidence URL"):
+        assert_allowed_evidence_url(
+            "https://www.bse.cn/disclosure/2025/2025-01-15/notice.pdf",
+            contract,
+        )
     with pytest.raises(ValueError, match="official evidence URL"):
         assert_allowed_evidence_url("https://example.com/notice.pdf", contract)
     with pytest.raises(ValueError, match="official evidence URL"):
         assert_allowed_evidence_url("https://www.bse.cn.evil/disclosure/a.pdf", contract)
 
 
-def test_bse_contract_extension_is_protocol_hash_bound(tmp_path: Path) -> None:
+def test_supported_market_contract_is_protocol_hash_bound(tmp_path: Path) -> None:
     source = Path("configs/final_execution_sources.yaml")
     original = source.read_bytes()
-    without_bse = original.replace(b"  - https://www.bse.cn/disclosure/\n", b"")
+    without_scope = original.replace(b"supported_markets: [sh, sz]\n", b"")
     altered = tmp_path / "final_execution_sources.yaml"
-    altered.write_bytes(without_bse)
+    altered.write_bytes(without_scope)
 
-    assert hashlib.sha256(original).digest() != hashlib.sha256(without_bse).digest()
+    assert hashlib.sha256(original).digest() != hashlib.sha256(without_scope).digest()
     with pytest.raises(ValueError, match="frozen final execution source contract"):
         load_action_source_contract(altered)

@@ -51,6 +51,7 @@ def test_sealed_protocol_binds_code_inputs_rules_metrics_and_one_shot_policy(
 
     assert sealed["status"] == "sealed"
     assert sealed["test_period"] == ["2022-01-01", "2025-12-31"]
+    assert sealed["supported_markets"] == ["sh", "sz"]
     assert sealed["main_candidate"] == protocol.main_candidate
     assert sealed["metrics"] == list(protocol.final_test_metrics)
     assert sealed["metrics"] != list(protocol.required_metrics)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import polars as pl
 
 from ashare_multifactor.config import FactorResearchSettings
+from ashare_multifactor.data.security import filter_supported_markets
 from ashare_multifactor.research.trade_observations import is_valid_trade_observation
 
 
@@ -14,7 +15,8 @@ def build_research_universe(
     settings: FactorResearchSettings,
 ) -> pl.DataFrame:
     """Add point-in-time eligibility and stable liquidity ranks for factor research."""
-    with_validity = frame.sort(["symbol", "date"]).with_columns(
+    scoped = filter_supported_markets(frame, settings.supported_markets)
+    with_validity = scoped.sort(["symbol", "date"]).with_columns(
         is_valid_trade_observation()
     )
     with_history = with_validity.with_columns(

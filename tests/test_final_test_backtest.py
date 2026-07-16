@@ -8,7 +8,10 @@ import polars as pl
 import pytest
 
 from ashare_multifactor.config import load_config
-from ashare_multifactor.final_test.backtest import run_final_test_backtest
+from ashare_multifactor.final_test.backtest import (
+    _validate_final_targets,
+    run_final_test_backtest,
+)
 from ashare_multifactor.final_test.action_source_contract import (
     build_execution_input_manifest,
 )
@@ -18,6 +21,19 @@ from ashare_multifactor.final_test.signals import FinalTestSignals
 
 FINAL_START = date(2022, 1, 1)
 FINAL_END = date(2025, 12, 31)
+
+
+def test_final_targets_reject_bj_leakage() -> None:
+    targets = pl.DataFrame(
+        {
+            "date": [FINAL_START],
+            "candidate": ["rolling_ic_family_size_stratified_buffered"],
+            "symbol": ["920001"],
+            "target_weight": [1.0],
+        }
+    )
+    with pytest.raises(ValueError, match="supported market"):
+        _validate_final_targets(targets, supported_markets=("sh", "sz"))
 
 
 def _authorization() -> FinalTestAuthorization:

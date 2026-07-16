@@ -118,6 +118,10 @@ def generate_final_execution_sources(
         .collect()
         .get_column("symbol")
     )
+    symbols = [
+        symbol for symbol in symbols
+        if market_for_symbol(symbol) in contract.supported_markets
+    ]
     if not symbols:
         raise ValueError("final execution input acquisition requires symbols")
     security_coverage = validate_security_event_coverage(
@@ -386,6 +390,16 @@ def validate_security_event_coverage(
             .map_elements(market_for_symbol, return_dtype=pl.String)
             .alias("market"),
         )
+        for symbol_column in ("source_symbol", "target_symbol"):
+            if symbol_column in events.columns and normalized_events.filter(
+                pl.col(symbol_column).is_not_null()
+                & ~pl.col(symbol_column)
+                .cast(pl.String)
+                .str.zfill(6)
+                .map_elements(market_for_symbol, return_dtype=pl.String)
+                .is_in(("sh", "sz"))
+            ).height:
+                raise ValueError("official security events escape supported market scope")
         evidence_mismatch = normalized_events.join(
             evidence_index, on=["evidence_id", "source", "market"], how="anti"
         )

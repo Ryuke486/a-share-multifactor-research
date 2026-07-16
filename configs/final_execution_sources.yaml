@@ -8,11 +8,10 @@ official_evidence_url_prefixes:
   - https://disc.static.szse.cn/download/disc/
   - https://www.sse.com.cn/disclosure/listedinfo/announcement/
   - https://www.sse.com.cn/assortment/stock/list/info/profit/
-  - https://www.bse.cn/disclosure/
 official_market_sources:
   sh: sse
   sz: szse
-  bj: bse
+supported_markets: [sh, sz]
 required_execution_files:
   - corporate_actions.parquet
   - security_events.parquet

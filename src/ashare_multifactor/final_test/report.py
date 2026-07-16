@@ -14,6 +14,7 @@ _IDENTITY_FIELDS = (
     ("attempt_id", "authoritative run ID"),
     ("git_commit", "code commit"),
     ("robustness_release", "upstream robustness release"),
+    ("supported_markets", "supported markets"),
 )
 _LABELS = {
     "rank_ic": "Rank IC",

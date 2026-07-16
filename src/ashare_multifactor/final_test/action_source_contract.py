@@ -16,13 +16,12 @@ from ashare_multifactor.final_test.gate import (
 )
 
 
-OFFICIAL_MARKET_SOURCES = (("sh", "sse"), ("sz", "szse"), ("bj", "bse"))
+OFFICIAL_MARKET_SOURCES = (("sh", "sse"), ("sz", "szse"))
 OFFICIAL_EVIDENCE_URL_PREFIXES = (
     "https://static.cninfo.com.cn/finalpage/",
     "https://disc.static.szse.cn/download/disc/",
     "https://www.sse.com.cn/disclosure/listedinfo/announcement/",
     "https://www.sse.com.cn/assortment/stock/list/info/profit/",
-    "https://www.bse.cn/disclosure/",
 )
 _SOURCE_EVIDENCE_PREFIXES = {
     "sse": (
@@ -34,7 +33,6 @@ _SOURCE_EVIDENCE_PREFIXES = {
         OFFICIAL_EVIDENCE_URL_PREFIXES[0],
         OFFICIAL_EVIDENCE_URL_PREFIXES[1],
     ),
-    "bse": (OFFICIAL_EVIDENCE_URL_PREFIXES[4],),
 }
 
 
@@ -47,6 +45,7 @@ class FinalActionSourceContract:
     query_years: tuple[int, ...]
     allowed_url_prefixes: tuple[str, ...]
     market_sources: tuple[tuple[str, str], ...]
+    supported_markets: tuple[str, ...]
     required_files: tuple[str, ...]
 
 
@@ -65,6 +64,7 @@ def load_action_source_contract(path: Path) -> FinalActionSourceContract:
             (str(market), str(source))
             for market, source in raw["official_market_sources"].items()
         ),
+        supported_markets=tuple(raw.get("supported_markets", ())),
         required_files=tuple(raw["required_execution_files"]),
     )
     if (
@@ -76,6 +76,7 @@ def load_action_source_contract(path: Path) -> FinalActionSourceContract:
         != {"corporate_actions.parquet", "security_events.parquet"}
         or contract.allowed_url_prefixes != OFFICIAL_EVIDENCE_URL_PREFIXES
         or contract.market_sources != OFFICIAL_MARKET_SOURCES
+        or contract.supported_markets != ("sh", "sz")
     ):
         raise ValueError("invalid frozen final execution source contract")
     return contract

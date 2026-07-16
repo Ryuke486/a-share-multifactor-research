@@ -411,7 +411,7 @@ def test_coverage_market_must_match_source_symbol() -> None:
 
 
 @pytest.mark.parametrize("symbol", ["920001", "830001", "430001"])
-def test_bse_security_event_coverage_is_supported(tmp_path: Path, symbol: str) -> None:
+def test_bse_security_event_coverage_is_rejected(tmp_path: Path, symbol: str) -> None:
     coverage = _write_security_event_coverage(
         tmp_path,
         symbol=symbol,
@@ -419,8 +419,8 @@ def test_bse_security_event_coverage_is_supported(tmp_path: Path, symbol: str) -
         source="bse",
         source_url="https://www.bse.cn/disclosure/2024/2024-08-16/notice.pdf",
     )
-    verified = validate_security_event_coverage(coverage, symbols=[symbol])
-    assert verified["event_rows"] == 1
+    with pytest.raises(ValueError, match="evidence source|market source"):
+        validate_security_event_coverage(coverage, symbols=[symbol])
 
 
 def test_bse_symbol_rejects_self_consistent_wrong_exchange(tmp_path: Path) -> None:

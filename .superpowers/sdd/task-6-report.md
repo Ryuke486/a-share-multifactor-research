@@ -14,8 +14,8 @@
 - RED 1：新测试因缺失 `final_test.pipeline` 失败。
 - RED 2：执行源日期归一化接口缺失，测试导入失败。
 - RED 3：删除 outcome 后仍应由 authoritative `CURRENT.json` 锁定，以及失败 attempt 缺少 manifest，两项测试失败。
-- GREEN：本轮 final-test/协议相关集成测试 116 项通过。
-- 最终全量结果：`pytest -q` 802 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
+- GREEN：本轮跨阶段市场范围相关集成测试 191 项通过。
+- 最终全量结果：`pytest -q` 804 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
 
 ## 边界与关注点
 
@@ -55,3 +55,10 @@
 - 封存执行源合同正式加入北交所：仅允许 `https://www.bse.cn/disclosure/` 官方前缀，并冻结 `sh/sse`、`sz/szse`、`bj/bse` 三组市场来源；合同文件变化继续由协议 SHA256 绑定。
 - coverage、官方 evidence、security events 与 BaoStock 查询前缀统一复用六位证券代码市场映射；`920`、`8`、`4` 边界均按北交所处理，不再落入旧的沪深首位分支。
 - 新增 BJ/BSE 成功、错误交易所、错误来源 URL 和删除 BSE 合同条目导致 hash/合同校验失败的合成反例；未读取真实最终测试数据。
+
+## 用户确认后的沪深范围冻结
+
+- 用户明确选择排除北交所后，研究协议新增有序 `supported_markets: [sh, sz]`；ResearchConfig、因子研究设置及协议哈希共同绑定该范围。
+- 六位证券代码市场映射保留沪、深、北通用能力，但 MVP 与完整因子研究的动态股票池在历史计数和流动性排名前即过滤市场；研究、验证和最终信号共享同一路径。
+- final execution 合同改为仅支持沪深；coverage、事件证据和最终目标发现 `4/8/92` 北交所证券立即 fail-closed，执行源查询范围只取最终沪深 symbol 全集。
+- seal、Stage 8 lineage、final lineage 和最终报告均记录 `[sh, sz]`，授权 gate 同时核对研究配置、seal 与 successor lineage，范围漂移不能继续执行。

@@ -11,6 +11,9 @@ periods:
   smoke_data: [2012-01-01, 2015-12-31]
   smoke_analysis: [2014-01-01, 2015-12-31]
 
+research_scope:
+  supported_markets: [sh, sz]
+
 mvp:
   universe_size: 200
   momentum_lookback: 60
