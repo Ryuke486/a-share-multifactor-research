@@ -20,15 +20,15 @@
 
 ## Execution Status（2026-07-16）
 
-- [x] Tasks 1–5 的代码、合成反例和相关回归完成；96项相关测试通过。
+- [x] Tasks 1–5 的代码、合成反例和相关回归完成；最终测试实现追加了公司行动官方覆盖、发布日期边界和冻结血缘反例。
 - [x] 首次2017–2021真实审计定位4条供应商日期异常，并完成官方证据绑定与精确更正实现。
 - [x] 更正后完整开放期缓存复核：10,522条唯一事件、日期倒置0、业务主键重复0、4条官方更正全部生效。
-- [x] 全量验证完成：738项测试通过，ruff通过。
+- [x] 代码实现验证完成：819项测试通过，全量ruff通过；这不是真实最终测试验收。
 - [ ] 在干净Git身份下执行板块7双run并发布不可变successor。
 - [ ] 针对板块7successor生成ready覆盖审计，再执行板块8双run和successor发布。
 - [ ] 取得新的板块9开启授权并生成attempt级2022–2025事件manifest。
 
-真实发布依赖干净Git身份，因此当前按项目约束暂停在用户明确“可以提交了”的提交门前。
+真实板块7/8 successor发布、`CURRENT.json`切换、板块9开启和检查点C仍未执行；上述819项只证明代码路径通过实现验证。
 
 ---
 
@@ -282,7 +282,7 @@ Expected: PASS。
 - Consumes: 旧 `CURRENT.json`、旧release manifest、新费用证据、源契约哈希、覆盖审计哈希和双run复现结果。
 - Produces: `Stage8Supersession`、protocol version 2 seal、successor lineage和新的CURRENT指针。
 
-- [ ] **Step 1: 写旧release不可变与新seal绑定测试**
+- [x] **Step 1: 写旧release不可变与新seal绑定测试**
 
 ```python
 def test_successor_seal_preserves_predecessor_and_binds_execution_contracts(tmp_path: Path) -> None:
@@ -309,12 +309,12 @@ def test_successor_seal_preserves_predecessor_and_binds_execution_contracts(tmp_
     assert sealed["protocol_version"] == 2
 ```
 
-- [ ] **Step 2: 运行测试并确认新接口缺失导致失败**
+- [x] **Step 2: 运行测试并确认新接口缺失导致失败**
 
 Run: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_stage8_successor_seal.py tests/test_sealed_test_protocol.py`
 Expected: FAIL，缺少 `successor_seal` 或新参数。
 
-- [ ] **Step 3: 实现继任血缘和seal v2**
+- [x] **Step 3: 实现继任血缘和seal v2**
 
 ```python
 @dataclass(frozen=True)
@@ -333,11 +333,11 @@ def build_stage8_supersession(...) -> Stage8Supersession:
 
 seal v2必须绑定 `action_source_contract_sha256`、`action_coverage_audit_sha256` 和predecessor身份；旧seal的HMAC签名不能通过新seal验证。
 
-- [ ] **Step 4: 修改发布流程只允许完整successor更新CURRENT**
+- [x] **Step 4: 修改发布流程只允许完整successor更新CURRENT**
 
 发布前依次复验：干净Git身份、双run相同、旧manifest未变、费用全覆盖、覆盖审计ready、全部新哈希存在。失败时删除staging但保留旧CURRENT。
 
-- [ ] **Step 5: 运行继任发布相关测试**
+- [x] **Step 5: 运行继任发布相关测试**
 
 Run: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_stage8_successor_seal.py tests/test_sealed_test_protocol.py tests/test_robustness_pipeline.py`
 Expected: PASS。
@@ -353,7 +353,7 @@ Expected: PASS。
 - Consumes: protocol v2 `FinalTestAuthorization`、Task 2验证过的execution-input manifest、Task 3 target weights和final daily panel。
 - Produces: 阶段六执行器所需的只读输入对象；在实际事件manifest尚未生成时仍保持fail-closed。
 
-- [ ] **Step 1: 写manifest哈希漂移和旧seal拒绝测试**
+- [x] **Step 1: 写manifest哈希漂移和旧seal拒绝测试**
 
 ```python
 def test_backtest_rejects_old_seal_and_tampered_action_manifest_before_execution(...):
@@ -366,20 +366,20 @@ def test_backtest_rejects_old_seal_and_tampered_action_manifest_before_execution
     assert "hash mismatch" in " ".join(result.gate_failures)
 ```
 
-- [ ] **Step 2: 运行测试并确认当前实现只检查文件名而失败**
+- [x] **Step 2: 运行测试并确认当前实现只检查文件名而失败**
 
 Run: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_final_test_backtest.py`
 Expected: FAIL，篡改文件未被当前检查捕获。
 
-- [ ] **Step 3: 用Task 2校验器替换本地弱manifest检查**
+- [x] **Step 3: 用Task 2校验器替换本地弱manifest检查**
 
 `backtest.py` 必须先验证authorization与seal v2，再调用 `verify_execution_input_manifest`；只在哈希、日期、schema和attempt绑定全部通过后解析Parquet并启动撮合。此任务不下载2022–2025事件，也不消费令牌。
 
-- [ ] **Step 4: 更新板块9状态与阻断条件**
+- [x] **Step 4: 更新板块9状态与阻断条件**
 
 计划记录：代码路径已准备；实际Task 4继续等待干净successor release、新用户授权和attempt级事件manifest，不把测试实现标为最终回测已完成。
 
-- [ ] **Step 5: 运行全部相关测试与ruff**
+- [x] **Step 5: 运行全部相关测试与ruff**
 
 Run: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_fee_protocol.py tests/test_final_test_action_source_contract.py tests/test_action_coverage_audit.py tests/test_stage8_successor_seal.py tests/test_final_test_backtest.py tests/test_sealed_test_protocol.py tests/test_execution_rules.py tests/test_validation_corporate_actions.py tests/test_validation_corporate_action_source.py`
 Expected: PASS。
@@ -397,12 +397,12 @@ Expected: `All checks passed!`
 - Consumes: Tasks 1–5实现与测试结果。
 - Produces: 可供用户批准提交的完整差异、测试证据和真实发布命令清单。
 
-- [ ] **Step 1: 运行完整测试**
+- [x] **Step 1: 运行完整测试**
 
 Run: `PYTHONPATH=src .venv/bin/python -m pytest -q`
 Expected: 全部PASS且无collection错误。
 
-- [ ] **Step 2: 运行完整ruff**
+- [x] **Step 2: 运行完整ruff**
 
 Run: `.venv/bin/python -m ruff check src tests`
 Expected: `All checks passed!`
