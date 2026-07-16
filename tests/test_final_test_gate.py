@@ -48,18 +48,22 @@ def _staging(root: Path, *, artifact: str) -> tuple[Path, Path]:
     return datasets, artifacts
 
 
-def _write_token(path: Path, seal: str, code_root: Path) -> None:
+def _write_token(path: Path, seal: str, code_root: Path, robustness: object) -> None:
     approval_id = "user-approved-stage9"
     commit = _git(code_root, "rev-parse", "HEAD")
     tree = _git(code_root, "rev-parse", "HEAD^{tree}")
+    run_id = str(getattr(robustness, "run_id"))
+    manifest_sha = str(getattr(robustness, "manifest_sha256"))
+    lineage_sha = sha256_file(Path(getattr(robustness, "lineage")))
+    identity = f"{seal}|{run_id}|{manifest_sha}|{lineage_sha}"
     signature = hmac.new(
         APPROVAL_KEY,
-        f"{seal}|{approval_id}|stage9-one-shot".encode(),
+        f"{identity}|{approval_id}|stage9-one-shot".encode(),
         hashlib.sha256,
     ).hexdigest()
     execution_signature = hmac.new(
         APPROVAL_KEY,
-        f"{seal}|{approval_id}|{commit}|{tree}|stage9-one-shot-execution".encode(),
+        f"{identity}|{approval_id}|{commit}|{tree}|stage9-one-shot-execution".encode(),
         hashlib.sha256,
     ).hexdigest()
     path.write_text(
@@ -68,6 +72,9 @@ def _write_token(path: Path, seal: str, code_root: Path) -> None:
                 "status": "approved",
                 "approval_id": approval_id,
                 "sealed_protocol_sha256": seal,
+                "robustness_release": run_id,
+                "robustness_manifest_sha256": manifest_sha,
+                "robustness_lineage_sha256": lineage_sha,
                 "signature": signature,
                 "approved_git_commit": commit,
                 "approved_git_tree": tree,
@@ -202,7 +209,7 @@ def _fixture(tmp_path: Path, *, successor: bool = True) -> dict[str, Path]:
             "supported_markets": ["sh", "sz"],
             "status": "ready_for_new_final_test_authorization",
         }
-    publish_release(
+    robustness = publish_release(
         robustness_root,
         run_id="58adad4_stage8_robustness",
         staged_datasets=datasets,
@@ -210,7 +217,7 @@ def _fixture(tmp_path: Path, *, successor: bool = True) -> dict[str, Path]:
         lineage=lineage,
     )
     token = tmp_path / "opening-token.json"
-    _write_token(token, sealed["sealed_protocol_sha256"], code_root)
+    _write_token(token, sealed["sealed_protocol_sha256"], code_root, robustness)
     return {
         "code": code_root,
         "validation": validation_root,
@@ -250,7 +257,10 @@ def _republish_with_sealed_mutation(
         staged_artifacts=staging / "artifacts",
         lineage=lineage,
     )
-    _write_token(paths["token"], sealed["sealed_protocol_sha256"], paths["code"])
+    _write_token(
+        paths["token"], sealed["sealed_protocol_sha256"], paths["code"],
+        resolve_current(paths["robustness"]),
+    )
 
 
 def _authorize(paths: dict[str, Path], **overrides: object):

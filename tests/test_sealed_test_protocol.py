@@ -159,7 +159,21 @@ def test_opening_token_requires_external_secret_and_is_consumed_once(tmp_path: P
     ).hexdigest()
     payload = json.loads(token.read_text())
     payload["sealed_protocol_sha256"] = seal
-    payload["signature"] = signature
+    payload.update({
+        "robustness_release": "stage8-release",
+        "robustness_manifest_sha256": "b" * 64,
+        "robustness_lineage_sha256": "c" * 64,
+    })
+    identity = f"{seal}|stage8-release|{'b' * 64}|{'c' * 64}"
+    payload["signature"] = hmac.new(
+        key, f"{identity}|{approval_id}|stage9-one-shot".encode(), hashlib.sha256
+    ).hexdigest()
+    legacy = dict(payload)
+    legacy.pop("robustness_manifest_sha256")
+    legacy_token = tmp_path / "legacy-token.json"
+    legacy_token.write_text(json.dumps(legacy), encoding="utf-8")
+    with pytest.raises(ValueError, match="lacks frozen Stage-8 identity"):
+        verify_test_opening_token(legacy_token, sealed, approval_key=key)
     token.write_text(json.dumps(payload), encoding="utf-8")
     verified = verify_test_opening_token(
         token,

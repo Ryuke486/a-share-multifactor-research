@@ -133,11 +133,19 @@ def verify_test_opening_token(
         raise ValueError("sealed protocol is not closed")
     approval_id = str(token.get("approval_id", ""))
     seal = recorded_seal
+    identity_fields = (
+        "robustness_release", "robustness_manifest_sha256", "robustness_lineage_sha256"
+    )
+    if any(not token.get(field) for field in identity_fields):
+        raise ValueError("opening token lacks frozen Stage-8 identity")
+    identity = "|".join(
+        (seal, *(str(token[field]) for field in identity_fields))
+    )
     if len(approval_key) < 16:
         raise ValueError("final-test approval key is too short")
     expected = hmac.new(
         approval_key,
-        f"{seal}|{approval_id}|stage9-one-shot".encode(),
+        f"{identity}|{approval_id}|stage9-one-shot".encode(),
         hashlib.sha256,
     ).hexdigest()
     valid = (
@@ -157,6 +165,7 @@ def verify_test_opening_token(
         "status": "consumed",
         "approval_id": approval_id,
         "sealed_protocol_sha256": seal,
+        **{field: token[field] for field in identity_fields},
         "token_sha256": hashlib.sha256(token_path.read_bytes()).hexdigest(),
     }
     try:

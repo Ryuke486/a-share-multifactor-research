@@ -12,6 +12,7 @@ import pytest
 from test_build import _config, _write_pair
 
 from ashare_multifactor.audit.publication import publish_release
+from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.final_test.data_extension import build_final_test_daily_panel
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 from ashare_multifactor.final_test.registry import register_attempt
@@ -31,7 +32,7 @@ def _git(root: Path, *args: str) -> str:
     ).stdout.strip()
 
 
-def _publish_robustness(config, tmp_path: Path, *, run_id: str, seal: str) -> None:
+def _publish_robustness(config, tmp_path: Path, *, run_id: str, seal: str) -> object:
     staging = tmp_path / f"{run_id}-staging"
     datasets = staging / "datasets"
     artifacts = staging / "artifacts"
@@ -42,7 +43,7 @@ def _publish_robustness(config, tmp_path: Path, *, run_id: str, seal: str) -> No
         json.dumps({"sealed_protocol_sha256": seal}) + "\n",
         encoding="utf-8",
     )
-    publish_release(
+    return publish_release(
         config.paths.processed / "robustness",
         run_id=run_id,
         staged_datasets=datasets,
@@ -64,7 +65,7 @@ def _authorized_context(tmp_path: Path, config) -> tuple[Path, FinalTestAuthoriz
     tree = _git(code_root, "rev-parse", "HEAD^{tree}")
 
     seal = "c" * 64
-    _publish_robustness(
+    robustness = _publish_robustness(
         config,
         tmp_path,
         run_id="stage8-release",
@@ -79,6 +80,8 @@ def _authorized_context(tmp_path: Path, config) -> tuple[Path, FinalTestAuthoriz
         sealed_protocol_sha256=seal,
         robustness_release="stage8-release",
         approval_id="approved-stage9",
+        robustness_manifest_sha256=str(getattr(robustness, "manifest_sha256")),
+        robustness_lineage_sha256=sha256_file(Path(getattr(robustness, "lineage"))),
     )
     authorization = FinalTestAuthorization(
         attempt_id="attempt-001",
@@ -89,6 +92,8 @@ def _authorized_context(tmp_path: Path, config) -> tuple[Path, FinalTestAuthoriz
         sealed_protocol_sha256=seal,
         robustness_release="stage8-release",
         test_period=(FINAL_START, FINAL_END),
+        robustness_manifest_sha256=str(getattr(robustness, "manifest_sha256")),
+        robustness_lineage_sha256=sha256_file(Path(getattr(robustness, "lineage"))),
     )
     return code_root, authorization
 

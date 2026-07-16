@@ -37,9 +37,39 @@ from ashare_multifactor.final_test.registry import (
 from ashare_multifactor.final_test.release_outputs import (
     _historical_backtest_root,
     _resolve_historical_releases,
+    _resolve_authorized_robustness,
     _slice_backtest_period,
 )
 from ashare_multifactor.final_test.signals import FinalTestSignals
+
+
+@pytest.mark.parametrize("changed", ["manifest.json", "lineage.json"])
+def test_authorized_stage8_identity_rejects_post_authorization_change(
+    tmp_path: Path, changed: str
+) -> None:
+    datasets = tmp_path / "datasets"
+    artifacts = tmp_path / "artifacts"
+    datasets.mkdir()
+    artifacts.mkdir()
+    (artifacts / "sealed_test_protocol.json").write_text("{}")
+    release = publish_release(
+        tmp_path / "processed/robustness", run_id="stage8-successor",
+        staged_datasets=datasets, staged_artifacts=artifacts,
+        lineage={"stage": "robustness"},
+    )
+    authorization = _authorization()
+    authorization = type(authorization)(
+        **{
+            **authorization.__dict__,
+            "robustness_manifest_sha256": release.manifest_sha256,
+            "robustness_lineage_sha256": hashlib.sha256(
+                release.lineage.read_bytes()
+            ).hexdigest(),
+        }
+    )
+    (release.root / changed).write_text("changed", encoding="utf-8")
+    with pytest.raises(ValueError, match="authorized Stage-8"):
+        _resolve_authorized_robustness(tmp_path, authorization)
 
 
 def _authorization(attempt_id: str = "attempt-001") -> FinalTestAuthorization:
@@ -676,6 +706,8 @@ def test_publishing_recovery_writes_prepared_then_completed(
         "git_tree": "b" * 40,
         "sealed_protocol_sha256": "c" * 64,
         "robustness_release": "stage8-release",
+        "robustness_manifest_sha256": "e" * 64,
+        "robustness_lineage_sha256": "f" * 64,
         "status": "publishing",
         "data_manifest": {"sha256": "d" * 64},
     }
@@ -725,6 +757,8 @@ def test_prepared_recovery_rejects_mutated_publishing_claim(
         "git_tree": "b" * 40,
         "sealed_protocol_sha256": "c" * 64,
         "robustness_release": "stage8-release",
+        "robustness_manifest_sha256": "e" * 64,
+        "robustness_lineage_sha256": "f" * 64,
         "status": "publishing",
         "data_manifest": {"sha256": "d" * 64},
     }

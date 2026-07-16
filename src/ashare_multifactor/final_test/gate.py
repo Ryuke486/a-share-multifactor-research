@@ -40,6 +40,8 @@ class FinalTestAuthorization:
     sealed_protocol_sha256: str
     robustness_release: str
     test_period: tuple[date, date]
+    robustness_manifest_sha256: str = ""
+    robustness_lineage_sha256: str = ""
 
 
 def authorize_final_test(
@@ -77,6 +79,9 @@ def authorize_final_test(
         approval_key=approval_key,
         current_commit=current_commit,
         current_tree=current_tree,
+        robustness_release=robustness.run_id,
+        robustness_manifest_sha256=robustness.manifest_sha256,
+        robustness_lineage_sha256=sha256_file(robustness.lineage),
     )
     actual_attempt_id = attempt_id or uuid.uuid4().hex
     record = register_attempt(
@@ -88,6 +93,8 @@ def authorize_final_test(
         sealed_protocol_sha256=seal,
         robustness_release=robustness.run_id,
         approval_id=str(token["approval_id"]),
+        robustness_manifest_sha256=robustness.manifest_sha256,
+        robustness_lineage_sha256=sha256_file(robustness.lineage),
     )
     token_snapshot = save_token_snapshot(
         registry_root,
@@ -109,6 +116,8 @@ def authorize_final_test(
         sealed_protocol_sha256=seal,
         robustness_release=robustness.run_id,
         test_period=(requested_start, requested_end),
+        robustness_manifest_sha256=robustness.manifest_sha256,
+        robustness_lineage_sha256=sha256_file(robustness.lineage),
     )
 
 
@@ -251,6 +260,9 @@ def _load_execution_token(
     approval_key: bytes,
     current_commit: str,
     current_tree: str,
+    robustness_release: str,
+    robustness_manifest_sha256: str,
+    robustness_lineage_sha256: str,
 ) -> tuple[dict[str, object], bytes, str]:
     try:
         token_bytes = token_path.read_bytes()
@@ -260,14 +272,21 @@ def _load_execution_token(
     if not isinstance(token, dict) or len(approval_key) < 16:
         raise ValueError("invalid final-test opening token")
     approval_id = str(token.get("approval_id", ""))
+    identity = (
+        f"{sealed_protocol_sha256}|{robustness_release}|"
+        f"{robustness_manifest_sha256}|{robustness_lineage_sha256}"
+    )
     expected_opening = hmac.new(
         approval_key,
-        f"{sealed_protocol_sha256}|{approval_id}|stage9-one-shot".encode(),
+        f"{identity}|{approval_id}|stage9-one-shot".encode(),
         hashlib.sha256,
     ).hexdigest()
     opening_valid = (
         token.get("status") == "approved"
         and token.get("sealed_protocol_sha256") == sealed_protocol_sha256
+        and token.get("robustness_release") == robustness_release
+        and token.get("robustness_manifest_sha256") == robustness_manifest_sha256
+        and token.get("robustness_lineage_sha256") == robustness_lineage_sha256
         and bool(approval_id)
         and hmac.compare_digest(str(token.get("signature", "")), expected_opening)
     )
@@ -281,7 +300,7 @@ def _load_execution_token(
     expected_execution = hmac.new(
         approval_key,
         (
-            f"{sealed_protocol_sha256}|{approval_id}|{current_commit}|{current_tree}"
+            f"{identity}|{approval_id}|{current_commit}|{current_tree}"
             "|stage9-one-shot-execution"
         ).encode(),
         hashlib.sha256,

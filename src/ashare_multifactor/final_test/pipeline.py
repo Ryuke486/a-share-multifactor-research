@@ -58,6 +58,8 @@ _RECOVERY_IDENTITY_FIELDS = (
     "git_tree",
     "sealed_protocol_sha256",
     "robustness_release",
+    "robustness_manifest_sha256",
+    "robustness_lineage_sha256",
 )
 
 
@@ -324,6 +326,8 @@ def build_or_reuse_final_test_daily_panel(
             "git_commit": authorization.git_commit,
             "git_tree": authorization.git_tree,
             "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+            "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+            "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
             "robustness_release": authorization.robustness_release,
             "data_manifest_sha256": resolution.data_manifest_sha256,
             "status": "reused_verified_immutable_panel",
@@ -731,6 +735,9 @@ def _write_attempt_manifest(
             "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
             "git_commit": authorization.git_commit,
             "git_tree": authorization.git_tree,
+            "robustness_release": authorization.robustness_release,
+            "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+            "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
             "files": records,
         },
     )

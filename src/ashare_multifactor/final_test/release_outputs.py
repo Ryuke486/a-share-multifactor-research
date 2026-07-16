@@ -244,11 +244,15 @@ def _resolve_authorized_robustness(
     """Resolve the authorized Stage-8 run without consulting CURRENT.json."""
     base = data_root / "processed/robustness"
     root = base / "releases" / authorization.robustness_release
+    if sha256_file(root / "manifest.json") != authorization.robustness_manifest_sha256:
+        raise ValueError("authorized Stage-8 manifest changed")
+    if sha256_file(root / "lineage.json") != authorization.robustness_lineage_sha256:
+        raise ValueError("authorized Stage-8 lineage changed")
     robustness = _resolve_bound_release(
         base,
         {
             "run_id": authorization.robustness_release,
-            "manifest_sha256": sha256_file(root / "manifest.json"),
+            "manifest_sha256": authorization.robustness_manifest_sha256,
         },
     )
     sealed = json.loads(

@@ -30,6 +30,8 @@
 
 真实板块7/8 successor发布、`CURRENT.json`切换、板块9开启和检查点C仍未执行；上述819项只证明代码路径通过实现验证。
 
+Stage8 manifest不写回同一release内的seal：seal本身是manifest的被哈希文件，写入最终manifest哈希会形成密码学自引用。非循环契约由用户签发的opening token HMAC同时覆盖Stage8 run ID、manifest SHA-256、lineage SHA-256和seal SHA-256，并在ledger、authorization和attempt中逐层复制复验。
+
 ---
 
 ### Task 1: 完整费用区间与制度切换验证

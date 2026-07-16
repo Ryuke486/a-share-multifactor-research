@@ -89,6 +89,8 @@ def register_attempt(
     approval_id: str,
     git_tree: str,
     token_sha256: str,
+    robustness_manifest_sha256: str,
+    robustness_lineage_sha256: str,
 ) -> dict[str, Any]:
     """Create one immutable attempt record; existing records are never rewritten."""
     validate_publication_id(attempt_id)
@@ -102,6 +104,8 @@ def register_attempt(
         "token_sha256": token_sha256,
         "sealed_protocol_sha256": sealed_protocol_sha256,
         "robustness_release": robustness_release,
+        "robustness_manifest_sha256": robustness_manifest_sha256,
+        "robustness_lineage_sha256": robustness_lineage_sha256,
         "approval_id": approval_id,
         "status": "registered",
         "authoritative": False,
