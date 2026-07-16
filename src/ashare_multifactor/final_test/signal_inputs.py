@@ -69,6 +69,11 @@ def resolve_final_test_signal_inputs(
     )
     _assert_pretest(validation_rank_ic, "packaged validation Rank IC")
     _assert_pretest(validation_returns, "packaged validation forward returns")
+    assert_supported_markets(
+        validation_returns,
+        config.supported_markets,
+        label="final signal handoff Stage-7 forward returns",
+    )
     previous_targets = pl.read_parquet(
         _release_file(
             validation,
@@ -92,6 +97,11 @@ def resolve_final_test_signal_inputs(
     )
     historical_returns = pl.read_parquet(
         _selected_stage_four_file(stage_four, factor_root, "forward_returns.parquet")
+    )
+    assert_supported_markets(
+        historical_returns,
+        config.supported_markets,
+        label="final signal handoff Stage-4 forward returns",
     )
     readiness_path = _selected_stage_four_file(
         stage_four, factor_root, "data_readiness.json"

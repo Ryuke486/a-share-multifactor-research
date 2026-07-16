@@ -79,6 +79,11 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         analysis_end=validation.analysis_end,
     )
     extension = build_validation_factor_extension(daily, readiness, factor_settings)
+    assert_supported_markets(
+        extension.forward_returns,
+        config.supported_markets,
+        label="Stage-7 generated forward returns",
+    )
     extension.features.write_parquet(datasets / "factor_features.parquet")
     extension.forward_returns.write_parquet(datasets / "forward_returns.parquet")
     extension.panel.write_parquet(datasets / "factor_panel.parquet")
@@ -99,6 +104,11 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
 
     research = data_root / "processed/factor_research"
     historical_returns = pl.read_parquet(research / "forward_returns.parquet")
+    assert_supported_markets(
+        historical_returns,
+        config.supported_markets,
+        label="Stage-7 handoff Stage-4 forward returns",
+    )
     all_returns = pl.concat(
         (historical_returns, extension.forward_returns), how="vertical_relaxed"
     )

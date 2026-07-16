@@ -375,6 +375,7 @@ def _assert_validation_market_scope(
 ) -> None:
     inputs = validation.datasets / "inputs"
     frames = (
+        ("forward_returns.parquet", ("symbol",)),
         ("execution_panel.parquet", ("symbol",)),
         ("corporate_actions.parquet", ("symbol",)),
         ("security_events.parquet", ("source_symbol", "target_symbol")),

@@ -1,15 +1,41 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import polars as pl
 import pytest
 
 from ashare_multifactor.audit.publication import publish_release
 from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.final_test.data_inventory import write_json
 from ashare_multifactor.robustness.pipeline import (
+    _assert_validation_market_scope,
     _successor_release_contract,
     verify_reproducible_source,
 )
+
+
+def test_stage8_publish_rejects_bj_in_validation_forward_returns(
+    tmp_path: Path,
+) -> None:
+    inputs = tmp_path / "datasets/inputs"
+    inputs.mkdir(parents=True)
+    pl.DataFrame({"symbol": ["000001"]}).write_parquet(inputs / "execution_panel.parquet")
+    pl.DataFrame({"symbol": ["600000"]}).write_parquet(inputs / "corporate_actions.parquet")
+    pl.DataFrame(
+        {"source_symbol": ["000001"], "target_symbol": [None]}
+    ).write_parquet(inputs / "security_events.parquet")
+    pl.DataFrame({"symbol": ["000001"]}).write_parquet(
+        inputs / "continuous_targets_main.parquet"
+    )
+    pl.DataFrame({"symbol": ["920001"]}).write_parquet(
+        inputs / "forward_returns.parquet"
+    )
+
+    with pytest.raises(ValueError, match="forward_returns.*920001"):
+        _assert_validation_market_scope(
+            SimpleNamespace(datasets=tmp_path / "datasets"), ("sh", "sz")
+        )
 
 
 def test_publication_rechecks_source_files_against_reproducibility(tmp_path: Path) -> None:

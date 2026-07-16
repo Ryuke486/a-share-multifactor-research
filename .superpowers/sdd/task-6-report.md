@@ -14,8 +14,8 @@
 - RED 1：新测试因缺失 `final_test.pipeline` 失败。
 - RED 2：执行源日期归一化接口缺失，测试导入失败。
 - RED 3：删除 outcome 后仍应由 authoritative `CURRENT.json` 锁定，以及失败 attempt 缺少 manifest，两项测试失败。
-- GREEN：本轮交接审计相关测试 71 项通过。
-- 最终全量结果：`pytest -q` 807 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
+- GREEN：本轮 forward-return 交接相关测试 20 项通过。
+- 最终全量结果：`pytest -q` 808 项通过；`ruff check src tests` 通过；`git diff --check` 通过。
 
 ## 边界与关注点
 
@@ -68,3 +68,4 @@
 - 新增通用 `assert_supported_markets` 内容断言；与股票池过滤不同，已发布或上游文件发现范围外证券会带交接 label、字段和证券代码立即失败，不会静默删除或改写旧 release。
 - Stage 7 在读取 Stage 5 targets、Stage 6 execution/actions/events，以及发布新 targets、continuous targets、execution/actions/events 和含 symbol 的连续账本前均执行断言。
 - Stage 8 执行实验及发布/seal 消费 validation release inputs 时重复检查；final signal 与 backtest handoff 再检查 Stage 7 daily、targets、execution、actions 和 events。
+- 所有含 `symbol` 的 forward returns 也纳入同一审计：Stage 7 生成/发布前、Stage 8 publish/seal 前，以及 final signal 读取 Stage 7 与 Stage 4 历史收益标签后均拒绝北交所泄漏。
