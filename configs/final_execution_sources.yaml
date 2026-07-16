@@ -1,0 +1,13 @@
+period: [2022-01-01, 2025-12-31]
+structured_source:
+  provider: baostock_query_dividend_data
+  query_year_type: operate
+  query_years: [2022, 2023, 2024, 2025]
+official_evidence_url_prefixes:
+  - https://static.cninfo.com.cn/finalpage/
+  - https://disc.static.szse.cn/download/disc/
+  - https://www.sse.com.cn/disclosure/listedinfo/announcement/
+  - https://www.sse.com.cn/assortment/stock/list/info/profit/
+required_execution_files:
+  - corporate_actions.parquet
+  - security_events.parquet

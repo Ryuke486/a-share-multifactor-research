@@ -20,6 +20,9 @@ def seal_test_protocol(
     report_template_sha256: str,
     opening_ledger_root: Path,
     gate: dict[str, object],
+    action_source_contract_sha256: str | None = None,
+    action_coverage_audit_sha256: str | None = None,
+    predecessor: dict[str, object] | None = None,
 ) -> dict[str, Any]:
     """Write the complete Stage-9 contract without opening or scanning test data."""
     if code_identity.get("dirty") is not False:
@@ -28,8 +31,29 @@ def seal_test_protocol(
         raise ValueError("robustness gate does not allow test protocol sealing")
     if validation_pointer.get("run_id") != protocol.validation_release:
         raise ValueError("validation release differs from the frozen robustness protocol")
+    successor_values = (
+        action_source_contract_sha256,
+        action_coverage_audit_sha256,
+        predecessor,
+    )
+    is_successor = any(value is not None for value in successor_values)
+    if is_successor:
+        if any(value is None for value in successor_values):
+            raise ValueError("Stage-8 successor execution contract is incomplete")
+        if not _valid_sha256(str(action_source_contract_sha256)) or not _valid_sha256(
+            str(action_coverage_audit_sha256)
+        ):
+            raise ValueError("Stage-8 successor execution contract hash is invalid")
+        if (
+            not isinstance(predecessor, dict)
+            or predecessor.get("status") != "superseded_for_final_execution"
+            or not predecessor.get("run_id")
+            or not _valid_sha256(str(predecessor.get("manifest_sha256", "")))
+            or not predecessor.get("reason")
+        ):
+            raise ValueError("Stage-8 successor predecessor identity is invalid")
     payload: dict[str, Any] = {
-        "protocol_version": 1,
+        "protocol_version": 2 if is_successor else 1,
         "status": "sealed",
         "robustness_protocol_sha256": protocol.protocol_sha256,
         "code": code_identity,
@@ -53,6 +77,14 @@ def seal_test_protocol(
         "opening_ledger_root": str(opening_ledger_root.resolve()),
         "robustness_gate": gate,
     }
+    if is_successor:
+        payload.update(
+            {
+                "action_source_contract_sha256": action_source_contract_sha256,
+                "action_coverage_audit_sha256": action_coverage_audit_sha256,
+                "predecessor": predecessor,
+            }
+        )
     canonical = json.dumps(
         payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
     ).encode()
@@ -63,6 +95,10 @@ def seal_test_protocol(
         encoding="utf-8",
     )
     return payload
+
+
+def _valid_sha256(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
 def verify_test_opening_token(

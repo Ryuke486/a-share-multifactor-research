@@ -113,6 +113,58 @@ def test_validation_actions_fill_missing_payment_date_only_from_official_evidenc
     assert actions.item(0, "source").endswith("+cninfo_payment_date")
 
 
+def test_validation_actions_apply_narrow_official_date_correction(
+    tmp_path: Path,
+) -> None:
+    raw = tmp_path / "baostock_dividends.parquet"
+    pl.DataFrame(
+        {
+            "code": ["sz.000042"],
+            "query_year": [2018],
+            "query_year_type": ["operate"],
+            "dividPlanAnnounceDate": ["2018-04-27"],
+            "dividRegistDate": ["2018-06-21"],
+            "dividOperateDate": ["2018-06-28"],
+            "dividPayDate": ["2018-06-22"],
+            "dividStockMarketDate": [""],
+            "dividCashPsBeforeTax": ["0.2"],
+            "dividStocksPs": ["0"],
+            "dividReserveToStockPs": ["0"],
+        }
+    ).write_parquet(raw)
+    research = normalize_corporate_actions(
+        pl.DataFrame(
+            schema={
+                "symbol": pl.String,
+                "effective_date": pl.Date,
+                "cash_per_share": pl.Float64,
+                "share_ratio": pl.Float64,
+                "source": pl.String,
+            }
+        )
+    )
+    corrections = pl.DataFrame(
+        {
+            "symbol": ["000042"],
+            "source_ex_date": [date(2018, 6, 28)],
+            "corrected_ex_date": [date(2018, 6, 22)],
+            "payment_date": [date(2018, 6, 22)],
+            "source_url": ["https://static.cninfo.com.cn/notice.pdf"],
+        }
+    )
+
+    actions = load_validation_corporate_actions(
+        research,
+        raw,
+        symbols=["000042"],
+        action_corrections=corrections,
+    )
+
+    assert actions.item(0, "ex_date") == date(2018, 6, 22)
+    assert actions.item(0, "effective_date") == date(2018, 6, 22)
+    assert actions.item(0, "source").endswith("+cninfo_action_correction")
+
+
 def test_validation_action_query_scope_rejects_unsealed_requests() -> None:
     assert_baostock_query_scope(2017, "operate")
     assert_baostock_query_scope(2021, "operate")

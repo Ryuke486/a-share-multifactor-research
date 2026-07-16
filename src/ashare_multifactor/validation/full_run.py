@@ -26,6 +26,7 @@ from ashare_multifactor.validation.combination_extension import (
     build_validation_combinations,
 )
 from ashare_multifactor.validation.corporate_action_source import (
+    load_official_action_corrections,
     load_official_payment_date_overrides,
     load_official_security_events,
 )
@@ -228,12 +229,17 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         code_root / "configs/validation_corporate_action_evidence.csv",
         official_cache,
     )
+    corrections = load_official_action_corrections(
+        code_root / "configs/validation_corporate_action_corrections.csv",
+        code_root / "configs/evidence/validation_action_corrections",
+    )
     actions = load_validation_corporate_actions(
         research_actions,
         source_cache
         / "baostock_dividend/baostock_dividends_execution_union.parquet",
         symbols=symbols,
         payment_date_overrides=payments,
+        action_corrections=corrections,
     )
     actions.write_parquet(datasets / "corporate_actions.parquet")
     events.write_parquet(datasets / "security_events.parquet")

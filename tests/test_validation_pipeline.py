@@ -13,9 +13,11 @@ from ashare_multifactor.validation.pipeline import (
     compare_validation_outputs,
     finalize_validation_run,
     resolve_validation_data_root,
+    resolve_validation_predecessor,
     run_validation_release,
     validate_run_id,
 )
+from ashare_multifactor.audit.publication import publish_release
 from ashare_multifactor.validation.report import render_validation_report
 
 
@@ -130,6 +132,34 @@ def test_validation_publication_is_blocked_until_full_pipeline_is_reproducible(
 
     with pytest.raises(ValueError, match="full validation pipeline reproducibility"):
         run_validation_release(tmp_path, publish=True)
+
+
+def test_validation_successor_binds_verified_current_release(tmp_path: Path) -> None:
+    processed = tmp_path / "processed/validation_evaluation"
+    datasets = tmp_path / "staged/datasets"
+    artifacts = tmp_path / "staged/artifacts"
+    datasets.mkdir(parents=True)
+    artifacts.mkdir(parents=True)
+    (datasets / "data.txt").write_text("immutable\n", encoding="utf-8")
+    published = publish_release(
+        processed,
+        run_id="stage7_original",
+        staged_datasets=datasets,
+        staged_artifacts=artifacts,
+        lineage={"stage": "validation_evaluation"},
+    )
+
+    predecessor = resolve_validation_predecessor(tmp_path)
+
+    assert predecessor == {
+        "run_id": "stage7_original",
+        "manifest_sha256": published.manifest_sha256,
+        "lineage_sha256": predecessor["lineage_sha256"],
+    }
+
+    (published.root / "datasets/data.txt").write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="mismatch"):
+        resolve_validation_predecessor(tmp_path)
 
 
 def test_finalize_validation_run_records_every_full_pipeline_core_file(

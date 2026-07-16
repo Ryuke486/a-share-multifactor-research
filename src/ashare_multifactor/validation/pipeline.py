@@ -133,6 +133,21 @@ def resolve_validation_data_root(root: Path) -> Path:
     raise FileNotFoundError("cannot locate validation daily-panel data")
 
 
+def resolve_validation_predecessor(
+    data_root: Path,
+) -> dict[str, str] | None:
+    """Return the verified Stage-7 release that a successor will supersede."""
+    root = data_root / "processed/validation_evaluation"
+    if not (root / "CURRENT.json").is_file():
+        return None
+    current = resolve_current(root)
+    return {
+        "run_id": current.run_id,
+        "manifest_sha256": current.manifest_sha256,
+        "lineage_sha256": sha256_file(current.lineage),
+    }
+
+
 def assert_validation_outputs_sealed(root: Path) -> None:
     """Inspect actual Parquet date columns before any validation publication."""
     for path in sorted(root.rglob("*.parquet")):
@@ -400,6 +415,9 @@ def _validation_input_identity(
         "validation_corporate_action_evidence": (
             code_root / "configs/validation_corporate_action_evidence.csv"
         ),
+        "validation_corporate_action_corrections": (
+            code_root / "configs/validation_corporate_action_corrections.csv"
+        ),
         "validation_security_events": (
             code_root / "configs/validation_security_events.csv"
         ),
@@ -411,6 +429,11 @@ def _validation_input_identity(
             "baostock_dividends_execution_union.parquet"
         ),
     }
+    correction_evidence = sorted(
+        (code_root / "configs/evidence/validation_action_corrections").glob(
+            "*.json"
+        )
+    )
     identity = {
         name: {
             "sha256": sha256_file(path),
@@ -418,6 +441,14 @@ def _validation_input_identity(
         }
         for name, path in paths.items()
     }
+    identity["validation_corporate_action_correction_evidence"] = [
+        {
+            "path": path.relative_to(code_root).as_posix(),
+            "sha256": sha256_file(path),
+            "size": path.stat().st_size,
+        }
+        for path in correction_evidence
+    ]
     identity["stage_four_files"] = [
         record.to_dict() for record in stage_four.consumed_files
     ] + readiness_records
@@ -481,11 +512,13 @@ def stage_validation_release(
         shutil.rmtree(staged, ignore_errors=True)
         raise ValueError("validation inputs changed during staging")
 
+    predecessor = resolve_validation_predecessor(data_root)
     lineage = _validation_lineage(
         code_root,
         data_root,
         settings.candidates,
         reproducibility=reproducibility,
+        predecessor=predecessor,
     )
     (staged / "lineage.json").write_text(
         json.dumps(lineage, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
@@ -533,6 +566,8 @@ def run_validation_release(
     if _validation_input_identity(code_root, data_root) != reproducibility["inputs"]:
         raise ValueError("validation inputs changed during validation publication")
     lineage = json.loads((staged / "lineage.json").read_text(encoding="utf-8"))
+    if resolve_validation_predecessor(data_root) != lineage.get("supersedes"):
+        raise ValueError("validation predecessor changed during publication")
     return publish_release(
         data_root / "processed/validation_evaluation",
         run_id=staged.name,
@@ -589,6 +624,7 @@ def _validation_lineage(
     candidates: tuple[str, ...],
     *,
     reproducibility: dict[str, object],
+    predecessor: dict[str, str] | None,
 ) -> dict[str, object]:
     source_cache = data_root / "artifacts/validation_evaluation/source_cache"
     stage_five = resolve_current(data_root / "processed/factor_combination")
@@ -611,12 +647,18 @@ def _validation_lineage(
         source_cache
         / "baostock_dividend/baostock_dividends_execution_union.metadata.json",
         code_root / "configs/validation_corporate_action_evidence.csv",
+        code_root / "configs/validation_corporate_action_corrections.csv",
         code_root / "configs/validation_security_events.csv",
+        *sorted(
+            (code_root / "configs/evidence/validation_action_corrections").glob(
+                "*.json"
+            )
+        ),
         source_cache / "cninfo_official_pdfs/000819_1210269787.pdf",
         source_cache / "cninfo_official_pdfs/000916_1204242424.pdf",
         source_cache / "cninfo_official_pdfs/000979_c0f86b35.pdf",
     )
-    return {
+    lineage = {
         "created_at": datetime.now(timezone.utc).isoformat(),
         "period": ["2017-01-01", "2021-12-31"],
         "sealed_final_test_start": "2022-01-01",
@@ -643,3 +685,10 @@ def _validation_lineage(
         "code": code_identity(code_root),
         "reproducibility": reproducibility,
     }
+    if predecessor is not None:
+        lineage["supersedes"] = predecessor
+        lineage["correction_reason"] = (
+            "Official issuer evidence corrects four validation-period vendor "
+            "corporate-action date anomalies."
+        )
+    return lineage

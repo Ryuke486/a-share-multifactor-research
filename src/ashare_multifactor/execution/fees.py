@@ -107,7 +107,10 @@ def _validate_contiguous(rules: list[_DatedRate], start: date, end: date) -> Non
 
 def load_market_rules(path: Path) -> FeeSchedule:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    period_start, period_end = map(_parse_date, raw["research_period"])
+    period_start, period_end = map(
+        _parse_date,
+        raw.get("execution_period", raw["research_period"]),
+    )
     stamp = [
         _DatedRate(
             _parse_date(item["start"]),
@@ -154,4 +157,3 @@ def load_market_rules(path: Path) -> FeeSchedule:
         float(assumptions["commission_rate"]),
         float(assumptions["minimum_commission"]),
     )
-

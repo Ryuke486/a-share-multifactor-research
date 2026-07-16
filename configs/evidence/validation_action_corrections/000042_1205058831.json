@@ -1,0 +1,13 @@
+{
+  "captured_at": "2026-07-16",
+  "document_title": "中洲控股：2017年度权益分派实施公告",
+  "source_url": "https://static.cninfo.com.cn/finalpage/2018-06-14/1205058831.PDF",
+  "symbol": "000042",
+  "facts": {
+    "record_date": "2018-06-21",
+    "ex_date": "2018-06-22",
+    "payment_date": "2018-06-22",
+    "cash_per_share": 0.2
+  },
+  "purpose": "Correct one duplicated BaoStock row whose ex-date is 2018-06-28; retain the already-correct 2018-06-22 row through business-key deduplication."
+}

@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-07-16",
+  "company_code": "600276",
+  "company_name": "江苏恒瑞医药股份有限公司",
+  "source": "上海证券交易所利润分配页面",
+  "source_url": "https://www.sse.com.cn/assortment/stock/list/info/profit/index.shtml?COMPANY_CODE=600276",
+  "cash_dividends": [
+    {"record_date": "2021-06-09", "ex_date": "2021-06-10", "cash_per_share": 0.2},
+    {"record_date": "2020-05-22", "ex_date": "2020-05-25", "cash_per_share": 0.23},
+    {"record_date": "2019-03-27", "ex_date": "2019-03-28", "cash_per_share": 0.22},
+    {"record_date": "2018-05-29", "ex_date": "2018-05-30", "cash_per_share": 0.13},
+    {"record_date": "2017-05-26", "ex_date": "2017-05-31", "cash_per_share": 0.135}
+  ],
+  "share_distributions": [
+    {"record_date": "2021-06-09", "ex_date": "2021-06-10", "listing_date": "2021-06-11", "shares_per_ten": 2.0},
+    {"record_date": "2020-05-22", "ex_date": "2020-05-25", "listing_date": "2020-05-26", "shares_per_ten": 2.0},
+    {"record_date": "2019-03-27", "ex_date": "2019-03-28", "listing_date": "2019-03-29", "shares_per_ten": 2.0},
+    {"record_date": "2018-05-29", "ex_date": "2018-05-30", "listing_date": "2018-05-31", "shares_per_ten": 3.0},
+    {"record_date": "2017-05-26", "ex_date": "2017-05-31", "listing_date": "2017-06-01", "shares_per_ten": 2.0}
+  ]
+}

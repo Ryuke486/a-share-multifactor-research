@@ -37,6 +37,7 @@ def load_validation_corporate_actions(
     *,
     symbols: list[str],
     payment_date_overrides: pl.DataFrame | None = None,
+    action_corrections: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Extend audited research actions using source-bounded BaoStock rows."""
     raw = pl.read_parquet(raw_path)
@@ -44,6 +45,7 @@ def load_validation_corporate_actions(
         raw,
         set(symbols),
         payment_date_overrides=payment_date_overrides,
+        action_corrections=action_corrections,
     )
     schema = {
         "symbol": pl.String,
@@ -80,6 +82,7 @@ def _normalize_baostock_actions(
     symbols: set[str],
     *,
     payment_date_overrides: pl.DataFrame | None = None,
+    action_corrections: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     required = {
         "code",
@@ -130,6 +133,7 @@ def _normalize_baostock_actions(
             pl.col(column) >= date(2022, 1, 1)
         ).height:
             raise ValueError(f"sealed final test date found in BaoStock cache: {column}")
+    parsed = _apply_official_action_corrections(parsed, action_corrections)
     parsed = _apply_payment_date_overrides(parsed, payment_date_overrides)
     if parsed.filter(
         pl.col("dividOperateDate").is_null()
@@ -149,7 +153,9 @@ def _normalize_baostock_actions(
                 pl.col("dividPayDate").alias("effective_date"),
                 "cash_per_share",
                 pl.lit(0.0).alias("share_ratio"),
-                pl.when(pl.col("official_payment_date").is_not_null())
+                pl.when(pl.col("official_action_correction"))
+                .then(pl.lit("baostock_dividend_operate_year+cninfo_action_correction"))
+                .when(pl.col("official_payment_date").is_not_null())
                 .then(pl.lit("baostock_dividend_operate_year+cninfo_payment_date"))
                 .otherwise(pl.lit("baostock_dividend_operate_year"))
                 .alias("source"),
@@ -168,6 +174,50 @@ def _normalize_baostock_actions(
         how="vertical_relaxed",
     )
     return rows.sort("effective_date", "symbol")
+
+
+def _apply_official_action_corrections(
+    parsed: pl.DataFrame,
+    corrections: pl.DataFrame | None,
+) -> pl.DataFrame:
+    if corrections is None:
+        return parsed.with_columns(pl.lit(False).alias("official_action_correction"))
+    required = {
+        "symbol",
+        "source_ex_date",
+        "corrected_ex_date",
+        "payment_date",
+        "source_url",
+    }
+    missing = sorted(required - set(corrections.columns))
+    if missing:
+        raise ValueError(f"action-correction fields missing: {missing}")
+    key = ["symbol", "source_ex_date"]
+    if corrections.select(pl.struct(*key).is_duplicated().any()).item():
+        raise ValueError("duplicate action-correction key")
+    source_keys = parsed.select(
+        "symbol", pl.col("dividOperateDate").alias("source_ex_date")
+    )
+    if corrections.join(source_keys, on=key, how="anti").height:
+        raise ValueError("official action correction does not match BaoStock row")
+    joined = parsed.join(
+        corrections.select(
+            "symbol",
+            "source_ex_date",
+            "corrected_ex_date",
+            pl.col("payment_date").alias("corrected_payment_date"),
+        ),
+        left_on=["symbol", "dividOperateDate"],
+        right_on=["symbol", "source_ex_date"],
+        how="left",
+    )
+    return joined.with_columns(
+        pl.col("corrected_ex_date").is_not_null().alias("official_action_correction"),
+        pl.coalesce("corrected_ex_date", "dividOperateDate").alias(
+            "dividOperateDate"
+        ),
+        pl.coalesce("corrected_payment_date", "dividPayDate").alias("dividPayDate"),
+    ).drop("corrected_ex_date", "corrected_payment_date")
 
 
 def _apply_payment_date_overrides(

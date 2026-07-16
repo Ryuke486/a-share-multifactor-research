@@ -17,6 +17,7 @@ from ashare_multifactor.combination.panel import build_rolling_composite_scores
 from ashare_multifactor.combination.rolling_ic import rolling_ic_weights
 from ashare_multifactor.config import load_config
 from ashare_multifactor.execution.broker import BacktestSettings
+from ashare_multifactor.execution.fee_protocol import validate_fee_protocol
 from ashare_multifactor.execution.fees import load_market_rules
 from ashare_multifactor.robustness.execution_sensitivity import (
     build_execution_scenarios,
@@ -47,6 +48,12 @@ from ashare_multifactor.robustness.report import render_robustness_report
 from ashare_multifactor.robustness.summary import (
     assess_test_protocol_gate,
     build_robustness_long_table,
+)
+from ashare_multifactor.robustness.successor_seal import (
+    Stage8Supersession,
+    build_stage8_successor_lineage,
+    build_stage8_supersession,
+    verify_action_coverage_audit,
 )
 from ashare_multifactor.robustness.test_protocol import seal_test_protocol
 from ashare_multifactor.validation.backtest_extension import run_validation_backtest
@@ -242,10 +249,16 @@ def publish_robustness_release(
     code_root: Path,
     *,
     run_id: str,
+    successor_audit_root: Path | None = None,
 ) -> object:
     """Publish only two-run-identical output from one clean Git identity."""
     code_root = code_root.resolve()
     data_root = resolve_robustness_data_root(code_root)
+    successor_contract = (
+        _successor_release_contract(code_root, data_root, successor_audit_root)
+        if successor_audit_root is not None
+        else None
+    )
     identity = code_identity(code_root)
     if identity.get("dirty") is not False:
         raise ValueError("robustness release requires a clean Git identity")
@@ -282,6 +295,8 @@ def publish_robustness_release(
     shutil.copy2(source / "robustness_results.parquet", datasets)
     shutil.copy2(source / "report.md", artifacts)
     shutil.copy2(source / "protocol_gate.json", artifacts)
+    if successor_contract is not None:
+        shutil.copytree(successor_audit_root, artifacts / "action_coverage_audit")
     sealed = seal_test_protocol(
         artifacts / "sealed_test_protocol.json",
         protocol=protocol,
@@ -295,6 +310,21 @@ def publish_robustness_release(
             data_root / "processed/robustness/final_test_opening_ledger"
         ),
         gate=gate,
+        action_source_contract_sha256=(
+            str(successor_contract["action_source_contract_sha256"])
+            if successor_contract is not None
+            else None
+        ),
+        action_coverage_audit_sha256=(
+            str(successor_contract["action_coverage_audit_sha256"])
+            if successor_contract is not None
+            else None
+        ),
+        predecessor=(
+            successor_contract["predecessor"]
+            if successor_contract is not None
+            else None
+        ),
     )
     lineage = {
         "stage": "robustness",
@@ -306,6 +336,17 @@ def publish_robustness_release(
         "reproducibility": reproducibility,
         "sealed_protocol_sha256": sealed["sealed_protocol_sha256"],
     }
+    if successor_contract is not None:
+        lineage = build_stage8_successor_lineage(
+            lineage,
+            supersession=Stage8Supersession(**successor_contract["predecessor"]),
+            action_source_contract_sha256=str(
+                successor_contract["action_source_contract_sha256"]
+            ),
+            action_coverage_audit_sha256=str(
+                successor_contract["action_coverage_audit_sha256"]
+            ),
+        )
     return publish_release(
         data_root / "processed/robustness",
         run_id=run_id,
@@ -314,6 +355,36 @@ def publish_robustness_release(
         lineage=lineage,
         manifest_metadata={"stage": "robustness"},
     )
+
+
+def _successor_release_contract(
+    code_root: Path,
+    data_root: Path,
+    action_audit_root: Path,
+) -> dict[str, object]:
+    predecessor = resolve_current(data_root / "processed/robustness")
+    audit_sha256 = verify_action_coverage_audit(action_audit_root)
+    market_rules_path = code_root / "configs/market_rules.yaml"
+    source_contract_path = code_root / "configs/final_execution_sources.yaml"
+    validate_fee_protocol(
+        load_market_rules(market_rules_path),
+        date(2022, 1, 1),
+        date(2025, 12, 31),
+    )
+    supersession = build_stage8_supersession(
+        predecessor_pointer={
+            "run_id": predecessor.run_id,
+            "manifest_sha256": predecessor.manifest_sha256,
+        },
+        predecessor_manifest=predecessor.manifest,
+        reason="final execution fee and corporate-action coverage incomplete",
+    )
+    return {
+        "predecessor": supersession.to_dict(),
+        "market_rules_sha256": sha256_file(market_rules_path),
+        "action_source_contract_sha256": sha256_file(source_contract_path),
+        "action_coverage_audit_sha256": audit_sha256,
+    }
 
 
 def verify_reproducible_source(
