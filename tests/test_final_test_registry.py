@@ -301,7 +301,7 @@ def test_attempt_state_rejects_sequence_beyond_fixed_state_table(tmp_path: Path)
         resolve_attempt_state(registry, "attempt-001")
 
 
-@pytest.mark.parametrize("state", ["registered", "preparing", "awaiting"])
+@pytest.mark.parametrize("state", ["preparing", "awaiting"])
 def test_attempt_outcome_rejects_succeeded_before_executing(
     tmp_path: Path, state: str
 ) -> None:
@@ -324,6 +324,25 @@ def test_attempt_outcome_rejects_succeeded_before_executing(
         )
 
     assert not (registry / "attempt-001.outcome.json").exists()
+
+
+def test_legacy_attempt_without_state_events_accepts_succeeded_outcome(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+
+    append_attempt_outcome(
+        registry,
+        attempt_id="attempt-001",
+        status="succeeded",
+        authoritative=True,
+        reason="legacy publication",
+        release_run_id="final-release",
+        release_manifest_sha256="a" * 64,
+    )
+
+    assert resolve_attempt_state(registry, "attempt-001")["state"] == "published"
 
 
 @pytest.mark.parametrize("state", ["registered", "awaiting"])

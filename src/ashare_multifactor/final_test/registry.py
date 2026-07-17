@@ -114,7 +114,11 @@ def resolve_attempt_state(registry_root: Path, attempt_id: str) -> dict[str, Any
     if outcome_path.exists():
         outcome = _read_registry_json(outcome_path)
         _validate_terminal_outcome(outcome, attempt_id)
-        if outcome["status"] == "succeeded" and state != "executing":
+        if (
+            outcome["status"] == "succeeded"
+            and not _is_legacy_attempt_without_state_events(registry_root, attempt_id)
+            and state != "executing"
+        ):
             raise ValueError("succeeded outcome requires executing state")
         state = "published" if outcome["status"] == "succeeded" else "failed"
     resolved = dict(record)
@@ -182,6 +186,13 @@ def _validate_state_identity_inheritance(
         != previous.get("prepare_manifest_sha256")
     ):
         raise ValueError("executing state prepare manifest identity differs")
+
+
+def _is_legacy_attempt_without_state_events(
+    registry_root: Path, attempt_id: str
+) -> bool:
+    """Keep old one-shot attempts working until Task 4 removes that entry point."""
+    return not any(registry_root.glob(f"{attempt_id}.state.*"))
 
 
 def _validate_terminal_outcome(outcome: dict[str, Any], attempt_id: str) -> None:
@@ -272,8 +283,10 @@ def append_attempt_outcome(
     if release_manifest_sha256 is not None:
         payload["release_manifest_sha256"] = release_manifest_sha256
     _validate_terminal_outcome(payload, attempt_id)
-    if status == "succeeded" and (
-        resolve_attempt_state(registry_root, attempt_id)["state"] != "executing"
+    if (
+        status == "succeeded"
+        and not _is_legacy_attempt_without_state_events(registry_root, attempt_id)
+        and resolve_attempt_state(registry_root, attempt_id)["state"] != "executing"
     ):
         raise ValueError("succeeded outcome requires executing state")
     registry_root.mkdir(parents=True, exist_ok=True)
