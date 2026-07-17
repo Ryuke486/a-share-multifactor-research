@@ -1,0 +1,199 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from ashare_multifactor.final_test.registry import (
+    append_attempt_outcome,
+    append_attempt_state,
+    register_attempt,
+    resolve_attempt_state,
+)
+
+
+def _register(registry: Path, attempt_id: str = "attempt-001") -> None:
+    register_attempt(
+        registry,
+        attempt_id=attempt_id,
+        git_commit="a" * 40,
+        git_tree="b" * 40,
+        token_sha256="c" * 64,
+        sealed_protocol_sha256="d" * 64,
+        robustness_release="stage8-release",
+        approval_id="approval-001",
+        robustness_manifest_sha256="e" * 64,
+        robustness_lineage_sha256="f" * 64,
+    )
+
+
+def _awaiting_official_evidence(registry: Path) -> None:
+    append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="awaiting_official_evidence",
+        identities={"prepare_manifest_sha256": "a" * 64},
+    )
+
+
+def test_attempt_state_events_are_append_only_and_resume_claim_is_exclusive(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    _awaiting_official_evidence(registry)
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="executing",
+        identities={
+            "prepare_manifest_sha256": "a" * 64,
+            "security_event_coverage_sha256": "b" * 64,
+            "corporate_action_coverage_sha256": "c" * 64,
+        },
+    )
+
+    assert resolve_attempt_state(registry, "attempt-001")["state"] == "executing"
+    with pytest.raises(ValueError, match="state transition"):
+        append_attempt_state(
+            registry,
+            attempt_id="attempt-001",
+            state="executing",
+            identities={"prepare_manifest_sha256": "a" * 64},
+        )
+
+
+def test_attempt_state_rejects_skipping_preparing(tmp_path: Path) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+
+    with pytest.raises(ValueError, match="state transition"):
+        append_attempt_state(
+            registry,
+            attempt_id="attempt-001",
+            state="awaiting_official_evidence",
+            identities={"prepare_manifest_sha256": "a" * 64},
+        )
+
+
+def test_attempt_state_rejects_returning_to_preparing(tmp_path: Path) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    _awaiting_official_evidence(registry)
+
+    with pytest.raises(ValueError, match="state transition"):
+        append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+
+
+def test_attempt_state_rejects_append_after_terminal_outcome(tmp_path: Path) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    append_attempt_outcome(
+        registry,
+        attempt_id="attempt-001",
+        status="failed",
+        authoritative=False,
+        reason="preparation failed",
+    )
+
+    assert resolve_attempt_state(registry, "attempt-001")["state"] == "failed"
+    with pytest.raises(ValueError, match="state transition"):
+        append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+
+
+def test_attempt_state_rejects_incomplete_identity_hashes(tmp_path: Path) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+
+    with pytest.raises(ValueError, match="identity"):
+        append_attempt_state(
+            registry,
+            attempt_id="attempt-001",
+            state="awaiting_official_evidence",
+            identities={"prepare_manifest_sha256": "not-a-sha256"},
+        )
+
+
+def test_attempt_state_rejects_modified_event_contents(tmp_path: Path) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+    event = registry / "attempt-001.state.01-preparing.json"
+    payload = json.loads(event.read_text(encoding="utf-8"))
+    payload["state"] = "awaiting_official_evidence"
+    event.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="state event"):
+        resolve_attempt_state(registry, "attempt-001")
+
+
+def test_attempt_state_rejects_duplicate_or_missing_sequences(tmp_path: Path) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+    duplicate = registry / "attempt-001.state.01-awaiting_official_evidence.json"
+    duplicate.write_text(
+        json.dumps(
+            {
+                "attempt_id": "attempt-001",
+                "sequence": 1,
+                "state": "preparing",
+                "recorded_at": "2026-07-17T00:00:00+00:00",
+                "identities": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate state sequence"):
+        resolve_attempt_state(registry, "attempt-001")
+
+    duplicate.unlink()
+    (registry / "attempt-001.state.01-preparing.json").unlink()
+    missing = registry / "attempt-001.state.02-awaiting_official_evidence.json"
+    missing.write_text(
+        json.dumps(
+            {
+                "attempt_id": "attempt-001",
+                "sequence": 2,
+                "state": "awaiting_official_evidence",
+                "recorded_at": "2026-07-17T00:00:00+00:00",
+                "identities": {"prepare_manifest_sha256": "a" * 64},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="missing state sequence"):
+        resolve_attempt_state(registry, "attempt-001")
+
+
+def test_attempt_state_rejects_illegal_event_filename_and_terminal_conflict(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    (registry / "attempt-001.state.1-preparing.json").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="state event filename"):
+        resolve_attempt_state(registry, "attempt-001")
+
+    (registry / "attempt-001.state.1-preparing.json").unlink()
+    outcome = registry / "attempt-001.outcome.json"
+    outcome.write_text(
+        json.dumps(
+            {
+                "attempt_id": "attempt-001",
+                "status": "succeeded",
+                "authoritative": False,
+                "reason": "tampered terminal outcome",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="terminal outcome"):
+        resolve_attempt_state(registry, "attempt-001")

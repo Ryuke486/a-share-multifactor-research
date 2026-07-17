@@ -10,6 +10,30 @@ from typing import Any
 
 
 _ATTEMPT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+_STATE_FILENAME = re.compile(
+    r"(?P<attempt_id>[A-Za-z0-9][A-Za-z0-9_.-]{0,127})"
+    r"\.state\.(?P<sequence>\d{2})-(?P<state>[a-z_]+)\.json"
+)
+_STATE_SEQUENCE = {
+    "registered": 0,
+    "preparing": 1,
+    "awaiting_official_evidence": 2,
+    "executing": 3,
+}
+_STATE_IDENTITIES = {
+    "preparing": frozenset(),
+    "awaiting_official_evidence": frozenset({"prepare_manifest_sha256"}),
+    "executing": frozenset(
+        {
+            "prepare_manifest_sha256",
+            "security_event_coverage_sha256",
+            "corporate_action_coverage_sha256",
+        }
+    ),
+}
+
+AttemptStateEvent = dict[str, Any]
 
 
 def validate_publication_id(value: str) -> str:
@@ -22,6 +46,154 @@ def validate_publication_id(value: str) -> str:
     ):
         raise ValueError("invalid final-test publication identifier")
     return value
+
+
+def append_attempt_state(
+    registry_root: Path,
+    *,
+    attempt_id: str,
+    state: str,
+    identities: dict[str, str] | None = None,
+) -> AttemptStateEvent:
+    """Append the next immutable state event for one final-test attempt."""
+    current = resolve_attempt_state(registry_root, attempt_id)
+    expected = _STATE_SEQUENCE.get(str(current["state"]), -1) + 1
+    if _STATE_SEQUENCE.get(state) != expected:
+        raise ValueError("invalid final-test state transition")
+    payload: AttemptStateEvent = {
+        "attempt_id": attempt_id,
+        "sequence": expected,
+        "state": state,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "identities": _validate_state_identities(state, identities or {}),
+    }
+    try:
+        _write_exclusive(
+            registry_root / f"{attempt_id}.state.{expected:02d}-{state}.json",
+            _json_bytes(payload),
+        )
+    except FileExistsError as exc:
+        raise ValueError("invalid final-test state transition") from exc
+    return payload
+
+
+def resolve_attempt_state(registry_root: Path, attempt_id: str) -> dict[str, Any]:
+    """Rebuild an attempt state from immutable registration, events, and outcome."""
+    validate_publication_id(attempt_id)
+    record = _read_registry_json(registry_root / f"{attempt_id}.json")
+    if (
+        record.get("attempt_id") != attempt_id
+        or record.get("status") != "registered"
+        or record.get("authoritative") is not False
+    ):
+        raise ValueError("invalid final-test attempt registration")
+
+    events = _load_state_events(registry_root, attempt_id)
+    state = "registered"
+    identities: dict[str, str] = {}
+    for expected_sequence, event in enumerate(events, start=1):
+        expected_state = next(
+            name for name, sequence in _STATE_SEQUENCE.items() if sequence == expected_sequence
+        )
+        if event["sequence"] != expected_sequence:
+            raise ValueError("missing state sequence")
+        if event["state"] != expected_state:
+            raise ValueError("invalid final-test state event")
+        state = expected_state
+        identities = event["identities"]
+
+    outcome_path = registry_root / f"{attempt_id}.outcome.json"
+    if outcome_path.exists():
+        outcome = _read_registry_json(outcome_path)
+        _validate_terminal_outcome(outcome, attempt_id)
+        state = "published" if outcome["status"] == "succeeded" else "failed"
+    resolved = dict(record)
+    resolved.update(
+        {
+            "state": state,
+            "sequence": _STATE_SEQUENCE.get(state, len(events)),
+            "identities": identities,
+        }
+    )
+    return resolved
+
+
+def _load_state_events(registry_root: Path, attempt_id: str) -> list[AttemptStateEvent]:
+    events_by_sequence: dict[int, AttemptStateEvent] = {}
+    prefix = f"{attempt_id}.state."
+    paths_by_sequence: dict[int, tuple[Path, re.Match[str]]] = {}
+    for path in sorted(registry_root.glob(f"{prefix}*")):
+        match = _STATE_FILENAME.fullmatch(path.name)
+        if match is None or match["attempt_id"] != attempt_id:
+            raise ValueError("invalid final-test state event filename")
+        sequence = int(match["sequence"])
+        if sequence in paths_by_sequence:
+            raise ValueError("duplicate state sequence")
+        paths_by_sequence[sequence] = (path, match)
+    for sequence, (path, match) in sorted(paths_by_sequence.items()):
+        event = _read_registry_json(path)
+        if (
+            event.get("attempt_id") != attempt_id
+            or event.get("sequence") != sequence
+            or event.get("state") != match["state"]
+            or not isinstance(event.get("recorded_at"), str)
+            or not event["recorded_at"]
+            or not isinstance(event.get("identities"), dict)
+        ):
+            raise ValueError("invalid final-test state event")
+        event["identities"] = _validate_state_identities(
+            str(event["state"]), event["identities"]
+        )
+        events_by_sequence[sequence] = event
+    return [events_by_sequence[sequence] for sequence in sorted(events_by_sequence)]
+
+
+def _validate_state_identities(
+    state: str, identities: dict[str, str]
+) -> dict[str, str]:
+    required = _STATE_IDENTITIES.get(state)
+    if required is None or set(identities) != required:
+        raise ValueError("invalid final-test state identity")
+    if any(
+        not isinstance(value, str) or _SHA256.fullmatch(value) is None
+        for value in identities.values()
+    ):
+        raise ValueError("invalid final-test state identity")
+    return dict(identities)
+
+
+def _validate_terminal_outcome(outcome: dict[str, Any], attempt_id: str) -> None:
+    status = outcome.get("status")
+    authoritative = outcome.get("authoritative")
+    if (
+        outcome.get("attempt_id") != attempt_id
+        or status not in {"failed", "succeeded"}
+        or authoritative != (status == "succeeded")
+        or not isinstance(outcome.get("reason"), str)
+        or not outcome["reason"].strip()
+    ):
+        raise ValueError("invalid final-test terminal outcome")
+    if status == "succeeded" and (
+        not isinstance(outcome.get("release_run_id"), str)
+        or not outcome["release_run_id"]
+        or not isinstance(outcome.get("release_manifest_sha256"), str)
+        or _SHA256.fullmatch(outcome["release_manifest_sha256"]) is None
+    ):
+        raise ValueError("invalid final-test terminal outcome")
+
+
+def _read_registry_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid final-test registry record: {path.name}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"invalid final-test registry record: {path.name}")
+    return value
+
+
+def _json_bytes(payload: dict[str, Any]) -> bytes:
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
 
 def assert_no_authoritative_success(registry_root: Path) -> None:
