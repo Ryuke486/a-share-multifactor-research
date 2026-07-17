@@ -31,6 +31,25 @@ from ashare_multifactor.final_test.gate import (
 )
 
 
+def validate_final_execution_coverages(
+    *,
+    symbols: list[str],
+    security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Validate both exact official coverages without publishing any state."""
+    return (
+        validate_security_event_coverage(
+            security_event_coverage_path,
+            symbols=symbols,
+        ),
+        validate_corporate_action_coverage(
+            corporate_action_coverage_root,
+            symbols=symbols,
+        ),
+    )
+
+
 def build_final_execution_inputs(
     authorization: FinalTestAuthorization,
     *,
