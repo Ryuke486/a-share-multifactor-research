@@ -1065,13 +1065,18 @@ def test_non_publishable_attempt_is_retained_without_switching_current(
     assert outcome["reason"] == "shadow NAV gate failed"
 
 
-def test_cli_exposes_only_the_authorized_one_shot_entrypoint() -> None:
+def test_cli_exposes_only_the_explicit_two_phase_entrypoints() -> None:
     source = Path("src/ashare_multifactor/cli/final_test.py").read_text(encoding="utf-8")
 
+    assert "add_subparsers" in source
+    assert 'add_parser("prepare"' in source
+    assert 'add_parser("resume"' in source
+    assert "--data-root" in source
     assert "opening-token" in source
     assert "approval-key-file" in source
     assert "security-event-coverage" in source
     assert "corporate-action-coverage" in source
+    assert "run_final_test_release" not in source
     assert "parameter" not in source
     assert "search" not in source
 
