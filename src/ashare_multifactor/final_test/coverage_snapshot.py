@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 import shutil
 from uuid import uuid4
 
@@ -131,6 +132,8 @@ def _verify_snapshot(
     if root.is_symlink() or not root.is_dir():
         raise ValueError("execution coverage snapshot is missing or uses a symlink")
     manifest_path = root / "snapshot_manifest.json"
+    if manifest_path.is_symlink():
+        raise ValueError("execution coverage snapshot manifest uses a symlink")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError) as error:
@@ -143,18 +146,53 @@ def _verify_snapshot(
         "symbols_sha256": hashlib.sha256(("\n".join(symbols) + "\n").encode()).hexdigest(),
         "symbol_count": len(symbols),
     }
+    manifest_keys = {
+        *expected,
+        "security_manifest",
+        "corporate_root",
+        "files",
+    }
     if (
         not isinstance(manifest, dict)
+        or set(manifest) != manifest_keys
         or any(manifest.get(key) != value for key, value in expected.items())
         or manifest.get("corporate_root") != "corporate"
         or not isinstance(manifest.get("security_manifest"), str)
         or not isinstance(manifest.get("files"), list)
     ):
         raise ValueError("execution coverage snapshot identity differs")
+    recorded_paths: set[str] = set()
     for record in manifest["files"]:
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            raise ValueError("invalid execution coverage snapshot file record")
+        relative = _safe_snapshot_relative(str(record["path"]))
+        if relative.parts[0] not in {"security", "corporate"}:
+            raise ValueError("coverage snapshot file escapes evidence roots")
+        if relative.as_posix() in recorded_paths:
+            raise ValueError("duplicate execution coverage snapshot file record")
+        recorded_paths.add(relative.as_posix())
         verify_file_record(record, root=root)
-    security_path = root / str(manifest["security_manifest"])
+    actual_paths = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file() and path != manifest_path
+    }
+    if actual_paths != recorded_paths:
+        raise ValueError("execution coverage snapshot file inventory differs")
+    security_relative = _safe_snapshot_relative(str(manifest["security_manifest"]))
+    if (
+        security_relative.parts[0] != "security"
+        or security_relative.as_posix() not in recorded_paths
+    ):
+        raise ValueError("security coverage snapshot manifest is unsafe or unrecorded")
+    security_path = (root / security_relative).resolve()
     corporate_root = root / "corporate"
+    if (
+        security_path.parent == root.resolve()
+        or not security_path.is_relative_to((root / "security").resolve())
+        or not corporate_root.resolve().is_relative_to(root.resolve())
+    ):
+        raise ValueError("coverage snapshot path escapes evidence roots")
     security, corporate = validate_final_execution_coverages(
         symbols=symbols,
         security_event_coverage_path=security_path,
@@ -178,6 +216,15 @@ def _verify_snapshot(
         security_event_coverage_sha256=current_security,
         corporate_action_coverage_sha256=current_corporate,
     )
+
+
+def _safe_snapshot_relative(value: str) -> PurePosixPath:
+    relative = PurePosixPath(value)
+    if relative.is_absolute() or not relative.parts or any(
+        part in {"", ".", ".."} for part in relative.parts
+    ):
+        raise ValueError("coverage snapshot path is not a canonical relative path")
+    return relative
 
 
 def _required_root(value: dict[str, object], label: str) -> Path:

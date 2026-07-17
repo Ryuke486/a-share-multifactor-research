@@ -54,6 +54,7 @@ from ashare_multifactor.final_test.registry import (
     assert_no_authoritative_success,
     claim_attempt_execution,
     recover_prepared_publication,
+    resolve_optional_prepared_publication,
     resolve_prepared_publication,
     resolve_attempt_state_readonly,
     validate_publication_id,
@@ -147,6 +148,16 @@ def resume_final_test_release(
         corporate_action_coverage_root=corporate_action_coverage_root,
         expected_state=str(state),
     )
+    prepared = resolve_optional_prepared_publication(
+        registry_root,
+        attempt_id=attempt_id,
+        sealed_protocol_sha256=preflight.authorization.sealed_protocol_sha256,
+    )
+    prepared_run_id = (
+        str(prepared["release_run_id"]) if prepared is not None else None
+    )
+    if prepared_run_id is not None and run_id != prepared_run_id:
+        raise ValueError("prepared final-test publication run identity differs")
     identities = {
         "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
         "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
@@ -165,6 +176,7 @@ def resume_final_test_release(
                 security_event_coverage_path=security_event_coverage_path,
                 corporate_action_coverage_root=corporate_action_coverage_root,
                 run_id=run_id,
+                prepared_run_id=prepared_run_id,
             )
         except BaseException as error:
             outcome = registry_root / f"{attempt_id}.outcome.json"
@@ -208,6 +220,7 @@ def _execute_authorized_final_test(
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
     run_id: str,
+    prepared_run_id: str | None,
 ) -> FinalTestPipelineResult:
     """Execute only from a verified preparation; never authorize or build data."""
     authorization = preflight.authorization
@@ -229,6 +242,8 @@ def _execute_authorized_final_test(
     )
     if orphan is not None:
         return orphan
+    if prepared_run_id is not None:
+        raise ValueError("prepared final-test publication has no recoverable release")
     verify_resume_coverages(
         preflight,
         security_event_coverage_path=security_event_coverage_path,
@@ -243,7 +258,11 @@ def _execute_authorized_final_test(
         expected_security_sha256=preflight.security_event_coverage_sha256,
         expected_corporate_sha256=preflight.corporate_action_coverage_sha256,
     )
-    recover_interrupted_execution(final_root, preflight=preflight)
+    recover_interrupted_execution(
+        final_root,
+        preflight=preflight,
+        coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
+    )
     attempt_root = final_root / "attempt_runs" / authorization.attempt_id
     datasets = attempt_root / "datasets"
     artifacts = attempt_root / "artifacts"

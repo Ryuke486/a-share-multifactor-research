@@ -1,0 +1,395 @@
+from __future__ import annotations
+
+from copy import deepcopy
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from test_final_test_pipeline import _patch_steps
+from test_final_test_resume import PreparedAttempt
+
+from ashare_multifactor.final_test import execution_sources as sources_module
+from ashare_multifactor.final_test import interrupted_recovery as recovery_module
+from ashare_multifactor.final_test import pipeline as pipeline_module
+from ashare_multifactor.audit.records import sha256_file
+from ashare_multifactor.final_test.coverage_snapshot import (
+    snapshot_execution_coverages,
+)
+from ashare_multifactor.final_test.execution_sources import build_final_execution_inputs
+from ashare_multifactor.final_test.registry import (
+    append_attempt_state,
+    begin_execution_recovery,
+    complete_execution_recovery,
+    resolve_attempt_state,
+)
+from ashare_multifactor.final_test.resume import preflight_resume
+
+
+pytest_plugins = ("test_final_test_resume",)
+
+
+def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = _preflight(prepared_attempt)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    snapshot = _snapshot(prepared_attempt, preflight)
+    resolution = SimpleNamespace(
+        root=final_root / "daily_panel",
+        claim_status="published",
+        requires_recovery=False,
+        data_manifest_sha256="d" * 64,
+    )
+    monkeypatch.setattr(sources_module, "resolve_final_test_data_panel", lambda _root: resolution)
+    _mark_executing(prepared_attempt, preflight)
+    attempt_root = final_root / "attempt_runs" / prepared_attempt.attempt_id
+    attempt_root.mkdir(parents=True)
+    first_execution_id = "first-execution"
+    _write_execution_identity(
+        attempt_root,
+        prepared_attempt=prepared_attempt,
+        preflight=preflight,
+        execution_id=first_execution_id,
+        snapshot_sha256=snapshot.manifest_sha256,
+    )
+    build_final_execution_inputs(
+        preflight.authorization,
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        final_root=final_root,
+        security_event_coverage_path=snapshot.security_event_coverage_path,
+        corporate_action_coverage_root=snapshot.corporate_action_coverage_root,
+        symbols=list(snapshot.symbols),
+        prepare_manifest_sha256=preflight.preparation.manifest_sha256,
+        expected_security_event_coverage_sha256=preflight.security_event_coverage_sha256,
+        expected_corporate_action_coverage_sha256=(
+            preflight.corporate_action_coverage_sha256
+        ),
+        execution_id=first_execution_id,
+    )
+    (attempt_root / "signals-and-backtest.completed").write_text("crashed after work")
+
+    archive = recovery_module.recover_interrupted_execution(
+        final_root,
+        preflight=preflight,
+        coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+    )
+
+    assert archive is not None
+    assert (archive / "attempt_run/signals-and-backtest.completed").is_file()
+    assert (archive / "execution_input_sources/source_manifest.json").is_file()
+    assert (archive / "attempt_inputs/manifest.json").is_file()
+    second_execution_id = "second-execution"
+    rebuilt = build_final_execution_inputs(
+        preflight.authorization,
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        final_root=final_root,
+        security_event_coverage_path=snapshot.security_event_coverage_path,
+        corporate_action_coverage_root=snapshot.corporate_action_coverage_root,
+        symbols=list(snapshot.symbols),
+        prepare_manifest_sha256=preflight.preparation.manifest_sha256,
+        expected_security_event_coverage_sha256=preflight.security_event_coverage_sha256,
+        expected_corporate_action_coverage_sha256=(
+            preflight.corporate_action_coverage_sha256
+        ),
+        execution_id=second_execution_id,
+    )
+    assert rebuilt["execution_id"] == second_execution_id
+
+
+def test_recovery_rejects_empty_competing_claim_target_without_moving_sources(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    preflight = _preflight(prepared_attempt)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    snapshot = _snapshot(prepared_attempt, preflight)
+    _mark_executing(prepared_attempt, preflight)
+    attempt_root = final_root / "attempt_runs" / prepared_attempt.attempt_id
+    attempt_root.mkdir(parents=True)
+    _write_execution_identity(
+        attempt_root,
+        prepared_attempt=prepared_attempt,
+        preflight=preflight,
+        execution_id="interrupted-execution",
+        snapshot_sha256=snapshot.manifest_sha256,
+    )
+    intent = begin_execution_recovery(
+        final_root / "attempts",
+        attempt_id=prepared_attempt.attempt_id,
+        execution_id="interrupted-execution",
+        identities=_identities(preflight),
+        artifact_presence={
+            "attempt_run": True,
+            "execution_input_sources": False,
+            "attempt_inputs": False,
+        },
+    )
+    competing = final_root / str(intent["recovery_root"])
+    competing.mkdir(parents=True)
+
+    with pytest.raises(FileExistsError, match="recovery claim|already exists"):
+        recovery_module.recover_interrupted_execution(
+            final_root,
+            preflight=preflight,
+            coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+        )
+
+    assert (attempt_root / "execution_identity.json").is_file()
+    assert list(competing.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["extra", "truncated", "wrong_identity", "wrong_hash", "archive_bytes"],
+)
+def test_existing_recovery_complete_requires_exact_schema_and_hashes(
+    prepared_attempt: PreparedAttempt,
+    mutation: str,
+) -> None:
+    preflight = _preflight(prepared_attempt)
+    registry = prepared_attempt.data_root / "processed/final_test/attempts"
+    _mark_executing(prepared_attempt, preflight)
+    intent = begin_execution_recovery(
+        registry,
+        attempt_id=prepared_attempt.attempt_id,
+        execution_id="interrupted-execution",
+        identities=_identities(preflight),
+        artifact_presence={
+            "attempt_run": True,
+            "execution_input_sources": False,
+            "attempt_inputs": False,
+        },
+    )
+    archive_manifest = (
+        prepared_attempt.data_root
+        / "processed/final_test"
+        / str(intent["recovery_root"])
+        / "archive_manifest.json"
+    )
+    archive_manifest.parent.mkdir(parents=True)
+    archive_manifest.write_text('{"status":"archived"}\n', encoding="utf-8")
+    archive_sha256 = sha256_file(archive_manifest)
+    complete = complete_execution_recovery(
+        registry,
+        intent=intent,
+        archive_manifest_sha256=archive_sha256,
+    )
+    path = registry / (
+        f"{prepared_attempt.attempt_id}.recovery.{intent['recovery_id']}.complete.json"
+    )
+    changed = deepcopy(complete)
+    if mutation == "extra":
+        changed["unexpected"] = True
+    elif mutation == "truncated":
+        changed.pop("execution_id")
+    elif mutation == "wrong_identity":
+        changed["execution_id"] = "other-execution"
+    elif mutation == "wrong_hash":
+        changed["archive_manifest_sha256"] = "b" * 64
+    else:
+        archive_manifest.write_text('{"status":"tampered"}\n', encoding="utf-8")
+    path.write_text(json.dumps(changed), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="completed execution recovery"):
+        complete_execution_recovery(
+            registry,
+            intent=intent,
+            archive_manifest_sha256=archive_sha256,
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "value"),
+    [
+        ("missing", "coverage_snapshot_manifest_sha256"),
+        ("extra", "unexpected"),
+        ("wrong", "sealed_protocol_sha256"),
+        ("wrong", "coverage_snapshot_manifest_sha256"),
+    ],
+)
+def test_partial_execution_identity_requires_exact_bound_schema(
+    prepared_attempt: PreparedAttempt,
+    mutation: str,
+    value: str,
+) -> None:
+    preflight = _preflight(prepared_attempt)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    snapshot = _snapshot(prepared_attempt, preflight)
+    _mark_executing(prepared_attempt, preflight)
+    attempt_root = final_root / "attempt_runs" / prepared_attempt.attempt_id
+    attempt_root.mkdir(parents=True)
+    _write_execution_identity(
+        attempt_root,
+        prepared_attempt=prepared_attempt,
+        preflight=preflight,
+        execution_id="interrupted-execution",
+        snapshot_sha256=snapshot.manifest_sha256,
+    )
+    path = attempt_root / "execution_identity.json"
+    identity = json.loads(path.read_text(encoding="utf-8"))
+    if mutation == "missing":
+        identity.pop(value)
+    elif mutation == "extra":
+        identity[value] = True
+    else:
+        identity[value] = "f" * 64
+    path.write_text(json.dumps(identity), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="execution identity"):
+        recovery_module.recover_interrupted_execution(
+            final_root,
+            preflight=preflight,
+            coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+        )
+
+    assert attempt_root.is_dir()
+
+
+@pytest.mark.parametrize("mutation", ["extra", "absolute_path", "unrecorded_manifest"])
+def test_coverage_snapshot_manifest_requires_exact_safe_recorded_schema(
+    prepared_attempt: PreparedAttempt,
+    mutation: str,
+) -> None:
+    preflight = _preflight(prepared_attempt)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    snapshot = _snapshot(prepared_attempt, preflight)
+    manifest = json.loads(snapshot.manifest_path.read_text(encoding="utf-8"))
+    if mutation == "extra":
+        manifest["unexpected"] = True
+    elif mutation == "absolute_path":
+        manifest["security_manifest"] = str(prepared_attempt.security_coverage)
+    else:
+        security_path = str(manifest["security_manifest"])
+        manifest["files"] = [
+            record for record in manifest["files"] if record["path"] != security_path
+        ]
+    snapshot.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="coverage snapshot"):
+        snapshot_execution_coverages(
+            final_root,
+            attempt_id=prepared_attempt.attempt_id,
+            preparation=preflight.preparation,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            expected_security_sha256=preflight.security_event_coverage_sha256,
+            expected_corporate_sha256=preflight.corporate_action_coverage_sha256,
+        )
+
+
+def test_wrong_run_id_cannot_mutate_prepared_orphan_before_original_run_recovers(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+
+    def interrupt(*args: object, **kwargs: object):
+        return publish(*args, **kwargs, fail_before_switch=True)
+
+    monkeypatch.setattr(pipeline_module, "publish_release", interrupt)
+    with pytest.raises(RuntimeError, match="before pointer switch"):
+        _resume(prepared_attempt, run_id="original-run")
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    before = _tree_bytes(final_root)
+
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+    with pytest.raises(ValueError, match="prepared.*run"):
+        _resume(prepared_attempt, run_id="wrong-run")
+
+    assert _tree_bytes(final_root) == before
+    recovered = _resume(prepared_attempt, run_id="original-run")
+    assert recovered.release is not None
+    assert recovered.release.run_id == "original-run"
+    assert resolve_attempt_state(final_root / "attempts", prepared_attempt.attempt_id)[
+        "state"
+    ] == "published"
+
+
+def _preflight(prepared_attempt: PreparedAttempt):
+    return preflight_resume(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+    )
+
+
+def _snapshot(prepared_attempt: PreparedAttempt, preflight: object):
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    return snapshot_execution_coverages(
+        final_root,
+        attempt_id=prepared_attempt.attempt_id,
+        preparation=preflight.preparation,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        expected_security_sha256=preflight.security_event_coverage_sha256,
+        expected_corporate_sha256=preflight.corporate_action_coverage_sha256,
+    )
+
+
+def _identities(preflight: object) -> dict[str, str]:
+    return {
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+    }
+
+
+def _mark_executing(prepared_attempt: PreparedAttempt, preflight: object) -> None:
+    append_attempt_state(
+        prepared_attempt.data_root / "processed/final_test/attempts",
+        attempt_id=prepared_attempt.attempt_id,
+        state="executing",
+        identities=_identities(preflight),
+    )
+
+
+def _write_execution_identity(
+    root: Path,
+    *,
+    prepared_attempt: PreparedAttempt,
+    preflight: object,
+    execution_id: str,
+    snapshot_sha256: str,
+) -> None:
+    (root / "execution_identity.json").write_text(
+        json.dumps(
+            {
+                "execution_id": execution_id,
+                "attempt_id": prepared_attempt.attempt_id,
+                "sealed_protocol_sha256": (
+                    preflight.authorization.sealed_protocol_sha256
+                ),
+                **_identities(preflight),
+                "coverage_snapshot_manifest_sha256": snapshot_sha256,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _resume(prepared_attempt: PreparedAttempt, *, run_id: str):
+    return pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id=run_id,
+    )
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        str(path.relative_to(root)): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }

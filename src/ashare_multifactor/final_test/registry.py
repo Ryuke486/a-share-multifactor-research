@@ -523,10 +523,11 @@ def resolve_prepared_publication(
         "release_run_id": release_run_id,
         "sealed_protocol_sha256": sealed_protocol_sha256,
     }
+    path = registry_root / f"{attempt_id}.prepared.json"
+    if path.is_symlink():
+        raise ValueError("prepared final-test publication uses a symlink")
     try:
-        prepared = _read_registry_json(
-            registry_root / f"{attempt_id}.prepared.json"
-        )
+        prepared = _read_registry_json(path)
     except FileNotFoundError as error:
         raise ValueError("prepared final-test publication is missing") from error
     if (
@@ -537,17 +538,48 @@ def resolve_prepared_publication(
     return prepared
 
 
+def resolve_optional_prepared_publication(
+    registry_root: Path,
+    *,
+    attempt_id: str,
+    sealed_protocol_sha256: str,
+) -> dict[str, Any] | None:
+    """Read a prepared record without guessing or changing its bound run ID."""
+    validate_publication_id(attempt_id)
+    path = registry_root / f"{attempt_id}.prepared.json"
+    if path.is_symlink():
+        raise ValueError("prepared final-test publication uses a symlink")
+    if not path.exists():
+        return None
+    prepared = _read_registry_json(path)
+    run_id = prepared.get("release_run_id")
+    if not isinstance(run_id, str):
+        raise ValueError("prepared final-test publication identity differs")
+    try:
+        validate_publication_id(run_id)
+    except ValueError as error:
+        raise ValueError("prepared final-test publication identity differs") from error
+    return resolve_prepared_publication(
+        registry_root,
+        attempt_id=attempt_id,
+        release_run_id=run_id,
+        sealed_protocol_sha256=sealed_protocol_sha256,
+    )
+
+
 def begin_execution_recovery(
     registry_root: Path,
     *,
     attempt_id: str,
     execution_id: str,
     identities: dict[str, str],
+    artifact_presence: dict[str, bool],
 ) -> dict[str, Any]:
     """Claim one immutable recovery intent, or return its incomplete predecessor."""
     validate_publication_id(attempt_id)
     validate_publication_id(execution_id)
     validated = _validate_state_identities("executing", identities)
+    presence = _validate_recovery_artifact_presence(artifact_presence)
     with _attempt_transition_lock(registry_root, attempt_id):
         state = _resolve_attempt_state_unlocked(registry_root, attempt_id)
         if state["state"] != "executing" or state["identities"] != validated:
@@ -557,6 +589,7 @@ def begin_execution_recovery(
             if (
                 pending.get("execution_id") != execution_id
                 or pending.get("identities") != validated
+                or pending.get("artifact_presence") != presence
             ):
                 raise ValueError("pending execution recovery identity differs")
             return pending
@@ -570,6 +603,7 @@ def begin_execution_recovery(
             "recovery_root": f"interrupted_runs/{attempt_id}/{recovery_id}",
             "archived_path": f"interrupted_runs/{attempt_id}/{recovery_id}/archive",
             "identities": validated,
+            "artifact_presence": presence,
             "status": "intent",
         }
         _write_exclusive(
@@ -598,6 +632,12 @@ def _pending_execution_recovery_unlocked(
         )
         complete = registry_root / f"{attempt_id}.recovery.{recovery_id}.complete.json"
         if complete.exists():
+            completed = _read_registry_json(complete)
+            _validate_execution_recovery_complete(
+                completed,
+                intent=payload,
+                registry_root=registry_root,
+            )
             continue
         pending.append(payload)
     if len(pending) > 1:
@@ -617,12 +657,14 @@ def _validate_execution_recovery_intent(
         "recovery_root",
         "archived_path",
         "identities",
+        "artifact_presence",
         "status",
     }
     try:
         recovery_id = validate_publication_id(str(payload.get("recovery_id", "")))
         validate_publication_id(str(payload.get("execution_id", "")))
         identities = _validate_state_identities("executing", payload["identities"])
+        presence = _validate_recovery_artifact_presence(payload["artifact_presence"])
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("invalid execution recovery intent") from error
     expected_paths = {
@@ -635,6 +677,7 @@ def _validate_execution_recovery_intent(
         or payload.get("attempt_id") != attempt_id
         or payload.get("status") != "intent"
         or payload.get("identities") != identities
+        or payload.get("artifact_presence") != presence
         or not isinstance(payload.get("recorded_at"), str)
         or not payload["recorded_at"]
         or any(payload.get(key) != value for key, value in expected_paths.items())
@@ -644,16 +687,43 @@ def _validate_execution_recovery_intent(
     return recovery_id
 
 
+def _validate_recovery_artifact_presence(value: object) -> dict[str, bool]:
+    keys = {"attempt_run", "execution_input_sources", "attempt_inputs"}
+    if (
+        not isinstance(value, dict)
+        or set(value) != keys
+        or any(type(value.get(key)) is not bool for key in keys)
+        or value.get("attempt_run") is not True
+    ):
+        raise ValueError("invalid execution recovery artifact presence")
+    return {key: bool(value[key]) for key in sorted(keys)}
+
+
 def complete_execution_recovery(
     registry_root: Path,
     *,
     intent: dict[str, Any],
+    archive_manifest_sha256: str,
 ) -> dict[str, Any]:
     """Append the terminal audit event for an already moved partial directory."""
     attempt_id = validate_publication_id(str(intent.get("attempt_id", "")))
     recovery_id = validate_publication_id(str(intent.get("recovery_id", "")))
+    if _SHA256.fullmatch(archive_manifest_sha256) is None:
+        raise ValueError("completed execution recovery archive hash is invalid")
     with _attempt_transition_lock(registry_root, attempt_id):
-        pending = _pending_execution_recovery_unlocked(registry_root, attempt_id)
+        intent_path = (
+            registry_root / f"{attempt_id}.recovery.{recovery_id}.intent.json"
+        )
+        stored_intent = _read_registry_json(intent_path)
+        _validate_execution_recovery_intent(
+            stored_intent,
+            attempt_id=attempt_id,
+            path=intent_path,
+        )
+        if stored_intent != intent:
+            raise ValueError("execution recovery intent changed before completion")
+        if _archive_manifest_sha256(registry_root, intent) != archive_manifest_sha256:
+            raise ValueError("completed execution recovery archive hash differs")
         destination = registry_root / f"{attempt_id}.recovery.{recovery_id}.complete.json"
         payload: dict[str, Any] = {
             "attempt_id": attempt_id,
@@ -662,18 +732,77 @@ def complete_execution_recovery(
             "recorded_at": datetime.now(timezone.utc).isoformat(),
             "archived_path": intent.get("archived_path"),
             "identities": intent.get("identities"),
+            "intent_sha256": hashlib.sha256(_json_bytes(intent)).hexdigest(),
+            "archive_manifest_sha256": archive_manifest_sha256,
             "status": "complete",
         }
         if destination.exists():
             existing = _read_registry_json(destination)
-            comparable = {key: value for key, value in payload.items() if key != "recorded_at"}
-            if all(existing.get(key) == value for key, value in comparable.items()):
-                return existing
-            raise ValueError("completed execution recovery identity differs")
+            _validate_execution_recovery_complete(
+                existing,
+                intent=intent,
+                registry_root=registry_root,
+            )
+            expected = {key: value for key, value in payload.items() if key != "recorded_at"}
+            if any(existing.get(key) != value for key, value in expected.items()):
+                raise ValueError("completed execution recovery identity differs")
+            return existing
+        pending = _pending_execution_recovery_unlocked(registry_root, attempt_id)
         if pending != intent:
             raise ValueError("execution recovery intent changed before completion")
         _write_exclusive(destination, _json_bytes(payload))
         return payload
+
+
+def _validate_execution_recovery_complete(
+    payload: dict[str, Any], *, intent: dict[str, Any], registry_root: Path
+) -> None:
+    expected_keys = {
+        "attempt_id",
+        "recovery_id",
+        "execution_id",
+        "recorded_at",
+        "archived_path",
+        "identities",
+        "intent_sha256",
+        "archive_manifest_sha256",
+        "status",
+    }
+    expected = {
+        "attempt_id": intent.get("attempt_id"),
+        "recovery_id": intent.get("recovery_id"),
+        "execution_id": intent.get("execution_id"),
+        "archived_path": intent.get("archived_path"),
+        "identities": intent.get("identities"),
+        "intent_sha256": hashlib.sha256(_json_bytes(intent)).hexdigest(),
+        "status": "complete",
+    }
+    if (
+        set(payload) != expected_keys
+        or any(payload.get(key) != value for key, value in expected.items())
+        or not isinstance(payload.get("recorded_at"), str)
+        or not payload["recorded_at"]
+        or _SHA256.fullmatch(str(payload.get("archive_manifest_sha256", ""))) is None
+        or payload.get("archive_manifest_sha256")
+        != _archive_manifest_sha256(registry_root, intent)
+    ):
+        raise ValueError("completed execution recovery identity differs")
+
+
+def _archive_manifest_sha256(
+    registry_root: Path, intent: dict[str, Any]
+) -> str:
+    path = (
+        registry_root.parent
+        / str(intent.get("recovery_root", ""))
+        / "archive_manifest.json"
+    )
+    if path.is_symlink():
+        raise ValueError("completed execution recovery archive manifest uses a symlink")
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except FileNotFoundError as error:
+        raise ValueError("completed execution recovery archive manifest is missing") from error
 
 
 def recover_prepared_publication(

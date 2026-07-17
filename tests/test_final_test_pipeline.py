@@ -107,6 +107,20 @@ def _signals() -> FinalTestSignals:
     return FinalTestSignals(bounded, bounded, bounded, bounded)
 
 
+def _execution_coverage_snapshot(
+    prepared_attempt: PreparedAttempt, preflight: object
+):
+    return snapshot_execution_coverages(
+        prepared_attempt.data_root / "processed/final_test",
+        attempt_id=prepared_attempt.attempt_id,
+        preparation=preflight.preparation,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        expected_security_sha256=preflight.security_event_coverage_sha256,
+        expected_corporate_sha256=preflight.corporate_action_coverage_sha256,
+    )
+
+
 def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
     def build_execution_inputs(*_args: object, **_kwargs: object) -> dict[str, object]:
         return {"status": "ready", "files": []}
@@ -327,6 +341,7 @@ def test_resume_archives_verified_partial_execution_before_recomputing(
         security_event_coverage_path=prepared_attempt.security_coverage,
         corporate_action_coverage_root=prepared_attempt.corporate_coverage,
     )
+    snapshot = _execution_coverage_snapshot(prepared_attempt, preflight)
     identities = {
         "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
         "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
@@ -350,7 +365,11 @@ def test_resume_archives_verified_partial_execution_before_recomputing(
             {
                 "execution_id": "interrupted-execution",
                 "attempt_id": prepared_attempt.attempt_id,
+                "sealed_protocol_sha256": (
+                    preflight.authorization.sealed_protocol_sha256
+                ),
                 **identities,
+                "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
             }
         ),
         encoding="utf-8",
@@ -377,7 +396,9 @@ def test_resume_archives_verified_partial_execution_before_recomputing(
     )
     assert result.release is not None
     assert len(archives) == 1
-    assert (archives[0] / "archive/partial.bin").read_bytes() == b"immutable interrupted bytes"
+    assert (
+        archives[0] / "archive/attempt_run/partial.bin"
+    ).read_bytes() == b"immutable interrupted bytes"
 
 
 def test_resume_completes_recovery_audit_after_move_before_event_crash(
@@ -392,6 +413,7 @@ def test_resume_completes_recovery_audit_after_move_before_event_crash(
         security_event_coverage_path=prepared_attempt.security_coverage,
         corporate_action_coverage_root=prepared_attempt.corporate_coverage,
     )
+    snapshot = _execution_coverage_snapshot(prepared_attempt, preflight)
     identities = {
         "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
         "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
@@ -415,7 +437,11 @@ def test_resume_completes_recovery_audit_after_move_before_event_crash(
             {
                 "execution_id": "interrupted-execution",
                 "attempt_id": prepared_attempt.attempt_id,
+                "sealed_protocol_sha256": (
+                    preflight.authorization.sealed_protocol_sha256
+                ),
                 **identities,
+                "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
             }
         ),
         encoding="utf-8",
@@ -473,6 +499,7 @@ def test_resume_rejects_competing_recovery_target_without_moving_source(
         security_event_coverage_path=prepared_attempt.security_coverage,
         corporate_action_coverage_root=prepared_attempt.corporate_coverage,
     )
+    snapshot = _execution_coverage_snapshot(prepared_attempt, preflight)
     identities = {
         "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
         "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
@@ -491,7 +518,9 @@ def test_resume_rejects_competing_recovery_target_without_moving_source(
     identity = {
         "execution_id": "interrupted-execution",
         "attempt_id": prepared_attempt.attempt_id,
+        "sealed_protocol_sha256": preflight.authorization.sealed_protocol_sha256,
         **identities,
+        "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
     }
     (partial / "execution_identity.json").write_text(
         json.dumps(identity), encoding="utf-8"
@@ -503,13 +532,18 @@ def test_resume_rejects_competing_recovery_target_without_moving_source(
         attempt_id=prepared_attempt.attempt_id,
         execution_id="interrupted-execution",
         identities=identities,
+        artifact_presence={
+            "attempt_run": True,
+            "execution_input_sources": False,
+            "attempt_inputs": False,
+        },
     )
     competing = final_root / str(intent["recovery_root"])
     competing.mkdir(parents=True)
     (competing / "foreign.bin").write_bytes(b"competing archive")
     _patch_steps(monkeypatch, publishable=True)
 
-    with pytest.raises(ValueError, match="archive target is already occupied"):
+    with pytest.raises(FileExistsError, match="recovery claim target already exists"):
         pipeline_module.resume_final_test_release(
             code_root=prepared_attempt.code_root,
             data_root=prepared_attempt.data_root,
@@ -537,6 +571,7 @@ def test_resume_rejects_recovery_intent_path_escape_without_moving_source(
         security_event_coverage_path=prepared_attempt.security_coverage,
         corporate_action_coverage_root=prepared_attempt.corporate_coverage,
     )
+    snapshot = _execution_coverage_snapshot(prepared_attempt, preflight)
     identities = {
         "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
         "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
@@ -557,7 +592,11 @@ def test_resume_rejects_recovery_intent_path_escape_without_moving_source(
             {
                 "execution_id": "interrupted-execution",
                 "attempt_id": prepared_attempt.attempt_id,
+                "sealed_protocol_sha256": (
+                    preflight.authorization.sealed_protocol_sha256
+                ),
                 **identities,
+                "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
             }
         ),
         encoding="utf-8",
@@ -569,6 +608,11 @@ def test_resume_rejects_recovery_intent_path_escape_without_moving_source(
         attempt_id=prepared_attempt.attempt_id,
         execution_id="interrupted-execution",
         identities=identities,
+        artifact_presence={
+            "attempt_run": True,
+            "execution_input_sources": False,
+            "attempt_inputs": False,
+        },
     )
     intent_path = next(registry.glob("*.recovery.*.intent.json"))
     intent["recovery_root"] = "../escaped-recovery"
@@ -760,7 +804,7 @@ def test_resume_rejects_orphan_with_invalid_prepared_record_before_current_resto
     prepared_path.write_text(json.dumps(prepared), encoding="utf-8")
     monkeypatch.setattr(pipeline_module, "publish_release", publish)
 
-    with pytest.raises(ValueError, match="orphan final-test release identity differs"):
+    with pytest.raises(ValueError, match="prepared final-test publication identity differs"):
         pipeline_module.resume_final_test_release(
             code_root=prepared_attempt.code_root,
             data_root=prepared_attempt.data_root,
@@ -872,7 +916,7 @@ def test_resume_rejects_partial_execution_with_incomplete_identity(
     )
     _patch_steps(monkeypatch, publishable=True)
 
-    with pytest.raises(ValueError, match="identity is incomplete"):
+    with pytest.raises(ValueError, match="identity (?:is incomplete|schema differs)"):
         pipeline_module.resume_final_test_release(
             code_root=prepared_attempt.code_root,
             data_root=prepared_attempt.data_root,
