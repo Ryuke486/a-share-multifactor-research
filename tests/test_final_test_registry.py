@@ -399,7 +399,7 @@ def test_attempt_transition_serializes_legacy_success_and_first_state_event(
     registry = tmp_path / "attempts"
     _register(registry)
     original = registry_module._is_legacy_attempt_without_state_events
-    original_resolve = registry_module.resolve_attempt_state
+    original_resolve = registry_module._resolve_attempt_state_unlocked
     legacy_checked = Event()
     release_legacy_write = Event()
     preparing_entered = Event()
@@ -421,7 +421,9 @@ def test_attempt_transition_serializes_legacy_success_and_first_state_event(
         preparing_entered.set()
         return original_resolve(registry_root, attempt_id)
 
-    monkeypatch.setattr(registry_module, "resolve_attempt_state", signal_preparing_resolution)
+    monkeypatch.setattr(
+        registry_module, "_resolve_attempt_state_unlocked", signal_preparing_resolution
+    )
 
     def append_legacy_success() -> str:
         try:
@@ -480,3 +482,52 @@ def test_attempt_transition_lock_releases_after_write_failure(
     finally:
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         os.close(descriptor)
+
+
+def test_resolve_attempt_state_waits_for_in_progress_state_event_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    event_created = Event()
+    release_write = Event()
+    resolver_finished = Event()
+
+    def paused_exclusive_write(path: Path, payload: bytes) -> None:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            event_created.set()
+            if not release_write.wait(timeout=3):
+                raise RuntimeError("state event write did not resume")
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except BaseException:
+            path.unlink(missing_ok=True)
+            raise
+
+    monkeypatch.setattr(registry_module, "_write_exclusive", paused_exclusive_write)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        writer = executor.submit(
+            append_attempt_state,
+            registry,
+            attempt_id="attempt-001",
+            state="preparing",
+        )
+        assert event_created.wait(timeout=3)
+
+        def resolve_after_write() -> dict[str, object]:
+            try:
+                return resolve_attempt_state(registry, "attempt-001")
+            finally:
+                resolver_finished.set()
+
+        resolver = executor.submit(resolve_after_write)
+        try:
+            assert not resolver_finished.wait(timeout=0.2)
+        finally:
+            release_write.set()
+        assert writer.result(timeout=3)["state"] == "preparing"
+        assert resolver.result(timeout=3)["state"] == "preparing"

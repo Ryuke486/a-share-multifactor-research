@@ -52,20 +52,27 @@ def validate_publication_id(value: str) -> str:
 
 
 @contextmanager
-def _attempt_transition_lock(registry_root: Path, attempt_id: str):
-    """Serialize state transitions while retaining exclusive event writes."""
+def _attempt_lock(registry_root: Path, attempt_id: str, operation: int):
+    """Hold a shared or exclusive lock for one validated attempt."""
     registry_root.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(
         registry_root / f"{attempt_id}.lock", os.O_WRONLY | os.O_CREAT, 0o600
     )
     try:
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        fcntl.flock(descriptor, operation)
         try:
             yield
         finally:
             fcntl.flock(descriptor, fcntl.LOCK_UN)
     finally:
         os.close(descriptor)
+
+
+@contextmanager
+def _attempt_transition_lock(registry_root: Path, attempt_id: str):
+    """Serialize state transitions while retaining exclusive event writes."""
+    with _attempt_lock(registry_root, attempt_id, fcntl.LOCK_EX):
+        yield
 
 
 def append_attempt_state(
@@ -78,7 +85,7 @@ def append_attempt_state(
     """Append the next immutable state event for one final-test attempt."""
     validate_publication_id(attempt_id)
     with _attempt_transition_lock(registry_root, attempt_id):
-        current = resolve_attempt_state(registry_root, attempt_id)
+        current = _resolve_attempt_state_unlocked(registry_root, attempt_id)
         expected = _STATE_SEQUENCE.get(str(current["state"]), -1) + 1
         if _STATE_SEQUENCE.get(state) != expected:
             raise ValueError("invalid final-test state transition")
@@ -106,6 +113,14 @@ def append_attempt_state(
 def resolve_attempt_state(registry_root: Path, attempt_id: str) -> dict[str, Any]:
     """Rebuild an attempt state from immutable registration, events, and outcome."""
     validate_publication_id(attempt_id)
+    with _attempt_lock(registry_root, attempt_id, fcntl.LOCK_SH):
+        return _resolve_attempt_state_unlocked(registry_root, attempt_id)
+
+
+def _resolve_attempt_state_unlocked(
+    registry_root: Path, attempt_id: str
+) -> dict[str, Any]:
+    """Rebuild attempt state while the caller owns the appropriate attempt lock."""
     record = _read_registry_json(registry_root / f"{attempt_id}.json")
     if (
         record.get("attempt_id") != attempt_id
@@ -308,7 +323,8 @@ def append_attempt_outcome(
         if (
             status == "succeeded"
             and not _is_legacy_attempt_without_state_events(registry_root, attempt_id)
-            and resolve_attempt_state(registry_root, attempt_id)["state"] != "executing"
+            and _resolve_attempt_state_unlocked(registry_root, attempt_id)["state"]
+            != "executing"
         ):
             raise ValueError("succeeded outcome requires executing state")
         destination = registry_root / f"{attempt_id}.outcome.json"
