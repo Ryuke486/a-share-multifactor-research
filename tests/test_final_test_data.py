@@ -558,6 +558,111 @@ def test_claimed_data_build_recovers_from_bound_inventory_without_rediscovery(
     assert calls == []
 
 
+def test_orphan_inventory_before_claim_recovers_without_rediscovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    original_claim = data_extension._claim_build
+    monkeypatch.setattr(
+        data_extension,
+        "_claim_build",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            KeyboardInterrupt("hard crash before claim publication")
+        ),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="before claim publication"):
+        _build(config, authorization, code_root)
+
+    final_root = config.paths.processed / "final_test"
+    inventory = final_root / f"data-build-inputs/{authorization.attempt_id}.json"
+    assert inventory.is_file()
+    inventory_payload = json.loads(inventory.read_text(encoding="utf-8"))
+    assert inventory_payload["authorization_identity"]["attempt_id"] == (
+        authorization.attempt_id
+    )
+    assert not (final_root / "data-build-claim.json").exists()
+    inventory_bytes = inventory.read_bytes()
+    monkeypatch.setattr(data_extension, "_claim_build", original_claim)
+    calls = _forbid_discovery(monkeypatch)
+
+    _build(config, authorization, code_root)
+
+    assert calls == []
+    assert inventory.read_bytes() == inventory_bytes
+    assert json.loads((final_root / "data-build-claim.json").read_text())["status"] == (
+        "published"
+    )
+
+
+@pytest.mark.parametrize(
+    ("drift", "message"),
+    [
+        ("attempt", "inventory identity differs"),
+        ("authorization", "inventory identity differs"),
+        ("path", "input file"),
+        ("hash", "input file identity changed"),
+    ],
+)
+def test_orphan_inventory_mismatch_fails_closed_without_overwrite_or_discovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+    message: str,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    original_claim = data_extension._claim_build
+    monkeypatch.setattr(
+        data_extension,
+        "_claim_build",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        _build(config, authorization, code_root)
+    monkeypatch.setattr(data_extension, "_claim_build", original_claim)
+
+    final_root = config.paths.processed / "final_test"
+    inventory_path = (
+        final_root / f"data-build-inputs/{authorization.attempt_id}.json"
+    )
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    first_file = inventory["pairs"][0]["files"][0]
+    if drift == "attempt":
+        inventory["authorization_identity"]["attempt_id"] = "different-attempt"
+        inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    elif drift == "authorization":
+        inventory["authorization_identity"]["git_tree"] = "0" * 40
+        inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    elif drift == "path":
+        first_file["relative_path"] = "../escaped.csv"
+        inventory_path.write_text(json.dumps(inventory), encoding="utf-8")
+    else:
+        root = {
+            "unadjusted": config.paths.raw_unadjusted,
+            "backward_adjusted": config.paths.raw_backward_adjusted,
+        }[first_file["role"]]
+        (root / first_file["relative_path"]).write_bytes(b"changed raw bytes")
+    drifted_inventory_bytes = inventory_path.read_bytes()
+    calls = _forbid_discovery(monkeypatch)
+
+    with pytest.raises(ValueError, match=message):
+        _build(config, authorization, code_root)
+
+    assert calls == []
+    assert inventory_path.read_bytes() == drifted_inventory_bytes
+    assert not (final_root / "data-build-claim.json").exists()
+    assert not (final_root / "daily_panel").exists()
+
+
 def test_publishing_data_build_recovers_before_or_after_panel_rename(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -677,3 +782,63 @@ def test_initial_exclusive_claim_fsyncs_file_then_parent(
     data_publication.claim_build(final_root, authorization)
 
     assert events == ["fsync_file", "fsync_parent"]
+
+
+def test_interrupted_claim_write_never_exposes_partial_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test import data_publication
+
+    config = _config(tmp_path)
+    _, authorization = _authorized_context(tmp_path, config)
+    final_root = tmp_path / "claim-root"
+
+    def interrupt_dump(
+        _payload: object,
+        stream: object,
+        **_kwargs: object,
+    ) -> None:
+        stream.write('{"status":')
+        stream.flush()
+        raise KeyboardInterrupt("hard crash while writing claim")
+
+    monkeypatch.setattr(data_publication.json, "dump", interrupt_dump)
+
+    with pytest.raises(KeyboardInterrupt, match="while writing claim"):
+        data_publication.claim_build(final_root, authorization)
+
+    assert not (final_root / "data-build-claim.json").exists()
+    assert list(final_root.glob(".data-build-claim.*.tmp")) == []
+
+
+def test_claim_publication_is_atomic_no_replace_under_competition(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test import data_publication
+
+    config = _config(tmp_path)
+    _, authorization = _authorized_context(tmp_path, config)
+    final_root = tmp_path / "claim-root"
+    final_root.mkdir()
+    claim_path = final_root / "data-build-claim.json"
+    competitor = b'{"competitor":true}\n'
+    original_publish = data_publication.atomic_rename_no_replace
+    calls: list[str] = []
+
+    def compete_then_publish(source: Path, destination: Path) -> None:
+        calls.append("atomic-no-replace")
+        destination.write_bytes(competitor)
+        original_publish(source, destination)
+
+    monkeypatch.setattr(
+        data_publication,
+        "atomic_rename_no_replace",
+        compete_then_publish,
+    )
+
+    with pytest.raises(ValueError, match="already claimed"):
+        data_publication.claim_build(final_root, authorization)
+
+    assert calls == ["atomic-no-replace"]
+    assert claim_path.read_bytes() == competitor
+    assert list(final_root.glob(".data-build-claim.*.tmp")) == []

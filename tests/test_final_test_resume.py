@@ -453,6 +453,7 @@ def test_preflight_returns_verified_coverage_manifest_hashes(
         ("nan_ratio", "security event.*contract"),
         ("infinite_cash", "security event.*contract"),
         ("duplicate_key", "security event.*duplicate|security event.*contract"),
+        ("self_merger", "security event.*contract"),
     ],
 )
 def test_preflight_rejects_invalid_security_execution_rows_before_claim(
@@ -485,6 +486,10 @@ def test_preflight_rejects_invalid_security_execution_rows_before_claim(
         events = events.with_columns(
             pl.lit(float("inf")).alias("cash_per_share")
         )
+    elif mutation == "self_merger":
+        events = events.with_columns(
+            pl.col("source_symbol").alias("target_symbol")
+        )
     _set_security_events(prepared_attempt, events)
     before = _registry_snapshot(prepared_attempt)
 
@@ -493,6 +498,15 @@ def test_preflight_rejects_invalid_security_execution_rows_before_claim(
 
     assert _registry_snapshot(prepared_attempt) == before
     assert _attempt_state(prepared_attempt) == "awaiting_official_evidence"
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    assert not (
+        final_root
+        / "attempts"
+        / f"{prepared_attempt.attempt_id}.outcome.json"
+    ).exists()
+    assert not (
+        final_root / "attempt_runs" / prepared_attempt.attempt_id
+    ).exists()
 
 
 def _preflight(attempt: PreparedAttempt):

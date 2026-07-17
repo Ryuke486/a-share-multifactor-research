@@ -12,8 +12,7 @@ from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.data.build import BuildManifest, build_parquet_dataset
-from ashare_multifactor.data.discovery import DailyFilePair
-from ashare_multifactor.data.discovery import discover_daily_pairs
+from ashare_multifactor.data.discovery import DailyFilePair, discover_daily_pairs
 from ashare_multifactor.final_test.data_inventory import (
     build_data_manifest as _build_data_manifest,
     build_input_inventory,
@@ -68,18 +67,36 @@ def build_final_test_daily_panel(
     claim_path = final_root / "data-build-claim.json"
     if claim_path.exists() or claim_path.is_symlink():
         raise ValueError("final-test data build is already claimed")
-    try:
-        inventory = _input_inventory(config, start, end)
-    except Exception as error:
-        claim_path = _claim_build(final_root, authorization)
-        _update_claim(claim_path, authorization, status="failed", error=error)
-        raise
     inventory_root = final_root / "data-build-inputs"
+    if inventory_root.is_symlink():
+        raise ValueError("final-test bound input inventory path uses a symlink")
     inventory_root.mkdir(parents=True, exist_ok=True)
     inventory_path = inventory_root / f"{authorization.attempt_id}.json"
     if inventory_path.exists() or inventory_path.is_symlink():
-        raise FileExistsError("final-test bound input inventory already exists")
-    _write_json(inventory_path, inventory)
+        inventory, pairs = _load_orphan_input_inventory(
+            inventory_path,
+            config=config,
+            authorization=authorization,
+            start=start,
+            end=end,
+        )
+    else:
+        try:
+            inventory = _bound_input_inventory(
+                _input_inventory(config, start, end),
+                authorization,
+            )
+        except Exception as error:
+            claim_path = _claim_build(final_root, authorization)
+            _update_claim(claim_path, authorization, status="failed", error=error)
+            raise
+        _write_json(inventory_path, inventory)
+        pairs = load_bound_input_pairs(
+            config,
+            inventory,
+            start=start,
+            end=end,
+        )
     staging_relative_path = f"data-staging/{authorization.attempt_id}"
     claim_path = _claim_build(
         final_root,
@@ -89,12 +106,6 @@ def build_final_test_daily_panel(
             relative_path=f"data-build-inputs/{authorization.attempt_id}.json",
         ),
         staging_relative_path=staging_relative_path,
-    )
-    pairs = load_bound_input_pairs(
-        config,
-        inventory,
-        start=start,
-        end=end,
     )
     return _build_claimed_panel(
         config,
@@ -106,6 +117,60 @@ def build_final_test_daily_panel(
         inventory=inventory,
         pairs=pairs,
     )
+
+
+def _bound_input_inventory(
+    inventory: dict[str, object],
+    authorization: FinalTestAuthorization,
+) -> dict[str, object]:
+    if set(inventory) != {"schema_version", "period", "pairs"}:
+        raise ValueError("invalid final-test input inventory")
+    return {
+        **inventory,
+        "authorization_identity": _authorization_identity(authorization),
+    }
+
+
+def _load_orphan_input_inventory(
+    path: Path,
+    *,
+    config: ResearchConfig,
+    authorization: FinalTestAuthorization,
+    start: date,
+    end: date,
+) -> tuple[dict[str, object], list[DailyFilePair]]:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("orphan final-test input inventory path is invalid")
+    try:
+        inventory = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError("orphan final-test input inventory is invalid") from error
+    if (
+        not isinstance(inventory, dict)
+        or set(inventory)
+        != {"schema_version", "period", "pairs", "authorization_identity"}
+        or inventory.get("authorization_identity")
+        != _authorization_identity(authorization)
+    ):
+        raise ValueError("orphan final-test input inventory identity differs")
+    pairs = load_bound_input_pairs(config, inventory, start=start, end=end)
+    return inventory, pairs
+
+
+def _authorization_identity(
+    authorization: FinalTestAuthorization,
+) -> dict[str, object]:
+    return {
+        "attempt_id": authorization.attempt_id,
+        "approval_id": authorization.approval_id,
+        "registered_at": authorization.registered_at,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
+    }
 
 
 def _build_claimed_panel(

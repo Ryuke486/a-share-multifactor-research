@@ -56,6 +56,7 @@ def normalize_security_event_rows(frame: pl.DataFrame) -> pl.DataFrame:
             & (
                 pl.col("target_symbol").is_null()
                 | pl.col("target_symbol").str.strip_chars().eq("")
+                | (pl.col("target_symbol") == pl.col("source_symbol"))
                 | (pl.col("ratio") <= 0)
                 | (pl.col("cash_per_share") != 0)
             )

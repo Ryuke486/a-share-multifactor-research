@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
+from uuid import uuid4
 
 from ashare_multifactor.final_test.data_inventory import (
     fsync_directory,
@@ -12,6 +13,7 @@ from ashare_multifactor.final_test.data_inventory import (
     write_json,
 )
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test.recovery_secure_fs import atomic_rename_no_replace
 
 
 @dataclass(frozen=True)
@@ -37,20 +39,28 @@ def claim_build(
         input_inventory=input_inventory,
         staging_relative_path=staging_relative_path,
     )
+    temporary = final_root / f".data-build-claim.{uuid4().hex}.tmp"
+    temporary_created = False
     try:
         descriptor = os.open(
-            claim_path,
+            temporary,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
             0o600,
         )
-    except FileExistsError as error:
-        raise ValueError("final-test data build is already claimed") from error
-    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-        json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
-        stream.write("\n")
-        stream.flush()
-        os.fsync(stream.fileno())
-    fsync_directory(final_root)
+        temporary_created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            atomic_rename_no_replace(temporary, claim_path)
+        except FileExistsError as error:
+            raise ValueError("final-test data build is already claimed") from error
+        fsync_directory(final_root)
+    finally:
+        if temporary_created:
+            temporary.unlink(missing_ok=True)
     return claim_path
 
 
