@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import date
 import hashlib
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -182,6 +183,7 @@ def test_prepare_publishes_sorted_unique_shenzhen_shanghai_symbol_scope(
     assert manifest["period"] == ["2022-01-01", "2025-12-31"]
     assert manifest["supported_markets"] == ["sh", "sz"]
     assert manifest["symbol_scope"]["symbol_count"] == 2
+    assert manifest["created_at"] == "2026-07-17T00:00:00+00:00"
 
 
 @pytest.mark.parametrize("symbol", ["400001", "800001", "920001"])
@@ -355,3 +357,100 @@ def test_prepare_recovers_a_published_scope_without_reauthorizing_or_rescanning(
 
     assert recovered == result
     assert calls == ["awaiting_official_evidence"]
+
+
+def test_verify_preparation_rejects_revalidated_panel_symbol_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    _patch_prepare_dependencies(
+        monkeypatch,
+        tmp_path,
+        rows=[(date(2022, 1, 3), "000001")],
+        calls=calls,
+    )
+    result = prepare_final_test(
+        code_root=tmp_path,
+        data_root=tmp_path,
+        opening_token_path=tmp_path / "token.json",
+        approval_key=b"0123456789abcdef",
+        attempt_id="attempt-001",
+    )
+    authorization = _authorization()
+    registry = tmp_path / "processed/final_test/attempts"
+    record = register_attempt(
+        registry,
+        attempt_id=authorization.attempt_id,
+        git_commit=authorization.git_commit,
+        git_tree=authorization.git_tree,
+        token_sha256="f" * 64,
+        sealed_protocol_sha256=authorization.sealed_protocol_sha256,
+        robustness_release=authorization.robustness_release,
+        approval_id=authorization.approval_id,
+        robustness_manifest_sha256=authorization.robustness_manifest_sha256,
+        robustness_lineage_sha256=authorization.robustness_lineage_sha256,
+    )
+    authorization = replace(authorization, registered_at=str(record["registered_at"]))
+    append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="awaiting_official_evidence",
+        identities={"prepare_manifest_sha256": result.manifest_sha256},
+    )
+    pl.DataFrame({"date": [date(2022, 1, 3)], "symbol": ["600000"]}).write_parquet(
+        tmp_path / "processed/final_test/daily_panel/year=2022/part-000.parquet"
+    )
+
+    with pytest.raises(ValueError, match="symbol scope differs"):
+        verify_preparation(
+            tmp_path / "processed/final_test",
+            attempt_id="attempt-001",
+            authorization=authorization,
+        )
+
+
+def test_verify_preparation_rejects_a_symlink_final_root_before_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    _patch_prepare_dependencies(
+        monkeypatch,
+        tmp_path,
+        rows=[(date(2022, 1, 3), "000001")],
+        calls=calls,
+    )
+    result = prepare_final_test(
+        code_root=tmp_path,
+        data_root=tmp_path,
+        opening_token_path=tmp_path / "token.json",
+        approval_key=b"0123456789abcdef",
+        attempt_id="attempt-001",
+    )
+    authorization = _authorization()
+    registry = tmp_path / "processed/final_test/attempts"
+    record = register_attempt(
+        registry,
+        attempt_id=authorization.attempt_id,
+        git_commit=authorization.git_commit,
+        git_tree=authorization.git_tree,
+        token_sha256="f" * 64,
+        sealed_protocol_sha256=authorization.sealed_protocol_sha256,
+        robustness_release=authorization.robustness_release,
+        approval_id=authorization.approval_id,
+        robustness_manifest_sha256=authorization.robustness_manifest_sha256,
+        robustness_lineage_sha256=authorization.robustness_lineage_sha256,
+    )
+    authorization = replace(authorization, registered_at=str(record["registered_at"]))
+    append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="awaiting_official_evidence",
+        identities={"prepare_manifest_sha256": result.manifest_sha256},
+    )
+    alias = tmp_path / "final-test-alias"
+    os.symlink(tmp_path / "processed/final_test", alias)
+
+    with pytest.raises(ValueError, match="uses a symlink"):
+        verify_preparation(alias, attempt_id="attempt-001", authorization=authorization)

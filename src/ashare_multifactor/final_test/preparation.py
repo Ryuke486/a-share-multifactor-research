@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timezone
+from datetime import date
 import hashlib
 import json
 import os
@@ -204,9 +204,9 @@ def verify_preparation(
     if not isinstance(authorization, FinalTestAuthorization):
         raise TypeError("authorization must be a FinalTestAuthorization")
     validate_publication_id(attempt_id)
-    final_root = final_root.resolve()
     if final_root.is_symlink():
         raise ValueError("final-test preparation root uses a symlink")
+    final_root = final_root.resolve()
     if authorization.attempt_id != attempt_id:
         raise ValueError("preparation attempt differs from authorization")
     state = resolve_attempt_state(final_root / "attempts", attempt_id)
@@ -398,7 +398,7 @@ def _publish_preparation(
                 data_manifest, relative_path="daily_panel/data_manifest.json"
             ),
             "symbol_scope": scope_record,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": authorization.registered_at,
             "state": "awaiting_official_evidence",
         }
         write_json(temporary / "prepare_manifest.json", manifest)
@@ -446,6 +446,11 @@ def _verify_preparation_files(
     if data_path != resolution.root / "data_manifest.json":
         raise ValueError("preparation data manifest path is not canonical")
     scope = _verify_symbol_scope(preparation_root, manifest["symbol_scope"])
+    source = validate_panel_source(
+        resolution.root, Period(FINAL_TEST_START, FINAL_TEST_END)
+    )
+    if scope[3] != _symbols_from_verified_panel(source):
+        raise ValueError("revalidated final-test panel symbol scope differs")
     return FinalTestPreparation(
         attempt_id=authorization.attempt_id,
         state="awaiting_official_evidence",
@@ -518,7 +523,7 @@ def _validate_preparation_manifest(
         raise ValueError("invalid final-test preparation symbol scope")
 
 
-def _verify_symbol_scope(root: Path, record: object) -> tuple[Path, int, str]:
+def _verify_symbol_scope(root: Path, record: object) -> tuple[Path, int, str, list[str]]:
     if not isinstance(record, dict):
         raise ValueError("invalid final-test preparation symbol scope")
     path = verify_file_identity(root, record, "symbol scope")
@@ -538,7 +543,7 @@ def _verify_symbol_scope(root: Path, record: object) -> tuple[Path, int, str]:
     digest = _symbols_digest(symbols)
     if record["symbol_count"] != len(symbols) or record["symbols_sha256"] != digest:
         raise ValueError("final-test preparation symbol scope identity differs")
-    return path, len(symbols), digest
+    return path, len(symbols), digest, symbols
 
 
 def _assert_registered_identity(
