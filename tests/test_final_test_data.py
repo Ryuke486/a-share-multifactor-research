@@ -13,6 +13,7 @@ from test_build import _config, _write_pair
 
 from ashare_multifactor.audit.publication import publish_release
 from ashare_multifactor.audit.records import sha256_file
+from ashare_multifactor.data.build import build_parquet_dataset
 from ashare_multifactor.final_test.data_extension import build_final_test_daily_panel
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 from ashare_multifactor.final_test.registry import register_attempt
@@ -510,6 +511,123 @@ def test_post_publish_claim_failure_retains_resolvable_publishing_state(
     assert data_extension.verify_final_test_data_panel(resolved.root)[
         "schema_version"
     ] == "1"
+
+
+def test_claimed_data_build_recovers_from_bound_inventory_without_rediscovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    monkeypatch.setattr(
+        data_extension,
+        "build_parquet_dataset",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            KeyboardInterrupt("hard crash after claim")
+        ),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="after claim"):
+        _build(config, authorization, code_root)
+
+    claim_path = config.paths.processed / "final_test/data-build-claim.json"
+    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    assert claim["status"] == "claimed"
+    assert claim["input_inventory"]["relative_path"].startswith(
+        "data-build-inputs/"
+    )
+    calls = _forbid_discovery(monkeypatch)
+    monkeypatch.setattr(
+        data_extension,
+        "build_parquet_dataset",
+        build_parquet_dataset,
+    )
+
+    recovered = data_extension.recover_final_test_daily_panel(
+        config,
+        authorization,
+        FINAL_START,
+        FINAL_END,
+        code_root=code_root,
+    )
+
+    assert recovered.claim_status == "published"
+    assert calls == []
+
+
+def test_publishing_data_build_recovers_before_or_after_panel_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    original_replace = data_extension.os.replace
+
+    def interrupt_panel_rename(source: Path, destination: Path) -> None:
+        if destination == config.paths.processed / "final_test/daily_panel":
+            raise KeyboardInterrupt("hard crash before panel rename")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(data_extension.os, "replace", interrupt_panel_rename)
+    with pytest.raises(KeyboardInterrupt, match="before panel rename"):
+        _build(config, authorization, code_root)
+    claim = json.loads(
+        (config.paths.processed / "final_test/data-build-claim.json").read_text()
+    )
+    assert claim["status"] == "publishing"
+    monkeypatch.setattr(data_extension.os, "replace", original_replace)
+    calls = _forbid_discovery(monkeypatch)
+
+    recovered = data_extension.recover_final_test_daily_panel(
+        config,
+        authorization,
+        FINAL_START,
+        FINAL_END,
+        code_root=code_root,
+    )
+
+    assert recovered.claim_status == "published"
+    assert calls == []
+
+
+def test_post_rename_publishing_claim_is_completed_without_rediscovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    original_update = data_extension._update_claim
+
+    def interrupt_published(*args: object, status: str, **kwargs: object) -> None:
+        if status == "published":
+            raise KeyboardInterrupt("hard crash after panel rename")
+        original_update(*args, status=status, **kwargs)
+
+    monkeypatch.setattr(data_extension, "_update_claim", interrupt_published)
+    with pytest.raises(KeyboardInterrupt, match="after panel rename"):
+        _build(config, authorization, code_root)
+    monkeypatch.setattr(data_extension, "_update_claim", original_update)
+    calls = _forbid_discovery(monkeypatch)
+
+    recovered = data_extension.recover_final_test_daily_panel(
+        config,
+        authorization,
+        FINAL_START,
+        FINAL_END,
+        code_root=code_root,
+    )
+
+    assert recovered.claim_status == "published"
+    assert calls == []
 
 
 def test_atomic_identity_json_write_fsyncs_file_replace_and_parent(

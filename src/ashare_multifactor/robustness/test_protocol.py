@@ -111,6 +111,7 @@ def verify_test_opening_token(
     *,
     approval_key: bytes,
     before_scan: Callable[[], object] | None = None,
+    attempt_id: str | None = None,
 ) -> dict[str, object]:
     """Validate explicit Stage-9 approval before invoking any test-data scanner."""
     try:
@@ -168,6 +169,8 @@ def verify_test_opening_token(
         **{field: token[field] for field in identity_fields},
         "token_sha256": hashlib.sha256(token_path.read_bytes()).hexdigest(),
     }
+    if attempt_id is not None:
+        record["attempt_id"] = attempt_id
     try:
         with consumption_ledger.open("x", encoding="utf-8") as stream:
             json.dump(record, stream, ensure_ascii=False, indent=2, sort_keys=True)

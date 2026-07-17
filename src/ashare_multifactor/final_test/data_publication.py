@@ -25,10 +25,18 @@ class FinalTestDataResolution:
 def claim_build(
     final_root: Path,
     authorization: FinalTestAuthorization,
+    *,
+    input_inventory: dict[str, object] | None = None,
+    staging_relative_path: str | None = None,
 ) -> Path:
     final_root.mkdir(parents=True, exist_ok=True)
     claim_path = final_root / "data-build-claim.json"
-    payload = _claim_payload(authorization, status="claimed")
+    payload = _claim_payload(
+        authorization,
+        status="claimed",
+        input_inventory=input_inventory,
+        staging_relative_path=staging_relative_path,
+    )
     try:
         descriptor = os.open(
             claim_path,
@@ -68,10 +76,18 @@ def update_claim(
         existing_identity = current.get("data_manifest")
         if isinstance(existing_identity, dict):
             data_manifest = existing_identity
+    input_inventory = current.get("input_inventory") if isinstance(current, dict) else None
+    staging_relative_path = (
+        current.get("staging_relative_path") if isinstance(current, dict) else None
+    )
     payload = _claim_payload(
         authorization,
         status=status,
         data_manifest=data_manifest,
+        input_inventory=(input_inventory if isinstance(input_inventory, dict) else None),
+        staging_relative_path=(
+            staging_relative_path if isinstance(staging_relative_path, str) else None
+        ),
     )
     if error is not None:
         payload["error_type"] = type(error).__name__
@@ -112,6 +128,8 @@ def _claim_payload(
     *,
     status: str,
     data_manifest: dict[str, object] | None = None,
+    input_inventory: dict[str, object] | None = None,
+    staging_relative_path: str | None = None,
 ) -> dict[str, object]:
     payload: dict[str, object] = {
         "attempt_id": authorization.attempt_id,
@@ -126,4 +144,8 @@ def _claim_payload(
     }
     if data_manifest is not None:
         payload["data_manifest"] = data_manifest
+    if input_inventory is not None:
+        payload["input_inventory"] = input_inventory
+    if staging_relative_path is not None:
+        payload["staging_relative_path"] = staging_relative_path
     return payload

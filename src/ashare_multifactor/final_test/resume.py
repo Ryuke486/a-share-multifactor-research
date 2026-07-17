@@ -126,6 +126,7 @@ def load_registered_authorization(
         raise ValueError("final-test token snapshot differs from registration")
     _verify_consumption_ledger(
         sealed,
+        attempt_id=attempt_id,
         token=token,
         token_sha256=token_sha256,
         frozen=frozen,
@@ -245,6 +246,7 @@ def _verify_registration(record: dict[str, object], attempt_id: str) -> None:
 def _verify_consumption_ledger(
     sealed: dict[str, object],
     *,
+    attempt_id: str,
     token: dict[str, object],
     token_sha256: str,
     frozen: FrozenStage8Identity,
@@ -261,6 +263,7 @@ def _verify_consumption_ledger(
         raise ValueError("invalid final-test opening consumption ledger") from error
     expected = {
         "status": "consumed",
+        "attempt_id": attempt_id,
         "approval_id": token["approval_id"],
         "sealed_protocol_sha256": frozen.seal_sha256,
         "robustness_release": frozen.run_id,

@@ -107,6 +107,20 @@ def _signals() -> FinalTestSignals:
     return FinalTestSignals(bounded, bounded, bounded, bounded)
 
 
+def _prepared_publication_identity() -> dict[str, object]:
+    return {
+        "attempt_manifest_sha256": "1" * 64,
+        "lineage_preview_sha256": "2" * 64,
+        "execution_id": "execution-001",
+        "prepare_manifest_sha256": "a" * 64,
+        "security_event_coverage_sha256": "b" * 64,
+        "corporate_action_coverage_sha256": "c" * 64,
+        "coverage_snapshot_manifest_sha256": "3" * 64,
+        "staging_files_sha256": "4" * 64,
+        "staging_file_count": 1,
+    }
+
+
 def _execution_coverage_snapshot(
     prepared_attempt: PreparedAttempt, preflight: object
 ):
@@ -680,6 +694,118 @@ def test_resume_recovers_published_current_after_publication_interruption(
     assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "published"
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "prepare_manifest_sha256",
+        "security_event_coverage_sha256",
+        "corporate_action_coverage_sha256",
+        "execution_id",
+        "coverage_snapshot_manifest_sha256",
+    ],
+)
+def test_current_recovery_rejects_release_with_wrong_complete_identity(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+
+    def publish_then_interrupt(*args: object, **kwargs: object):
+        publish(*args, **kwargs)
+        raise RuntimeError("interrupted after CURRENT")
+
+    monkeypatch.setattr(pipeline_module, "publish_release", publish_then_interrupt)
+    with pytest.raises(RuntimeError, match="after CURRENT"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    manifest_path = final_root / "releases/final-release/manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest[field] = "0" * 64 if field != "execution_id" else "wrong-execution"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    pointer = json.loads((final_root / "CURRENT.json").read_text(encoding="utf-8"))
+    pointer["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    (final_root / "CURRENT.json").write_text(json.dumps(pointer), encoding="utf-8")
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+
+    with pytest.raises(ValueError, match="release identity"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    assert not (
+        final_root / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json"
+    ).exists()
+
+
+def test_current_recovery_rejects_release_content_not_bound_to_prepared_staging(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+
+    def publish_then_interrupt(*args: object, **kwargs: object):
+        publish(*args, **kwargs)
+        raise RuntimeError("interrupted after CURRENT")
+
+    monkeypatch.setattr(pipeline_module, "publish_release", publish_then_interrupt)
+    with pytest.raises(RuntimeError, match="after CURRENT"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    release_root = final_root / "releases/final-release"
+    report = release_root / "artifacts/report.md"
+    report.write_text("changed release bytes\n", encoding="utf-8")
+    manifest_path = release_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    replacement = file_record(report, root=release_root, role="artifacts").to_dict()
+    manifest["files"] = [
+        replacement if record["path"] == "artifacts/report.md" else record
+        for record in manifest["files"]
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    pointer = json.loads((final_root / "CURRENT.json").read_text(encoding="utf-8"))
+    pointer["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    (final_root / "CURRENT.json").write_text(json.dumps(pointer), encoding="utf-8")
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+
+    with pytest.raises(ValueError, match="release identity"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+
 def test_resume_recovers_orphan_release_after_rename_before_current_switch(
     prepared_attempt: PreparedAttempt,
     monkeypatch: pytest.MonkeyPatch,
@@ -845,6 +971,124 @@ def test_resume_publication_failure_records_failed_outcome_without_current(
     final_root = prepared_attempt.data_root / "processed/final_test"
     registry = final_root / "attempts"
     assert not (final_root / "CURRENT.json").exists()
+    assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "failed"
+
+
+def test_prepared_staging_recovers_without_recomputing_research_results(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+    monkeypatch.setattr(
+        pipeline_module,
+        "publish_release",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            KeyboardInterrupt("hard crash after prepared record")
+        ),
+    )
+
+    with pytest.raises(KeyboardInterrupt, match="after prepared record"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    registry = final_root / "attempts"
+    prepared_path = registry / f"{prepared_attempt.attempt_id}.prepared.json"
+    prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
+    required = {
+        "attempt_manifest_sha256",
+        "lineage_preview_sha256",
+        "execution_id",
+        "prepare_manifest_sha256",
+        "security_event_coverage_sha256",
+        "corporate_action_coverage_sha256",
+        "coverage_snapshot_manifest_sha256",
+        "staging_files_sha256",
+        "staging_file_count",
+    }
+    assert required.issubset(prepared)
+    assert not (registry / f"{prepared_attempt.attempt_id}.outcome.json").exists()
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+    for name in (
+        "build_final_execution_inputs",
+        "build_final_test_signals",
+        "run_final_test_backtest",
+        "build_final_metrics",
+        "build_final_report",
+    ):
+        monkeypatch.setattr(
+            pipeline_module,
+            name,
+            lambda *_args, _name=name, **_kwargs: pytest.fail(
+                f"prepared retry recomputed {_name}"
+            ),
+        )
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    assert result.release is not None
+    assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "published"
+
+
+def test_prepared_staging_identity_drift_fails_closed_without_recomputation(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    monkeypatch.setattr(
+        pipeline_module,
+        "publish_release",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            KeyboardInterrupt("hard crash after prepared record")
+        ),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    staging = (
+        final_root
+        / "attempt_runs"
+        / prepared_attempt.attempt_id
+        / "artifacts/lineage_preview.json"
+    )
+    staging.write_text('{"changed":true}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="prepared.*identity"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    registry = final_root / "attempts"
     assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "failed"
 
 
@@ -1516,6 +1760,10 @@ def _write_security_event_coverage(
         {
             "source_symbol": [symbol],
             "effective_date": [date(2024, 8, 16)],
+            "event_type": ["write_off"],
+            "target_symbol": [None],
+            "ratio": [0.0],
+            "cash_per_share": [0.0],
             "source": [source],
             "evidence_id": ["ev-1"],
         }
@@ -1692,6 +1940,7 @@ def test_prepared_publication_recovers_from_verified_current(tmp_path: Path) -> 
         attempt_id="attempt-001",
         release_run_id="release-001",
         sealed_protocol_sha256="c" * 64,
+        publication_identity=_prepared_publication_identity(),
     )
     current = {
         "run_id": "release-001",
@@ -1717,6 +1966,7 @@ def test_prepared_publication_is_reusable_only_for_same_publication_identity(
         attempt_id="attempt-001",
         release_run_id="release-001",
         sealed_protocol_sha256="c" * 64,
+        publication_identity=_prepared_publication_identity(),
     )
 
     assert (
@@ -1725,6 +1975,7 @@ def test_prepared_publication_is_reusable_only_for_same_publication_identity(
             attempt_id="attempt-001",
             release_run_id="release-001",
             sealed_protocol_sha256="c" * 64,
+            publication_identity=_prepared_publication_identity(),
         )
         == first
     )
@@ -1738,6 +1989,7 @@ def test_prepared_publication_is_reusable_only_for_same_publication_identity(
             attempt_id="attempt-001",
             release_run_id="release-001",
             sealed_protocol_sha256="c" * 64,
+            publication_identity=_prepared_publication_identity(),
         )
     with pytest.raises(ValueError, match="prepared publication identity"):
         append_prepared_publication(
@@ -1745,6 +1997,7 @@ def test_prepared_publication_is_reusable_only_for_same_publication_identity(
             attempt_id="attempt-001",
             release_run_id="different-release",
             sealed_protocol_sha256="c" * 64,
+            publication_identity=_prepared_publication_identity(),
         )
 
 

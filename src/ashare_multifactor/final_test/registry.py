@@ -94,6 +94,24 @@ def _attempt_read_lock(registry_root: Path, attempt_id: str):
 
 
 @contextmanager
+def claim_attempt_preparation(registry_root: Path, *, attempt_id: str):
+    """Serialize authorization completion and preparation for one attempt."""
+    validate_publication_id(attempt_id)
+    registry_root.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        registry_root / f"{attempt_id}.preparation.lock",
+        os.O_WRONLY | os.O_CREAT,
+        0o600,
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+@contextmanager
 def claim_attempt_execution(
     registry_root: Path,
     *,
@@ -459,6 +477,7 @@ def append_prepared_publication(
     attempt_id: str,
     release_run_id: str,
     sealed_protocol_sha256: str,
+    publication_identity: Mapping[str, object],
 ) -> dict[str, Any]:
     validate_publication_id(attempt_id)
     validate_publication_id(release_run_id)
@@ -471,6 +490,7 @@ def append_prepared_publication(
         "authoritative": False,
         "release_run_id": release_run_id,
         "sealed_protocol_sha256": sealed_protocol_sha256,
+        **_validate_prepared_publication_identity(publication_identity),
     }
     if destination.exists():
         existing = _read_registry_json(destination)
@@ -512,6 +532,7 @@ def resolve_prepared_publication(
     attempt_id: str,
     release_run_id: str,
     sealed_protocol_sha256: str,
+    publication_identity: Mapping[str, object] | None = None,
 ) -> dict[str, Any]:
     """Resolve one prepared record only when its complete immutable schema matches."""
     validate_publication_id(attempt_id)
@@ -530,10 +551,17 @@ def resolve_prepared_publication(
         prepared = _read_registry_json(path)
     except FileNotFoundError as error:
         raise ValueError("prepared final-test publication is missing") from error
-    if (
-        _SHA256.fullmatch(sealed_protocol_sha256) is None
-        or not _prepared_publication_matches(prepared, expected)
+    if _SHA256.fullmatch(sealed_protocol_sha256) is None:
+        raise ValueError("prepared final-test publication identity differs")
+    identity = _validate_prepared_publication_identity(
+        {key: prepared.get(key) for key in _PREPARED_PUBLICATION_IDENTITY_FIELDS}
+    )
+    expected.update(identity)
+    if publication_identity is not None and identity != _validate_prepared_publication_identity(
+        publication_identity
     ):
+        raise ValueError("prepared final-test publication identity differs")
+    if not _prepared_publication_matches(prepared, expected):
         raise ValueError("prepared final-test publication identity differs")
     return prepared
 
@@ -565,6 +593,46 @@ def resolve_optional_prepared_publication(
         release_run_id=run_id,
         sealed_protocol_sha256=sealed_protocol_sha256,
     )
+
+
+_PREPARED_PUBLICATION_HASH_FIELDS = frozenset(
+    {
+        "attempt_manifest_sha256",
+        "lineage_preview_sha256",
+        "prepare_manifest_sha256",
+        "security_event_coverage_sha256",
+        "corporate_action_coverage_sha256",
+        "coverage_snapshot_manifest_sha256",
+        "staging_files_sha256",
+    }
+)
+_PREPARED_PUBLICATION_IDENTITY_FIELDS = frozenset(
+    {
+        *_PREPARED_PUBLICATION_HASH_FIELDS,
+        "execution_id",
+        "staging_file_count",
+    }
+)
+
+
+def _validate_prepared_publication_identity(
+    identity: Mapping[str, object],
+) -> dict[str, object]:
+    if (
+        set(identity) != _PREPARED_PUBLICATION_IDENTITY_FIELDS
+        or any(
+            not isinstance(identity.get(field), str)
+            or _SHA256.fullmatch(str(identity[field])) is None
+            for field in _PREPARED_PUBLICATION_HASH_FIELDS
+        )
+        or not isinstance(identity.get("execution_id"), str)
+        or not identity["execution_id"]
+        or type(identity.get("staging_file_count")) is not int
+        or int(identity["staging_file_count"]) <= 0
+    ):
+        raise ValueError("prepared publication identity differs")
+    validate_publication_id(str(identity["execution_id"]))
+    return dict(identity)
 
 
 def begin_execution_recovery(

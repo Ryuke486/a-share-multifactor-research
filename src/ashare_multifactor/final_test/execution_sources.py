@@ -24,6 +24,9 @@ from ashare_multifactor.final_test.corporate_action_coverage import (
 )
 from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
 from ashare_multifactor.final_test.data_inventory import write_json
+from ashare_multifactor.final_test.execution_contracts import (
+    normalize_security_event_rows,
+)
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
     FINAL_TEST_START,
@@ -203,7 +206,7 @@ def generate_final_execution_sources(
         raise ValueError("execution coverage snapshot differs from claimed identity")
     actions = corporate_coverage["actions"]
     event_file = security_coverage.get("events_file")
-    events = pl.read_parquet(event_file) if isinstance(event_file, Path) else pl.DataFrame(
+    events = security_coverage.get("events") if isinstance(event_file, Path) else pl.DataFrame(
         schema={
             "effective_date": pl.Date,
             "source_symbol": pl.String,
@@ -212,8 +215,11 @@ def generate_final_execution_sources(
             "ratio": pl.Float64,
             "cash_per_share": pl.Float64,
             "source": pl.String,
+            "evidence_id": pl.String,
         }
     )
+    if not isinstance(events, pl.DataFrame):
+        raise ValueError("official security events are not normalized")
     if events.height != security_coverage["event_rows"]:
         raise ValueError("official security-event row count changed")
     destination = final_root / "execution_input_sources"
@@ -221,10 +227,7 @@ def generate_final_execution_sources(
     temporary.mkdir(parents=True)
     try:
         actions.write_parquet(temporary / "corporate_actions.parquet")
-        if isinstance(event_file, Path):
-            shutil.copy2(event_file, temporary / "security_events.parquet")
-        else:
-            events.write_parquet(temporary / "security_events.parquet")
+        events.write_parquet(temporary / "security_events.parquet")
         shutil.copy2(coverage_manifest_path, temporary / "security_event_coverage.json")
         corporate_destination = temporary / "corporate_action_coverage"
         corporate_destination.mkdir()
@@ -489,17 +492,12 @@ def validate_security_event_coverage(
         if not isinstance(event_record, dict):
             raise ValueError("official security-event coverage lacks event file")
         events_path = _verify_coverage_file(event_record, root=coverage_root)
-        events = pl.read_parquet(events_path)
-        event_required = {"source_symbol", "effective_date", "source", "evidence_id"}
-        if not event_required.issubset(events.columns) or events.height != payload["event_rows"]:
+        raw_events = pl.read_parquet(events_path)
+        if raw_events.height != payload["event_rows"]:
             raise ValueError("official security events schema or count is invalid")
+        events = normalize_security_event_rows(raw_events)
         normalized_events = events.with_columns(
-            pl.col("source_symbol").cast(pl.String).str.zfill(6),
-            pl.col("source").cast(pl.String),
-            pl.col("evidence_id").cast(pl.String),
             pl.col("source_symbol")
-            .cast(pl.String)
-            .str.zfill(6)
             .map_elements(market_for_symbol, return_dtype=pl.String)
             .alias("market"),
         )
@@ -521,11 +519,12 @@ def validate_security_event_coverage(
             on=[*coverage_keys, "evidence_id"],
             how="anti",
         )
-        if evidence_mismatch.height or coverage_mismatch.height or events.filter(
+        if evidence_mismatch.height or coverage_mismatch.height or normalized_events.filter(
             ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
         ).height:
             raise ValueError("official security event evidence join failed")
         result["events_file"] = events_path
+        result["events"] = events
     _validate_event_counts(normalized_coverage, normalized_events)
     return result
 

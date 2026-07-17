@@ -239,7 +239,7 @@ def test_synthetic_prepare_rejects_beijing_exchange_symbol(
         )
 
     registry = fixture.data_root / "processed/final_test/attempts"
-    assert resolve_attempt_state(registry, "attempt-001")["state"] == "preparing"
+    assert resolve_attempt_state(registry, "attempt-001")["state"] == "failed"
     assert _token_consumption_count(fixture.opening_ledger_root) == 1
 
 

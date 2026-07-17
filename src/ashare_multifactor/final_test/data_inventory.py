@@ -28,11 +28,97 @@ def build_input_inventory(
     )
     if not pairs:
         raise ValueError("no paired daily files found")
+    return build_input_inventory_from_pairs(config, start, end, pairs)
+
+
+def build_input_inventory_from_pairs(
+    config: ResearchConfig,
+    start: date,
+    end: date,
+    pairs: list[DailyFilePair],
+) -> dict[str, object]:
+    if not pairs:
+        raise ValueError("no paired daily files found")
     return {
         "schema_version": "1",
         "period": [start.isoformat(), end.isoformat()],
         "pairs": [_pair_record(config, pair) for pair in pairs],
     }
+
+
+def load_bound_input_pairs(
+    config: ResearchConfig,
+    inventory: object,
+    *,
+    start: date,
+    end: date,
+) -> list[DailyFilePair]:
+    """Rebuild exact input objects from a claim-bound inventory, without discovery."""
+    if (
+        not isinstance(inventory, dict)
+        or inventory.get("schema_version") != "1"
+        or inventory.get("period") != [start.isoformat(), end.isoformat()]
+        or not isinstance(inventory.get("pairs"), list)
+        or not inventory["pairs"]
+    ):
+        raise ValueError("invalid claim-bound final-test input inventory")
+    pairs: list[DailyFilePair] = []
+    for item in inventory["pairs"]:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"trade_date", "files"}
+            or not isinstance(item.get("files"), list)
+            or len(item["files"]) != 2
+        ):
+            raise ValueError("invalid claim-bound final-test input inventory")
+        try:
+            trading_date = date.fromisoformat(str(item["trade_date"]))
+        except ValueError as error:
+            raise ValueError("invalid claim-bound final-test input inventory") from error
+        files = {
+            str(record.get("role")): _verify_bound_raw_file(config, record)
+            for record in item["files"]
+            if isinstance(record, dict)
+        }
+        if set(files) != {"unadjusted", "backward_adjusted"}:
+            raise ValueError("invalid claim-bound final-test input inventory")
+        pairs.append(
+            DailyFilePair(
+                trading_date=trading_date,
+                unadjusted=files["unadjusted"],
+                backward_adjusted=files["backward_adjusted"],
+            )
+        )
+    if pairs != sorted(pairs, key=lambda pair: pair.trading_date) or any(
+        pair.trading_date < start or pair.trading_date > end for pair in pairs
+    ):
+        raise ValueError("claim-bound final-test input inventory is not ordered")
+    return pairs
+
+
+def _verify_bound_raw_file(
+    config: ResearchConfig, record: dict[str, object]
+) -> Path:
+    role = str(record.get("role", ""))
+    root = {
+        "unadjusted": config.paths.raw_unadjusted,
+        "backward_adjusted": config.paths.raw_backward_adjusted,
+    }.get(role)
+    relative = record.get("relative_path")
+    if (
+        root is None
+        or not isinstance(relative, str)
+        or Path(relative).is_absolute()
+        or ".." in Path(relative).parts
+    ):
+        raise ValueError("invalid claim-bound final-test input file")
+    path = root / relative
+    if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError("invalid claim-bound final-test input file")
+    actual = _input_file_record(path, root, role=role)
+    if actual != record:
+        raise ValueError("claim-bound final-test input file identity changed")
+    return path
 
 
 def build_data_manifest(root: Path) -> dict[str, object]:

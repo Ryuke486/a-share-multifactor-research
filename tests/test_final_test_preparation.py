@@ -1,17 +1,25 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import polars as pl
 import pytest
 
 from test_build import _config
+from test_final_test_gate import (
+    APPROVAL_KEY,
+    _authorize,
+    _commit_all,
+    _fixture as gate_fixture,
+)
 
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 from ashare_multifactor.final_test.registry import (
@@ -346,6 +354,10 @@ def test_prepare_recovers_a_published_scope_without_reauthorizing_or_rescanning(
     )
     append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
     calls.clear()
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation.recover_registered_authorization",
+        lambda **_kwargs: authorization,
+    )
 
     recovered = prepare_final_test(
         code_root=tmp_path,
@@ -454,3 +466,204 @@ def test_verify_preparation_rejects_a_symlink_final_root_before_resolution(
 
     with pytest.raises(ValueError, match="uses a symlink"):
         verify_preparation(alias, attempt_id="attempt-001", authorization=authorization)
+
+
+@pytest.mark.parametrize("crash_after", ["register", "snapshot", "ledger"])
+def test_prepare_recovers_half_registered_authorization_before_data_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash_after: str,
+) -> None:
+    paths, data_root, authorization = _gate_attempt(tmp_path)
+    registry = paths["registry"]
+    snapshot = registry / f"{authorization.attempt_id}.token"
+    ledger = (
+        paths["opening_ledger"]
+        / f"{authorization.sealed_protocol_sha256}.json"
+    )
+    ledger_payload = json.loads(ledger.read_text(encoding="utf-8"))
+    ledger_payload["attempt_id"] = authorization.attempt_id
+    ledger.write_text(json.dumps(ledger_payload), encoding="utf-8")
+    if crash_after == "register":
+        snapshot.unlink()
+        ledger.unlink()
+    elif crash_after == "snapshot":
+        ledger.unlink()
+    calls: list[str] = []
+
+    def complete(*_args: object, **_kwargs: object) -> str:
+        calls.append("data_access")
+        assert snapshot.read_bytes() == paths["token"].read_bytes()
+        consumed = json.loads(ledger.read_text(encoding="utf-8"))
+        assert consumed["attempt_id"] == authorization.attempt_id
+        assert consumed["status"] == "consumed"
+        return "prepared"
+
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation._complete_preparation",
+        complete,
+    )
+
+    result = prepare_final_test(
+        code_root=paths["code"],
+        data_root=data_root,
+        opening_token_path=paths["token"],
+        approval_key=APPROVAL_KEY,
+        attempt_id=authorization.attempt_id,
+    )
+
+    assert result == "prepared"
+    assert calls == ["data_access"]
+
+
+@pytest.mark.parametrize("drift", ["git", "stage8"])
+def test_half_registered_prepare_fails_terminal_before_data_access_on_identity_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    drift: str,
+) -> None:
+    paths, data_root, authorization = _gate_attempt(tmp_path)
+    if drift == "git":
+        (paths["code"] / "after-register.py").write_text("VALUE = 2\n")
+        _commit_all(paths["code"], "drift after register")
+    else:
+        current = json.loads(
+            (data_root / "processed/robustness/CURRENT.json").read_text()
+        )
+        manifest = (
+            data_root
+            / "processed/robustness/releases"
+            / str(current["run_id"])
+            / "manifest.json"
+        )
+        manifest.write_text('{"changed":true}\n', encoding="utf-8")
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation._complete_preparation",
+        lambda *_args, **_kwargs: pytest.fail("identity drift reached final data access"),
+    )
+
+    with pytest.raises(ValueError):
+        prepare_final_test(
+            code_root=paths["code"],
+            data_root=data_root,
+            opening_token_path=paths["token"],
+            approval_key=APPROVAL_KEY,
+            attempt_id=authorization.attempt_id,
+        )
+
+    outcome = json.loads(
+        (
+            paths["registry"]
+            / f"{authorization.attempt_id}.outcome.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert outcome["status"] == "failed"
+
+
+def test_concurrent_prepare_serializes_one_recoverable_attempt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, data_root, authorization = _gate_attempt(tmp_path)
+    ledger = (
+        paths["opening_ledger"]
+        / f"{authorization.sealed_protocol_sha256}.json"
+    )
+    ledger_payload = json.loads(ledger.read_text(encoding="utf-8"))
+    ledger_payload["attempt_id"] = authorization.attempt_id
+    ledger.write_text(json.dumps(ledger_payload), encoding="utf-8")
+    registry = paths["registry"]
+    completions = 0
+
+    def complete(*_args: object, **_kwargs: object) -> str:
+        nonlocal completions
+        completions += 1
+        append_attempt_state(
+            registry,
+            attempt_id=authorization.attempt_id,
+            state="awaiting_official_evidence",
+            identities={"prepare_manifest_sha256": "a" * 64},
+        )
+        return "prepared"
+
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation._complete_preparation",
+        complete,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation.verify_preparation",
+        lambda *_args, **_kwargs: "prepared",
+    )
+
+    def run() -> str:
+        return prepare_final_test(
+            code_root=paths["code"],
+            data_root=data_root,
+            opening_token_path=paths["token"],
+            approval_key=APPROVAL_KEY,
+            attempt_id=authorization.attempt_id,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = [future.result(timeout=10) for future in (executor.submit(run), executor.submit(run))]
+
+    assert results == ["prepared", "prepared"]
+    assert completions == 1
+
+
+def test_failed_data_claim_closes_same_attempt_and_preserves_audit(
+    tmp_path: Path,
+) -> None:
+    paths, data_root, authorization = _gate_attempt(tmp_path)
+    final_root = data_root / "processed/final_test"
+    claim = {
+        "attempt_id": authorization.attempt_id,
+        "approval_id": authorization.approval_id,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
+        "status": "failed",
+        "error_type": "ValueError",
+        "error": "synthetic data failure",
+    }
+    claim_path = final_root / "data-build-claim.json"
+    claim_path.write_text(json.dumps(claim), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="failed.*cannot be recovered"):
+        prepare_final_test(
+            code_root=paths["code"],
+            data_root=data_root,
+            opening_token_path=paths["token"],
+            approval_key=APPROVAL_KEY,
+            attempt_id=authorization.attempt_id,
+        )
+
+    assert json.loads(claim_path.read_text(encoding="utf-8")) == claim
+    outcome = json.loads(
+        (
+            paths["registry"]
+            / f"{authorization.attempt_id}.outcome.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert outcome["status"] == "failed"
+
+
+def _gate_attempt(
+    tmp_path: Path,
+) -> tuple[dict[str, Path], Path, FinalTestAuthorization]:
+    paths = gate_fixture(tmp_path)
+    data_root = tmp_path / "data"
+    processed = data_root / "processed"
+    processed.mkdir(parents=True)
+    robustness = processed / "robustness"
+    validation = processed / "validation_evaluation"
+    registry = processed / "final_test/attempts"
+    shutil.move(paths["robustness"], robustness)
+    shutil.move(paths["validation"], validation)
+    paths.update(
+        {"robustness": robustness, "validation": validation, "registry": registry}
+    )
+    return paths, data_root, _authorize(paths)

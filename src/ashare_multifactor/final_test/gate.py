@@ -123,9 +123,10 @@ def authorize_final_test(
             token_snapshot,
             sealed,
             approval_key=approval_key,
+            attempt_id=actual_attempt_id,
         )
         _assert_stage8_identity_unchanged(robustness, frozen)
-    except BaseException as error:
+    except Exception as error:
         append_attempt_outcome(
             registry_root,
             attempt_id=actual_attempt_id,
@@ -146,6 +147,195 @@ def authorize_final_test(
         robustness_manifest_sha256=frozen.manifest_sha256,
         robustness_lineage_sha256=frozen.lineage_sha256,
     )
+
+
+def recover_registered_authorization(
+    *,
+    code_root: Path,
+    robustness_root: Path,
+    validation_root: Path,
+    opening_token_path: Path,
+    approval_key: bytes,
+    registry_root: Path,
+    requested_start: date,
+    requested_end: date,
+    attempt_id: str,
+) -> FinalTestAuthorization:
+    """Idempotently complete one registered authorization before any data read."""
+    if (requested_start, requested_end) != (FINAL_TEST_START, FINAL_TEST_END):
+        raise ValueError("requested dates differ from the sealed final-test period")
+    outcome_path = registry_root / f"{attempt_id}.outcome.json"
+    try:
+        record = _load_registered_attempt(registry_root, attempt_id)
+        code_root = code_root.resolve()
+        robustness = resolve_current(robustness_root)
+        sealed = json.loads(
+            (robustness.artifacts / "sealed_test_protocol.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        seal = _verify_sealed_payload(sealed)
+        frozen = FrozenStage8Identity(
+            run_id=robustness.run_id,
+            manifest_sha256=robustness.manifest_sha256,
+            lineage_sha256=sha256_file(robustness.lineage),
+            seal_sha256=seal,
+        )
+        _verify_frozen_contract(code_root, sealed, validation_root, robustness.lineage)
+        current_commit = _git(code_root, "rev-parse", "HEAD").strip()
+        current_tree = _git(code_root, "rev-parse", "HEAD^{tree}").strip()
+        expected_record = {
+            "git_commit": current_commit,
+            "git_tree": current_tree,
+            "sealed_protocol_sha256": frozen.seal_sha256,
+            "robustness_release": frozen.run_id,
+            "robustness_manifest_sha256": frozen.manifest_sha256,
+            "robustness_lineage_sha256": frozen.lineage_sha256,
+        }
+        if any(record.get(key) != value for key, value in expected_record.items()):
+            raise ValueError("registered final-test authorization identity changed")
+        token, token_bytes, token_sha256 = _load_execution_token(
+            opening_token_path,
+            sealed_protocol_sha256=frozen.seal_sha256,
+            approval_key=approval_key,
+            current_commit=current_commit,
+            current_tree=current_tree,
+            robustness_release=frozen.run_id,
+            robustness_manifest_sha256=frozen.manifest_sha256,
+            robustness_lineage_sha256=frozen.lineage_sha256,
+        )
+        if (
+            record.get("token_sha256") != token_sha256
+            or record.get("approval_id") != token.get("approval_id")
+        ):
+            raise ValueError("registered final-test token identity changed")
+        snapshot = registry_root / f"{attempt_id}.token"
+        if snapshot.exists() or snapshot.is_symlink():
+            if snapshot.is_symlink() or snapshot.read_bytes() != token_bytes:
+                raise ValueError("final-test token snapshot identity changed")
+        else:
+            save_token_snapshot(
+                registry_root,
+                attempt_id=attempt_id,
+                token_bytes=token_bytes,
+                expected_sha256=token_sha256,
+            )
+        ledger_path = _opening_ledger_path(sealed, frozen.seal_sha256)
+        if ledger_path.exists() or ledger_path.is_symlink():
+            _verify_opening_ledger(
+                ledger_path,
+                attempt_id=attempt_id,
+                token=token,
+                token_sha256=token_sha256,
+                frozen=frozen,
+            )
+        else:
+            verify_test_opening_token(
+                snapshot,
+                sealed,
+                approval_key=approval_key,
+                attempt_id=attempt_id,
+            )
+            _verify_opening_ledger(
+                ledger_path,
+                attempt_id=attempt_id,
+                token=token,
+                token_sha256=token_sha256,
+                frozen=frozen,
+            )
+        _assert_stage8_identity_unchanged(robustness, frozen)
+        return FinalTestAuthorization(
+            attempt_id=attempt_id,
+            approval_id=str(record["approval_id"]),
+            registered_at=str(record["registered_at"]),
+            git_commit=current_commit,
+            git_tree=current_tree,
+            sealed_protocol_sha256=frozen.seal_sha256,
+            robustness_release=frozen.run_id,
+            test_period=(requested_start, requested_end),
+            robustness_manifest_sha256=frozen.manifest_sha256,
+            robustness_lineage_sha256=frozen.lineage_sha256,
+        )
+    except Exception as error:
+        if not outcome_path.exists():
+            append_attempt_outcome(
+                registry_root,
+                attempt_id=attempt_id,
+                status="failed",
+                authoritative=False,
+                reason=f"authorization recovery failed: {error}",
+            )
+        raise
+
+
+def _load_registered_attempt(
+    registry_root: Path, attempt_id: str
+) -> dict[str, object]:
+    record_path = registry_root / f"{attempt_id}.json"
+    if record_path.is_symlink():
+        raise ValueError("final-test attempt record uses a symlink")
+    try:
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("invalid final-test attempt registration") from error
+    required = {
+        "attempt_id",
+        "registered_at",
+        "git_commit",
+        "git_tree",
+        "token_sha256",
+        "sealed_protocol_sha256",
+        "robustness_release",
+        "robustness_manifest_sha256",
+        "robustness_lineage_sha256",
+        "approval_id",
+        "status",
+        "authoritative",
+    }
+    if (
+        not isinstance(record, dict)
+        or set(record) != required
+        or record.get("attempt_id") != attempt_id
+        or record.get("status") != "registered"
+        or record.get("authoritative") is not False
+    ):
+        raise ValueError("invalid final-test attempt registration")
+    return record
+
+
+def _opening_ledger_path(sealed: dict[str, object], seal: str) -> Path:
+    root = Path(str(sealed.get("opening_ledger_root", "")))
+    if not root.is_absolute() or root.is_symlink():
+        raise ValueError("sealed protocol opening ledger root is invalid")
+    return root / f"{seal}.json"
+
+
+def _verify_opening_ledger(
+    path: Path,
+    *,
+    attempt_id: str,
+    token: dict[str, object],
+    token_sha256: str,
+    frozen: FrozenStage8Identity,
+) -> None:
+    if path.is_symlink():
+        raise ValueError("final-test opening consumption ledger uses a symlink")
+    try:
+        ledger = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("invalid final-test opening consumption ledger") from error
+    expected = {
+        "status": "consumed",
+        "attempt_id": attempt_id,
+        "approval_id": token["approval_id"],
+        "sealed_protocol_sha256": frozen.seal_sha256,
+        "robustness_release": frozen.run_id,
+        "robustness_manifest_sha256": frozen.manifest_sha256,
+        "robustness_lineage_sha256": frozen.lineage_sha256,
+        "token_sha256": token_sha256,
+    }
+    if not isinstance(ledger, dict) or ledger != expected:
+        raise ValueError("final-test opening consumption ledger identity changed")
 
 
 def _assert_stage8_identity_unchanged(

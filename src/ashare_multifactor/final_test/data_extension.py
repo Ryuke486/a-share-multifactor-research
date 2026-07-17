@@ -7,17 +7,19 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
-from uuid import uuid4
 
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.data.build import BuildManifest, build_parquet_dataset
+from ashare_multifactor.data.discovery import DailyFilePair
 from ashare_multifactor.data.discovery import discover_daily_pairs
 from ashare_multifactor.final_test.data_inventory import (
     build_data_manifest as _build_data_manifest,
     build_input_inventory,
     file_identity as _file_identity,
+    load_bound_input_pairs,
+    verify_file_identity as _verify_file_identity,
     verify_final_test_data_panel,
     write_json as _write_json,
 )
@@ -61,12 +63,67 @@ def build_final_test_daily_panel(
     if (config.test.start, config.test.end) != sealed_period:
         raise ValueError("configured test period differs from the sealed final-test period")
 
-    processed = config.paths.processed
     final_root, target = _validate_target_paths(config)
     _verify_authorization(config, authorization, code_root)
-    claim_path = _claim_build(final_root, authorization)
+    claim_path = final_root / "data-build-claim.json"
+    if claim_path.exists() or claim_path.is_symlink():
+        raise ValueError("final-test data build is already claimed")
+    try:
+        inventory = _input_inventory(config, start, end)
+    except Exception as error:
+        claim_path = _claim_build(final_root, authorization)
+        _update_claim(claim_path, authorization, status="failed", error=error)
+        raise
+    inventory_root = final_root / "data-build-inputs"
+    inventory_root.mkdir(parents=True, exist_ok=True)
+    inventory_path = inventory_root / f"{authorization.attempt_id}.json"
+    if inventory_path.exists() or inventory_path.is_symlink():
+        raise FileExistsError("final-test bound input inventory already exists")
+    _write_json(inventory_path, inventory)
+    staging_relative_path = f"data-staging/{authorization.attempt_id}"
+    claim_path = _claim_build(
+        final_root,
+        authorization,
+        input_inventory=_file_identity(
+            inventory_path,
+            relative_path=f"data-build-inputs/{authorization.attempt_id}.json",
+        ),
+        staging_relative_path=staging_relative_path,
+    )
+    pairs = load_bound_input_pairs(
+        config,
+        inventory,
+        start=start,
+        end=end,
+    )
+    return _build_claimed_panel(
+        config,
+        authorization,
+        start,
+        end,
+        claim_path=claim_path,
+        target=target,
+        inventory=inventory,
+        pairs=pairs,
+    )
 
-    temporary_processed = processed / f".final-test-data-{uuid4().hex}.tmp"
+
+def _build_claimed_panel(
+    config: ResearchConfig,
+    authorization: FinalTestAuthorization,
+    start: date,
+    end: date,
+    *,
+    claim_path: Path,
+    target: Path,
+    inventory: dict[str, object],
+    pairs: list[DailyFilePair],
+) -> BuildManifest:
+    processed = config.paths.processed
+    temporary_processed = processed / "final_test/data-staging" / authorization.attempt_id
+    if temporary_processed.is_symlink():
+        raise ValueError("final-test data staging path uses a symlink")
+    shutil.rmtree(temporary_processed, ignore_errors=True)
     temporary_target = temporary_processed / "validation_evaluation/daily_panel"
     build_config = replace(
         config,
@@ -74,16 +131,16 @@ def build_final_test_daily_panel(
         validation=config.test,
     )
     published = False
+    preserve_staging = False
     try:
-        inventory = _input_inventory(config, start, end)
         manifest = build_parquet_dataset(
             build_config,
             start,
             end,
             output_root=temporary_target,
+            discovered_pairs=list(pairs),
         )
-        if _input_inventory(config, start, end) != inventory:
-            raise ValueError("final-test raw input files changed during build")
+        load_bound_input_pairs(config, inventory, start=start, end=end)
         _write_json(temporary_target / "input_files.json", inventory)
         _write_json(
             temporary_target / "data_manifest.json",
@@ -112,12 +169,12 @@ def build_final_test_daily_panel(
                 status="published",
                 data_manifest=data_manifest_identity,
             )
-        except BaseException as error:
+        except Exception as error:
             raise RuntimeError(
                 "final-test data is a published artifact that requires recovery/audit"
             ) from error
         return manifest
-    except BaseException as error:
+    except Exception as error:
         if not published:
             _update_claim(
                 claim_path,
@@ -126,8 +183,139 @@ def build_final_test_daily_panel(
                 error=error,
             )
         raise
+    except BaseException:
+        preserve_staging = True
+        raise
     finally:
-        shutil.rmtree(temporary_processed, ignore_errors=True)
+        if not preserve_staging:
+            shutil.rmtree(temporary_processed, ignore_errors=True)
+
+
+def recover_final_test_daily_panel(
+    config: ResearchConfig,
+    authorization: FinalTestAuthorization,
+    start: date,
+    end: date,
+    *,
+    code_root: Path,
+) -> FinalTestDataResolution:
+    """Recover the same claim and exact bound inputs without new discovery."""
+    if (start, end) != (FINAL_TEST_START, FINAL_TEST_END):
+        raise ValueError("build dates must equal the exact final-test period")
+    _verify_authorization(config, authorization, code_root)
+    final_root = config.paths.processed / "final_test"
+    target = final_root / "daily_panel"
+    claim_path = final_root / "data-build-claim.json"
+    claim = _load_claim_for_authorization(claim_path, authorization)
+    status = claim.get("status")
+    if status == "failed":
+        raise ValueError("final-test data claim is failed and cannot be recovered")
+    if status == "published":
+        return resolve_final_test_data_panel(final_root)
+    if status == "publishing":
+        _recover_publishing_claim(
+            final_root,
+            target=target,
+            claim_path=claim_path,
+            claim=claim,
+            authorization=authorization,
+        )
+        return resolve_final_test_data_panel(final_root)
+    if status != "claimed":
+        raise ValueError("final-test data claim has an invalid recovery state")
+    inventory = _load_claim_inventory(final_root, claim)
+    pairs = load_bound_input_pairs(config, inventory, start=start, end=end)
+    staging = _claim_staging_path(final_root, claim)
+    if staging.exists() and staging != final_root / "data-staging" / authorization.attempt_id:
+        raise ValueError("final-test data staging identity differs")
+    _build_claimed_panel(
+        config,
+        authorization,
+        start,
+        end,
+        claim_path=claim_path,
+        target=target,
+        inventory=inventory,
+        pairs=pairs,
+    )
+    return resolve_final_test_data_panel(final_root)
+
+
+def _load_claim_for_authorization(
+    path: Path, authorization: FinalTestAuthorization
+) -> dict[str, object]:
+    try:
+        claim = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("invalid final-test data publication claim") from error
+    expected = {
+        "attempt_id": authorization.attempt_id,
+        "approval_id": authorization.approval_id,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
+    }
+    if not isinstance(claim, dict) or any(
+        claim.get(key) != value for key, value in expected.items()
+    ):
+        raise ValueError("final-test data claim differs from authorization")
+    return claim
+
+
+def _load_claim_inventory(
+    final_root: Path, claim: dict[str, object]
+) -> dict[str, object]:
+    record = claim.get("input_inventory")
+    if not isinstance(record, dict):
+        raise ValueError("final-test data claim lacks bound input inventory")
+    path = _verify_file_identity(final_root, record, "bound input inventory")
+    try:
+        inventory = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid claim-bound final-test input inventory") from error
+    if not isinstance(inventory, dict):
+        raise ValueError("invalid claim-bound final-test input inventory")
+    return inventory
+
+
+def _claim_staging_path(final_root: Path, claim: dict[str, object]) -> Path:
+    relative = claim.get("staging_relative_path")
+    if (
+        not isinstance(relative, str)
+        or Path(relative).is_absolute()
+        or ".." in Path(relative).parts
+    ):
+        raise ValueError("final-test data claim staging identity is invalid")
+    path = final_root / relative
+    if path.is_symlink() or not path.resolve().is_relative_to(final_root.resolve()):
+        raise ValueError("final-test data claim staging identity is invalid")
+    return path
+
+
+def _recover_publishing_claim(
+    final_root: Path,
+    *,
+    target: Path,
+    claim_path: Path,
+    claim: dict[str, object],
+    authorization: FinalTestAuthorization,
+) -> None:
+    if not target.exists():
+        staging_target = _claim_staging_path(final_root, claim) / "validation_evaluation/daily_panel"
+        verify_final_test_data_panel(staging_target)
+        os.replace(staging_target, target)
+    resolution = resolve_final_test_data_panel(final_root)
+    if not resolution.requires_recovery:
+        raise ValueError("publishing final-test data claim recovery state is inconsistent")
+    _update_claim(
+        claim_path,
+        authorization,
+        status="published",
+        data_manifest=claim.get("data_manifest") if isinstance(claim.get("data_manifest"), dict) else None,
+    )
 
 
 def _verify_authorization(

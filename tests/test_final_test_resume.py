@@ -445,6 +445,56 @@ def test_preflight_returns_verified_coverage_manifest_hashes(
     assert _attempt_state(prepared_attempt) == "awaiting_official_evidence"
 
 
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing_event_type", "security event.*schema"),
+        ("null_effective_date", "security event.*contract"),
+        ("nan_ratio", "security event.*contract"),
+        ("infinite_cash", "security event.*contract"),
+        ("duplicate_key", "security event.*duplicate|security event.*contract"),
+    ],
+)
+def test_preflight_rejects_invalid_security_execution_rows_before_claim(
+    prepared_attempt: PreparedAttempt,
+    mutation: str,
+    message: str,
+) -> None:
+    rows = 2 if mutation == "duplicate_key" else 1
+    events = pl.DataFrame(
+        {
+            "source_symbol": ["000001"] * rows,
+            "effective_date": [date(2023, 6, 5)] * rows,
+            "event_type": ["stock_merger"] * rows,
+            "target_symbol": ["000002"] * rows,
+            "ratio": [1.0] * rows,
+            "cash_per_share": [0.0] * rows,
+            "source": ["szse"] * rows,
+            "evidence_id": ["ev-sz"] * rows,
+        }
+    )
+    if mutation == "missing_event_type":
+        events = events.drop("event_type")
+    elif mutation == "null_effective_date":
+        events = events.with_columns(
+            pl.lit(None, dtype=pl.Date).alias("effective_date")
+        )
+    elif mutation == "nan_ratio":
+        events = events.with_columns(pl.lit(float("nan")).alias("ratio"))
+    elif mutation == "infinite_cash":
+        events = events.with_columns(
+            pl.lit(float("inf")).alias("cash_per_share")
+        )
+    _set_security_events(prepared_attempt, events)
+    before = _registry_snapshot(prepared_attempt)
+
+    with pytest.raises(ValueError, match=message):
+        _preflight(prepared_attempt)
+
+    assert _registry_snapshot(prepared_attempt) == before
+    assert _attempt_state(prepared_attempt) == "awaiting_official_evidence"
+
+
 def _preflight(attempt: PreparedAttempt):
     return preflight_resume(
         code_root=attempt.code_root,
@@ -549,3 +599,33 @@ def _refresh_security_record(path: Path) -> None:
         ).to_dict()
     ]
     path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _set_security_events(attempt: PreparedAttempt, events: pl.DataFrame) -> None:
+    root = attempt.security_coverage.parent
+    event_path = root / "security_events.parquet"
+    events.write_parquet(event_path)
+    coverage_path = root / "query_coverage.parquet"
+    counts = events.group_by("source_symbol").len().rename(
+        {"source_symbol": "symbol", "len": "new_count"}
+    )
+    pl.read_parquet(coverage_path).join(
+        counts, on="symbol", how="left"
+    ).with_columns(
+        pl.col("new_count").fill_null(0).cast(pl.Int64).alias("event_count")
+    ).drop("new_count").write_parquet(coverage_path)
+    payload = json.loads(attempt.security_coverage.read_text(encoding="utf-8"))
+    payload["event_rows"] = events.height
+    payload["events_file"] = file_record(
+        event_path,
+        root=root,
+        role="official_security_events",
+    ).to_dict()
+    payload["coverage"] = [
+        file_record(
+            coverage_path,
+            root=root,
+            role="official_security_event_coverage",
+        ).to_dict()
+    ]
+    attempt.security_coverage.write_text(json.dumps(payload), encoding="utf-8")

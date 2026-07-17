@@ -16,7 +16,10 @@ import polars as pl
 from ashare_multifactor.config import Period, ResearchConfig, load_config
 from ashare_multifactor.data.manifest import validate_panel_source
 from ashare_multifactor.data.security import market_for_symbol
-from ashare_multifactor.final_test.data_extension import build_final_test_daily_panel
+from ashare_multifactor.final_test.data_extension import (
+    build_final_test_daily_panel,
+    recover_final_test_daily_panel,
+)
 from ashare_multifactor.final_test.data_inventory import (
     file_identity,
     fsync_directory,
@@ -32,9 +35,12 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
     authorize_final_test,
+    recover_registered_authorization,
 )
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
+    append_attempt_outcome,
+    claim_attempt_preparation,
     resolve_attempt_state,
     resolve_attempt_state_readonly,
     validate_publication_id,
@@ -72,36 +78,53 @@ def prepare_final_test(
         validate_publication_id(attempt_id)
     final_root = data_root / "processed/final_test"
     registry_root = final_root / "attempts"
-    existing = _existing_attempt_authorization(registry_root, attempt_id)
-    if existing is not None:
-        return _recover_preparation(
-            final_root,
-            registry_root=registry_root,
-            authorization=existing,
-            code_root=code_root,
-            data_root=data_root,
-        )
+    actual_attempt_id = attempt_id or uuid4().hex
+    with claim_attempt_preparation(registry_root, attempt_id=actual_attempt_id):
+        try:
+            existing = _existing_attempt_authorization(registry_root, actual_attempt_id)
+            if existing is not None:
+                authorization = recover_registered_authorization(
+                    code_root=code_root,
+                    robustness_root=data_root / "processed/robustness",
+                    validation_root=data_root / "processed/validation_evaluation",
+                    opening_token_path=opening_token_path,
+                    approval_key=approval_key,
+                    registry_root=registry_root,
+                    requested_start=FINAL_TEST_START,
+                    requested_end=FINAL_TEST_END,
+                    attempt_id=actual_attempt_id,
+                )
+                return _recover_preparation(
+                    final_root,
+                    registry_root=registry_root,
+                    authorization=authorization,
+                    code_root=code_root,
+                    data_root=data_root,
+                )
 
-    authorization = authorize_final_test(
-        code_root=code_root,
-        robustness_root=data_root / "processed/robustness",
-        validation_root=data_root / "processed/validation_evaluation",
-        opening_token_path=opening_token_path,
-        approval_key=approval_key,
-        registry_root=registry_root,
-        requested_start=FINAL_TEST_START,
-        requested_end=FINAL_TEST_END,
-        attempt_id=attempt_id,
-    )
-    append_attempt_state(
-        registry_root, attempt_id=authorization.attempt_id, state="preparing"
-    )
-    return _complete_preparation(
-        final_root,
-        authorization=authorization,
-        code_root=code_root,
-        data_root=data_root,
-    )
+            authorization = authorize_final_test(
+                code_root=code_root,
+                robustness_root=data_root / "processed/robustness",
+                validation_root=data_root / "processed/validation_evaluation",
+                opening_token_path=opening_token_path,
+                approval_key=approval_key,
+                registry_root=registry_root,
+                requested_start=FINAL_TEST_START,
+                requested_end=FINAL_TEST_END,
+                attempt_id=actual_attempt_id,
+            )
+            append_attempt_state(
+                registry_root, attempt_id=authorization.attempt_id, state="preparing"
+            )
+            return _complete_preparation(
+                final_root,
+                authorization=authorization,
+                code_root=code_root,
+                data_root=data_root,
+            )
+        except Exception as error:
+            _record_preparation_failure(registry_root, actual_attempt_id, error)
+            raise
 
 
 def _complete_preparation(
@@ -289,7 +312,15 @@ def _resolve_or_build_data_panel(
     final_root: Path,
 ) -> FinalTestDataResolution:
     claim_path = final_root / "data-build-claim.json"
-    if not claim_path.exists():
+    if claim_path.exists() or claim_path.is_symlink():
+        resolution = recover_final_test_daily_panel(
+            config,
+            authorization,
+            FINAL_TEST_START,
+            FINAL_TEST_END,
+            code_root=code_root,
+        )
+    else:
         build_final_test_daily_panel(
             config,
             authorization,
@@ -297,11 +328,27 @@ def _resolve_or_build_data_panel(
             FINAL_TEST_END,
             code_root=code_root,
         )
-    resolution = resolve_final_test_data_panel(final_root)
+        resolution = resolve_final_test_data_panel(final_root)
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication is not ready for preparation")
     _assert_data_claim_identity(claim_path, authorization, resolution)
     return resolution
+
+
+def _record_preparation_failure(
+    registry_root: Path, attempt_id: str, error: Exception
+) -> None:
+    record = registry_root / f"{attempt_id}.json"
+    outcome = registry_root / f"{attempt_id}.outcome.json"
+    if not record.is_file() or outcome.exists():
+        return
+    append_attempt_outcome(
+        registry_root,
+        attempt_id=attempt_id,
+        status="failed",
+        authoritative=False,
+        reason=f"{type(error).__name__}: {error}",
+    )
 
 
 def _assert_data_claim_identity(

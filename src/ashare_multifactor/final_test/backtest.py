@@ -11,7 +11,6 @@ from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.config import FormalBacktestSettings
 from ashare_multifactor.data.security import assert_supported_markets, market_for_symbol
 from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
-from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.execution.fees import FeeSchedule, load_market_rules
 from ashare_multifactor.execution.market_state import build_execution_panel
 from ashare_multifactor.execution.shadow_nav import shadow_nav_audit
@@ -25,6 +24,10 @@ from ashare_multifactor.final_test.action_source_contract import (
 from ashare_multifactor.final_test.execution_sources import (
     _verify_reusable_source_root,
     validate_security_event_coverage,
+)
+from ashare_multifactor.final_test.execution_contracts import (
+    normalize_corporate_action_rows,
+    normalize_security_event_rows,
 )
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
@@ -348,77 +351,12 @@ def _resolve_pretest_execution_inputs(
 
 def _load_final_actions(path: Path) -> pl.DataFrame:
     frame = pl.read_parquet(path)
-    required_dates = {"ex_date", "effective_date"}
-    invalid_dates = (
-        pl.col("ex_date").is_null()
-        | pl.col("effective_date").is_null()
-        | ~pl.col("ex_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
-        | ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
-    )
-    if not required_dates.issubset(frame.columns) or frame.filter(invalid_dates).height:
-        raise ValueError("final corporate actions cross the sealed date bounds")
-    normalized = normalize_corporate_actions(frame, maximum_date=FINAL_TEST_END)
-    if normalized.filter(
-        pl.col("cash_per_share").is_null()
-        | ~pl.col("cash_per_share").is_finite()
-        | pl.col("share_ratio").is_null()
-        | ~pl.col("share_ratio").is_finite()
-    ).height:
-        raise ValueError("final corporate action numeric values must be finite")
-    if normalized.filter(pl.col("effective_date") < pl.col("ex_date")).height:
-        raise ValueError("final corporate action effective date precedes ex-date")
-    return normalized
+    return normalize_corporate_action_rows(frame, maximum_date=FINAL_TEST_END)
 
 
 def _load_final_security_events(path: Path) -> pl.DataFrame:
     frame = pl.read_parquet(path)
-    schema = {
-        "effective_date": pl.Date,
-        "source_symbol": pl.String,
-        "event_type": pl.String,
-        "target_symbol": pl.String,
-        "ratio": pl.Float64,
-        "cash_per_share": pl.Float64,
-        "source": pl.String,
-    }
-    missing = set(schema) - set(frame.columns)
-    if missing:
-        raise ValueError(f"final security events lack fields: {sorted(missing)}")
-    events = frame.select(
-        pl.col(name).cast(dtype, strict=False).alias(name)
-        for name, dtype in schema.items()
-    )
-    invalid = events.filter(
-        pl.col("effective_date").is_null()
-        | pl.col("source_symbol").is_null()
-        | pl.col("ratio").is_null()
-        | ~pl.col("ratio").is_finite()
-        | pl.col("cash_per_share").is_null()
-        | ~pl.col("cash_per_share").is_finite()
-        | ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
-        | ~pl.col("event_type").is_in(["stock_merger", "write_off"])
-        | (
-            (pl.col("event_type") == "stock_merger")
-            & (
-                pl.col("target_symbol").is_null()
-                | (pl.col("ratio") <= 0)
-                | (pl.col("cash_per_share") != 0)
-            )
-        )
-        | (
-            (pl.col("event_type") == "write_off")
-            & (
-                pl.col("target_symbol").is_not_null()
-                | (pl.col("ratio") != 0)
-                | (pl.col("cash_per_share") != 0)
-            )
-        )
-    )
-    if invalid.height or events.select(
-        pl.struct("effective_date", "source_symbol").is_duplicated().any()
-    ).item():
-        raise ValueError("invalid final security event contract")
-    return events.sort("effective_date", "source_symbol")
+    return normalize_security_event_rows(frame).drop("evidence_id")
 
 
 def _continuous_targets(

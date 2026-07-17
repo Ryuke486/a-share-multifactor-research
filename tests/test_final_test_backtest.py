@@ -355,6 +355,7 @@ def test_verified_inputs_extend_stage7_ledger_with_final_manifest_data(
             "ratio": pl.Float64,
             "cash_per_share": pl.Float64,
             "source": pl.String,
+            "evidence_id": pl.String,
         }
     ).write_parquet(final_events_path)
     build_execution_input_manifest(
@@ -377,7 +378,17 @@ def test_verified_inputs_extend_stage7_ledger_with_final_manifest_data(
             }
         )
     )
-    historical_events = pl.DataFrame(schema=pl.read_parquet(final_events_path).schema)
+    historical_events = pl.DataFrame(
+        schema={
+            "effective_date": pl.Date,
+            "source_symbol": pl.String,
+            "event_type": pl.String,
+            "target_symbol": pl.String,
+            "ratio": pl.Float64,
+            "cash_per_share": pl.Float64,
+            "source": pl.String,
+        }
+    )
     pretest = SimpleNamespace(
         execution_panel=pl.DataFrame(
             {
@@ -483,7 +494,7 @@ def test_final_action_dates_must_be_non_null_and_inside_sealed_period(
         schema_overrides={"ex_date": pl.Date},
     ).write_parquet(path)
 
-    with pytest.raises(ValueError, match="sealed date bounds"):
+    with pytest.raises(ValueError, match="corporate-action execution contract"):
         _load_final_actions(path)
 
 
@@ -641,7 +652,7 @@ def test_final_actions_require_finite_numeric_values(
         }
     ).write_parquet(path)
 
-    with pytest.raises(ValueError, match="finite"):
+    with pytest.raises(ValueError, match="corporate-action execution contract"):
         _load_final_actions(path)
 
 
@@ -660,7 +671,7 @@ def test_final_action_effective_date_cannot_precede_ex_date(tmp_path: Path) -> N
         }
     ).write_parquet(path)
 
-    with pytest.raises(ValueError, match="precedes ex-date"):
+    with pytest.raises(ValueError, match="corporate-action execution contract"):
         _load_final_actions(path)
 
 

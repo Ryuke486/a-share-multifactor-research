@@ -22,7 +22,7 @@ from ashare_multifactor.audit.publication import (
     resolve_release,
     restore_current,
 )
-from ashare_multifactor.audit.records import file_record
+from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
 from ashare_multifactor.final_test.backtest import (
     FinalTestBacktestResult,
     run_final_test_backtest,
@@ -178,7 +178,7 @@ def resume_final_test_release(
                 run_id=run_id,
                 prepared_run_id=prepared_run_id,
             )
-        except BaseException as error:
+        except Exception as error:
             outcome = registry_root / f"{attempt_id}.outcome.json"
             prepared = registry_root / f"{attempt_id}.prepared.json"
             publication_may_need_recovery = (
@@ -231,7 +231,7 @@ def _execute_authorized_final_test(
         return _recover_or_reject_current(
             final_root,
             registry_root,
-            attempt_id=authorization.attempt_id,
+            preflight=preflight,
             run_id=run_id,
         )
     orphan = _recover_orphan_release(
@@ -243,7 +243,12 @@ def _execute_authorized_final_test(
     if orphan is not None:
         return orphan
     if prepared_run_id is not None:
-        raise ValueError("prepared final-test publication has no recoverable release")
+        return _recover_prepared_staging(
+            final_root,
+            registry_root=registry_root,
+            preflight=preflight,
+            run_id=run_id,
+        )
     verify_resume_coverages(
         preflight,
         security_event_coverage_path=security_event_coverage_path,
@@ -389,11 +394,17 @@ def _execute_authorized_final_test(
             status="publishable",
             reason="all frozen final-test publication gates passed",
         )
+        publication_identity = _prepared_staging_identity(
+            attempt_root,
+            preflight=preflight,
+            execution_identity=execution_identity,
+        )
         append_prepared_publication(
             registry_root,
             attempt_id=authorization.attempt_id,
             release_run_id=run_id,
             sealed_protocol_sha256=authorization.sealed_protocol_sha256,
+            publication_identity=publication_identity,
         )
         release = publish_release(
             final_root,
@@ -401,24 +412,10 @@ def _execute_authorized_final_test(
             staged_datasets=datasets,
             staged_artifacts=artifacts,
             lineage=lineage,
-            manifest_metadata={
-                "stage": "final_test",
-                "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
-                "attempt_id": authorization.attempt_id,
-                "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
-                "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
-                "security_event_coverage_sha256": (
-                    preflight.security_event_coverage_sha256
-                ),
-                "corporate_action_coverage_sha256": (
-                    preflight.corporate_action_coverage_sha256
-                ),
-                "execution_id": execution_identity["execution_id"],
-                "coverage_snapshot_manifest_sha256": (
-                    coverage_snapshot.manifest_sha256
-                ),
-                "publishable": True,
-            },
+            manifest_metadata=_release_manifest_metadata(
+                preflight,
+                execution_identity=execution_identity,
+            ),
         )
         append_attempt_outcome(
             registry_root,
@@ -737,29 +734,21 @@ def _recover_or_reject_current(
     final_root: Path,
     registry_root: Path,
     *,
-    attempt_id: str,
+    preflight: ResumePreflight,
     run_id: str,
 ) -> FinalTestPipelineResult:
     release = resolve_current(final_root)
     if release.run_id != run_id:
         raise ValueError("prepared final-test publication run identity differs")
+    _verify_complete_release_identity(
+        final_root,
+        registry_root=registry_root,
+        preflight=preflight,
+        run_id=run_id,
+        release=release,
+    )
     current = {"run_id": release.run_id, "manifest_sha256": release.manifest_sha256}
-    prepared_path = registry_root / f"{attempt_id}.prepared.json"
-    try:
-        prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
-        raise ValueError("prepared final-test publication is missing or invalid") from error
-    lineage = json.loads(release.lineage.read_text(encoding="utf-8"))
-    identity = lineage.get("authorization")
-    if (
-        prepared.get("attempt_id") != attempt_id
-        or prepared.get("release_run_id") != run_id
-        or not isinstance(identity, dict)
-        or identity.get("attempt_id") != attempt_id
-        or identity.get("sealed_protocol_sha256")
-        != prepared.get("sealed_protocol_sha256")
-    ):
-        raise ValueError("prepared final-test publication differs from release lineage")
+    attempt_id = preflight.authorization.attempt_id
     outcome = registry_root / f"{attempt_id}.outcome.json"
     if outcome.exists():
         raise ValueError("authoritative final-test run already succeeded")
@@ -808,58 +797,287 @@ def _verify_orphan_release(
     if not release_root.exists():
         return None
     release = resolve_release(final_root, run_id)
-    attempt_id = preflight.authorization.attempt_id
-    identity_path = final_root / "attempt_runs" / attempt_id / "execution_identity.json"
     try:
-        execution_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        _verify_complete_release_identity(
+            final_root,
+            registry_root=final_root / "attempts",
+            preflight=preflight,
+            run_id=run_id,
+            release=release,
+        )
+    except ValueError as error:
+        raise ValueError("orphan final-test release identity differs") from error
+    return release
+
+
+def _recover_prepared_staging(
+    final_root: Path,
+    *,
+    registry_root: Path,
+    preflight: ResumePreflight,
+    run_id: str,
+) -> FinalTestPipelineResult:
+    attempt_id = preflight.authorization.attempt_id
+    attempt_root = final_root / "attempt_runs" / attempt_id
+    execution_identity, lineage, publication_identity = _verify_prepared_staging(
+        attempt_root,
+        registry_root=registry_root,
+        preflight=preflight,
+        run_id=run_id,
+    )
+    release = publish_release(
+        final_root,
+        run_id=run_id,
+        staged_datasets=attempt_root / "datasets",
+        staged_artifacts=attempt_root / "artifacts",
+        lineage=lineage,
+        manifest_metadata=_release_manifest_metadata(
+            preflight,
+            execution_identity=execution_identity,
+        ),
+    )
+    append_attempt_outcome(
+        registry_root,
+        attempt_id=attempt_id,
+        status="succeeded",
+        authoritative=True,
+        reason="recovered verified prepared final-test publication",
+        release_run_id=release.run_id,
+        release_manifest_sha256=release.manifest_sha256,
+    )
+    return FinalTestPipelineResult(attempt_id, True, attempt_root, release, ())
+
+
+def _verify_complete_release_identity(
+    final_root: Path,
+    *,
+    registry_root: Path,
+    preflight: ResumePreflight,
+    run_id: str,
+    release: PublishedRelease,
+) -> None:
+    attempt_id = preflight.authorization.attempt_id
+    attempt_root = final_root / "attempt_runs" / attempt_id
+    execution_identity, lineage_preview, publication_identity = (
+        _verify_prepared_staging(
+            attempt_root,
+            registry_root=registry_root,
+            preflight=preflight,
+            run_id=run_id,
+        )
+    )
+    try:
         manifest = json.loads(release.manifest.read_text(encoding="utf-8"))
         lineage = json.loads(release.lineage.read_text(encoding="utf-8"))
-        prepared = resolve_prepared_publication(
-            final_root / "attempts",
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("final-test release identity is incomplete") from error
+    expected_metadata = _release_manifest_metadata(
+        preflight,
+        execution_identity=execution_identity,
+    )
+    release_staging_identity = _staging_files_identity(release.root)
+    expected_staging_identity = {
+        key: publication_identity[key]
+        for key in ("staging_files_sha256", "staging_file_count")
+    }
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"files", "run_id", *expected_metadata}
+        or manifest.get("run_id") != run_id
+        or any(manifest.get(key) != value for key, value in expected_metadata.items())
+        or release_staging_identity != expected_staging_identity
+        or lineage != lineage_preview
+        or sha256_file(release.lineage)
+        != publication_identity["lineage_preview_sha256"]
+    ):
+        raise ValueError("final-test release identity differs")
+
+
+def _verify_prepared_staging(
+    attempt_root: Path,
+    *,
+    registry_root: Path,
+    preflight: ResumePreflight,
+    run_id: str,
+) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+    attempt_id = preflight.authorization.attempt_id
+    identity_path = attempt_root / "execution_identity.json"
+    lineage_path = attempt_root / "artifacts/lineage_preview.json"
+    manifest_path = attempt_root / "attempt_manifest.json"
+    if attempt_root.is_symlink() or any(
+        path.is_symlink() for path in (identity_path, lineage_path, manifest_path)
+    ):
+        raise ValueError("prepared final-test staging identity differs")
+    try:
+        execution_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
+        attempt_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("prepared final-test staging identity is incomplete") from error
+    if not isinstance(execution_identity, dict) or not isinstance(lineage, dict):
+        raise ValueError("prepared final-test staging identity differs")
+    publication_identity = _prepared_staging_identity(
+        attempt_root,
+        preflight=preflight,
+        execution_identity=execution_identity,
+    )
+    try:
+        resolve_prepared_publication(
+            registry_root,
             attempt_id=attempt_id,
             release_run_id=run_id,
             sealed_protocol_sha256=preflight.authorization.sealed_protocol_sha256,
+            publication_identity=publication_identity,
         )
-    except (FileNotFoundError, json.JSONDecodeError) as error:
-        raise ValueError("orphan final-test release identity is incomplete") from error
     except ValueError as error:
-        raise ValueError("orphan final-test release identity differs") from error
-    expected = {
-        "attempt_id": attempt_id,
-        "sealed_protocol_sha256": preflight.authorization.sealed_protocol_sha256,
-        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
-        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
-        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
-    }
-    authorization = lineage.get("authorization") if isinstance(lineage, dict) else None
-    execution = lineage.get("execution") if isinstance(lineage, dict) else None
+        raise ValueError("prepared final-test publication identity differs") from error
+    expected_execution = _expected_execution_identity(
+        preflight,
+        execution_id=publication_identity["execution_id"],
+        coverage_snapshot_manifest_sha256=publication_identity[
+            "coverage_snapshot_manifest_sha256"
+        ],
+    )
+    authorization = lineage.get("authorization")
+    execution = lineage.get("execution")
     if (
-        not isinstance(execution_identity, dict)
-        or any(execution_identity.get(key) != value for key, value in expected.items())
-        or not isinstance(execution_identity.get("execution_id"), str)
-        or not isinstance(
-            execution_identity.get("coverage_snapshot_manifest_sha256"), str
-        )
-        or not isinstance(manifest, dict)
-        or manifest.get("run_id") != run_id
-        or manifest.get("publishable") is not True
-        or any(manifest.get(key) != value for key, value in expected.items())
-        or manifest.get("execution_id") != execution_identity["execution_id"]
-        or manifest.get("coverage_snapshot_manifest_sha256")
-        != execution_identity["coverage_snapshot_manifest_sha256"]
+        execution_identity != expected_execution
+        or not isinstance(attempt_manifest, dict)
+        or attempt_manifest.get("status") != "publishable"
+        or attempt_manifest.get("attempt_id") != attempt_id
+        or attempt_manifest.get("sealed_protocol_sha256")
+        != preflight.authorization.sealed_protocol_sha256
         or not isinstance(authorization, dict)
         or authorization.get("attempt_id") != attempt_id
         or authorization.get("sealed_protocol_sha256")
         != preflight.authorization.sealed_protocol_sha256
         or not isinstance(execution, dict)
         or execution.get("identity") != execution_identity
-        or prepared.get("attempt_id") != attempt_id
-        or prepared.get("release_run_id") != run_id
-        or prepared.get("sealed_protocol_sha256")
-        != preflight.authorization.sealed_protocol_sha256
     ):
-        raise ValueError("orphan final-test release identity differs")
-    return release
+        raise ValueError("prepared final-test staging identity differs")
+    records = attempt_manifest.get("files")
+    if not isinstance(records, list):
+        raise ValueError("prepared final-test staging identity differs")
+    try:
+        for record in records:
+            verify_file_record(record, root=attempt_root)
+    except (FileNotFoundError, TypeError, ValueError) as error:
+        raise ValueError("prepared final-test staging identity differs") from error
+    return execution_identity, lineage, publication_identity
+
+
+def _prepared_staging_identity(
+    attempt_root: Path,
+    *,
+    preflight: ResumePreflight,
+    execution_identity: Mapping[str, object],
+) -> dict[str, object]:
+    expected = _expected_execution_identity(
+        preflight,
+        execution_id=execution_identity.get("execution_id"),
+        coverage_snapshot_manifest_sha256=execution_identity.get(
+            "coverage_snapshot_manifest_sha256"
+        ),
+    )
+    if dict(execution_identity) != expected:
+        raise ValueError("prepared final-test staging identity differs")
+    staging = _staging_files_identity(attempt_root)
+    return {
+        "attempt_manifest_sha256": sha256_file(attempt_root / "attempt_manifest.json"),
+        "lineage_preview_sha256": sha256_file(
+            attempt_root / "artifacts/lineage_preview.json"
+        ),
+        "execution_id": expected["execution_id"],
+        "prepare_manifest_sha256": expected["prepare_manifest_sha256"],
+        "security_event_coverage_sha256": expected[
+            "security_event_coverage_sha256"
+        ],
+        "corporate_action_coverage_sha256": expected[
+            "corporate_action_coverage_sha256"
+        ],
+        "coverage_snapshot_manifest_sha256": expected[
+            "coverage_snapshot_manifest_sha256"
+        ],
+        **staging,
+    }
+
+
+def _staging_files_identity(attempt_root: Path) -> dict[str, object]:
+    directories = (attempt_root / "datasets", attempt_root / "artifacts")
+    items = sorted(path for directory in directories for path in directory.rglob("*"))
+    files = [path for path in items if path.is_file()]
+    if (
+        attempt_root.is_symlink()
+        or any(directory.is_symlink() for directory in directories)
+        or not files
+        or any(path.is_symlink() for path in items)
+    ):
+        raise ValueError("prepared final-test staging identity differs")
+    records = [
+        file_record(path, root=attempt_root, role="prepared_staging").to_dict()
+        for path in files
+    ]
+    canonical = json.dumps(
+        records,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode()
+    return {
+        "staging_files_sha256": hashlib.sha256(canonical).hexdigest(),
+        "staging_file_count": len(records),
+    }
+
+
+def _expected_execution_identity(
+    preflight: ResumePreflight,
+    *,
+    execution_id: object,
+    coverage_snapshot_manifest_sha256: object,
+) -> dict[str, object]:
+    if not isinstance(execution_id, str) or not execution_id:
+        raise ValueError("prepared final-test staging identity differs")
+    validate_publication_id(execution_id)
+    if (
+        not isinstance(coverage_snapshot_manifest_sha256, str)
+        or len(coverage_snapshot_manifest_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in coverage_snapshot_manifest_sha256
+        )
+    ):
+        raise ValueError("prepared final-test staging identity differs")
+    return {
+        "execution_id": execution_id,
+        "attempt_id": preflight.authorization.attempt_id,
+        "sealed_protocol_sha256": preflight.authorization.sealed_protocol_sha256,
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+        "coverage_snapshot_manifest_sha256": coverage_snapshot_manifest_sha256,
+    }
+
+
+def _release_manifest_metadata(
+    preflight: ResumePreflight,
+    *,
+    execution_identity: Mapping[str, object],
+) -> dict[str, object]:
+    expected = _expected_execution_identity(
+        preflight,
+        execution_id=execution_identity.get("execution_id"),
+        coverage_snapshot_manifest_sha256=execution_identity.get(
+            "coverage_snapshot_manifest_sha256"
+        ),
+    )
+    if dict(execution_identity) != expected:
+        raise ValueError("final-test execution identity differs")
+    return {
+        "stage": "final_test",
+        "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
+        **expected,
+        "publishable": True,
+    }
 
 
 def _copy_release_inputs(

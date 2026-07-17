@@ -8,12 +8,14 @@ import polars as pl
 
 from ashare_multifactor.audit.records import sha256_file, verify_file_record
 from ashare_multifactor.data.security import market_for_symbol
-from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.final_test.action_source_contract import (
     OFFICIAL_MARKET_SOURCES,
     evidence_url_matches_source,
 )
 from ashare_multifactor.final_test.gate import FINAL_TEST_END, FINAL_TEST_START
+from ashare_multifactor.final_test.execution_contracts import (
+    normalize_corporate_action_rows,
+)
 
 def validate_corporate_action_coverage(
     root: Path, *, symbols: list[str] | None = None
@@ -135,6 +137,17 @@ def validate_corporate_action_coverage(
         pl.col("announcement_date").cast(pl.Date),
         pl.col("ex_date").cast(pl.Date),
         pl.col("effective_date").cast(pl.Date),
+    )
+    actions = normalize_corporate_action_rows(
+        official.select(
+            "symbol",
+            "ex_date",
+            "effective_date",
+            "cash_per_share",
+            "share_ratio",
+            "source",
+        ),
+        maximum_date=FINAL_TEST_END,
     )
     action_key = [
         "symbol", "ex_date", "effective_date", "cash_per_share", "share_ratio", "source"
@@ -261,12 +274,6 @@ def validate_corporate_action_coverage(
             if official_row[field] != expected:
                 raise ValueError(f"candidate official {field} mismatch")
 
-    actions = normalize_corporate_actions(
-        official.select(
-            "symbol", "ex_date", "effective_date", "cash_per_share", "share_ratio", "source"
-        ),
-        maximum_date=FINAL_TEST_END,
-    )
     result = dict(payload)
     result.update(
         {

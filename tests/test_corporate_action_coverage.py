@@ -155,6 +155,38 @@ def test_missing_announcement_date_is_rejected(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("ex_date", None),
+        ("effective_date", None),
+        ("cash_per_share", None),
+        ("cash_per_share", float("nan")),
+        ("share_ratio", float("inf")),
+    ],
+)
+def test_corporate_action_execution_contract_rejects_null_or_nonfinite_values(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    root = _write_coverage(tmp_path)
+    dtype = pl.Date if field in {"ex_date", "effective_date"} else pl.Float64
+    official = pl.read_parquet(root / "official_actions.parquet").with_columns(
+        pl.lit(value, dtype=dtype).alias(field)
+    )
+    official.write_parquet(root / "official_actions.parquet")
+    candidates = pl.read_parquet(root / "candidates.parquet").with_columns(
+        pl.lit(value, dtype=dtype).alias(field)
+    )
+    candidates.write_parquet(root / "candidates.parquet")
+    _refresh_record(root, "official_actions")
+    _refresh_record(root, "candidate_file")
+
+    with pytest.raises(ValueError, match="corporate-action.*contract"):
+        validate_corporate_action_coverage(root)
+
+
+@pytest.mark.parametrize(
     ("field", "value", "message"),
     [
         ("symbol", "000002", "row lacks official evidence"),

@@ -13,7 +13,7 @@ from uuid import uuid4
 import polars as pl
 
 from ashare_multifactor.config import ResearchConfig, load_config
-from ashare_multifactor.data.discovery import discover_daily_pairs
+from ashare_multifactor.data.discovery import DailyFilePair, discover_daily_pairs
 from ashare_multifactor.data.reader import read_daily_pair
 from ashare_multifactor.data.schema import SCHEMA_VERSION
 from ashare_multifactor.data.validation import (
@@ -201,6 +201,8 @@ def build_parquet_dataset(
     start: date,
     end: date,
     output_root: Path | None = None,
+    *,
+    discovered_pairs: list[DailyFilePair] | None = None,
 ) -> BuildManifest:
     if end < start:
         raise ValueError("build end precedes start")
@@ -222,14 +224,22 @@ def build_parquet_dataset(
         period_name = "factor_research data"
     if start < allowed_start or end > allowed_end:
         raise ValueError(f"build dates must stay inside configured {period_name} period")
-    pairs = discover_daily_pairs(
-        config.paths.raw_unadjusted,
-        config.paths.raw_backward_adjusted,
-        start,
-        end,
+    pairs = (
+        list(discovered_pairs)
+        if discovered_pairs is not None
+        else discover_daily_pairs(
+            config.paths.raw_unadjusted,
+            config.paths.raw_backward_adjusted,
+            start,
+            end,
+        )
     )
     if not pairs:
         raise ValueError("no paired daily files found")
+    if pairs != sorted(pairs, key=lambda pair: pair.trading_date) or any(
+        pair.trading_date < start or pair.trading_date > end for pair in pairs
+    ):
+        raise ValueError("discovered daily pairs differ from requested period")
 
     staging = target.parent / f".{target.name}-{uuid4().hex}.tmp"
     quality_records: list[dict[str, object]] = []
