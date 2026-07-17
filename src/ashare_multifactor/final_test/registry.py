@@ -792,17 +792,46 @@ def _validate_execution_recovery_complete(
 def _archive_manifest_sha256(
     registry_root: Path, intent: dict[str, Any]
 ) -> str:
-    path = (
+    recovery_root = (
         registry_root.parent
         / str(intent.get("recovery_root", ""))
-        / "archive_manifest.json"
     )
-    if path.is_symlink():
-        raise ValueError("completed execution recovery archive manifest uses a symlink")
+    directory_flag = getattr(os, "O_DIRECTORY", None)
+    no_follow_flag = getattr(os, "O_NOFOLLOW", None)
+    if (
+        directory_flag is None
+        or no_follow_flag is None
+        or os.open not in os.supports_dir_fd
+    ):
+        raise RuntimeError("secure archive manifest verification is unavailable")
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
-    except FileNotFoundError as error:
-        raise ValueError("completed execution recovery archive manifest is missing") from error
+        recovery_fd = os.open(
+            recovery_root,
+            os.O_RDONLY | directory_flag | no_follow_flag,
+        )
+    except OSError as error:
+        raise ValueError("completed execution recovery root is unsafe") from error
+    try:
+        try:
+            manifest_fd = os.open(
+                "archive_manifest.json",
+                os.O_RDONLY | no_follow_flag,
+                dir_fd=recovery_fd,
+            )
+        except OSError as error:
+            raise ValueError(
+                "completed execution recovery archive manifest is missing or unsafe"
+            ) from error
+        try:
+            digest = hashlib.sha256()
+            with os.fdopen(manifest_fd, "rb", closefd=False) as stream:
+                for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            return digest.hexdigest()
+        finally:
+            os.close(manifest_fd)
+    finally:
+        os.close(recovery_fd)
 
 
 def recover_prepared_publication(

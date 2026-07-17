@@ -2,22 +2,34 @@
 
 from __future__ import annotations
 
-import ctypes
-import errno
+from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
-import sys
-from typing import Mapping
+from typing import Iterator, Mapping
 from uuid import uuid4
 
-from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
 from ashare_multifactor.final_test.registry import (
     begin_execution_recovery,
     complete_execution_recovery,
     pending_execution_recovery,
     validate_publication_id,
+)
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    assert_directory_entry as _assert_directory_entry,
+    atomic_rename_no_replace as _atomic_rename_no_replace,
+    atomic_rename_no_replace_at as _atomic_rename_no_replace_at,
+    directory_identity as _directory_identity,
+    directory_records_at as _directory_records_at,
+    json_bytes as _json_bytes,
+    open_directory_at as _open_directory_at,
+    opened_directory as _opened_directory,
+    opened_directory_at as _opened_directory_at,
+    read_bytes_at as _read_bytes_at,
+    read_json_at as _read_json_at,
+    write_bytes_exclusive_at as _write_bytes_exclusive_at,
 )
 from ashare_multifactor.final_test.resume import ResumePreflight
 
@@ -99,38 +111,40 @@ def recover_interrupted_execution(
         raise ValueError("interrupted recovery root is missing")
     _resolve_or_publish_claim(recovery_root, intent=intent)
     archive = recovery_root / "archive"
-    archive.mkdir(exist_ok=True)
-    for label, source in sources.items():
-        if not presence[label]:
-            continue
-        target = archive / label
-        if source.exists() and target.exists():
-            raise ValueError("interrupted archive target already contains data")
-        if source.exists():
-            _atomic_rename_no_replace(source, target)
-        elif not target.is_dir() or target.is_symlink():
-            raise ValueError("interrupted execution archive is missing after recovery intent")
-    archived_sources = {label: archive / label for label in sources}
-    if _load_execution_identity(archived_sources["attempt_run"]) != identity:
-        raise ValueError("interrupted execution archive identity changed")
-    _verify_bound_artifacts(
-        archived_sources,
-        presence=presence,
-        execution_id=execution_id,
-        attempt_id=attempt_id,
-        allow_moved=False,
-    )
-    archive_manifest = _write_or_verify_archive_manifest(
-        recovery_root,
-        intent=intent,
-        archived_sources=archived_sources,
-        presence=presence,
-    )
-    complete_execution_recovery(
-        registry_root,
-        intent=intent,
-        archive_manifest_sha256=sha256_file(archive_manifest),
-    )
+    with _open_recovery_archive(recovery_root, intent=intent) as (
+        recovery_fd,
+        archive_fd,
+        archive_identity,
+    ):
+        for label, source in sources.items():
+            if not presence[label]:
+                continue
+            _assert_archive_anchor(
+                recovery_fd,
+                archive_fd,
+                expected=archive_identity,
+            )
+            _move_source_directory_no_replace(
+                source,
+                destination_name=label,
+                archive_fd=archive_fd,
+            )
+            _assert_archive_anchor(
+                recovery_fd,
+                archive_fd,
+                expected=archive_identity,
+            )
+        archive_manifest_sha256 = _write_or_verify_archive_manifest_at(
+            recovery_fd,
+            archive_fd,
+            intent=intent,
+            presence=presence,
+        )
+        complete_execution_recovery(
+            registry_root,
+            intent=intent,
+            archive_manifest_sha256=archive_manifest_sha256,
+        )
     return archive
 
 
@@ -208,16 +222,20 @@ def _verify_bound_artifacts(
 
 
 def _resolve_or_publish_claim(recovery_root: Path, *, intent: dict[str, object]) -> None:
-    claim = recovery_root / ".intent-claim.json"
     if recovery_root.exists() or recovery_root.is_symlink():
-        if recovery_root.is_symlink() or not recovery_root.is_dir():
-            raise FileExistsError("recovery claim target already exists")
-        try:
-            payload = json.loads(claim.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError) as error:
-            raise FileExistsError("recovery claim target already exists") from error
-        if payload != intent:
-            raise ValueError("interrupted archive target claim differs")
+        with _opened_directory(recovery_root, label="recovery claim") as recovery_fd:
+            try:
+                payload = _read_json_at(
+                    recovery_fd,
+                    ".intent-claim.json",
+                    label="recovery claim",
+                )
+            except ValueError as error:
+                raise FileExistsError(
+                    "recovery claim target already exists"
+                ) from error
+            if payload != intent:
+                raise ValueError("interrupted archive target claim differs")
         return
     recovery_root.parent.mkdir(parents=True, exist_ok=True)
     temporary = recovery_root.parent / f".{recovery_root.name}.{uuid4().hex}.tmp"
@@ -230,59 +248,141 @@ def _resolve_or_publish_claim(recovery_root: Path, *, intent: dict[str, object])
         raise
 
 
-def _atomic_rename_no_replace(source: Path, destination: Path) -> None:
-    libc = ctypes.CDLL(None, use_errno=True)
-    source_bytes = os.fsencode(source)
-    destination_bytes = os.fsencode(destination)
-    if sys.platform == "darwin":
-        result = libc.renamex_np(source_bytes, destination_bytes, ctypes.c_uint(0x00000004))
-    elif sys.platform.startswith("linux"):
-        result = libc.renameat2(
-            ctypes.c_int(-100),
-            source_bytes,
-            ctypes.c_int(-100),
-            destination_bytes,
-            ctypes.c_uint(1),
+@contextmanager
+def _open_recovery_archive(
+    recovery_root: Path, *, intent: Mapping[str, object]
+) -> Iterator[tuple[int, int, tuple[int, int]]]:
+    with _opened_directory(recovery_root, label="recovery claim") as recovery_fd:
+        claim = _read_json_at(
+            recovery_fd,
+            ".intent-claim.json",
+            label="recovery claim",
         )
-    else:
-        raise RuntimeError("atomic no-replace directory publication is unsupported")
-    if result == 0:
-        return
-    error_number = ctypes.get_errno()
-    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
-        raise FileExistsError("recovery claim target already exists")
-    raise OSError(error_number, os.strerror(error_number), str(destination))
+        if claim != intent:
+            raise ValueError("interrupted archive target claim differs")
+        try:
+            os.mkdir("archive", mode=0o700, dir_fd=recovery_fd)
+        except FileExistsError:
+            pass
+        with _opened_directory_at(
+            recovery_fd,
+            "archive",
+            label="archive safe directory",
+        ) as archive_fd:
+            identity = _directory_identity(archive_fd)
+            _assert_archive_anchor(recovery_fd, archive_fd, expected=identity)
+            yield recovery_fd, archive_fd, identity
 
 
-def _write_or_verify_archive_manifest(
-    recovery_root: Path,
+def _move_source_directory_no_replace(
+    source: Path,
+    *,
+    destination_name: str,
+    archive_fd: int,
+) -> None:
+    if source.name in {"", ".", ".."} or destination_name in {"", ".", ".."}:
+        raise ValueError("interrupted execution directory name is unsafe")
+    with _opened_directory(source.parent, label="source parent safe directory") as parent_fd:
+        try:
+            source_fd = _open_directory_at(
+                parent_fd,
+                source.name,
+                label="source execution directory",
+            )
+        except FileNotFoundError:
+            with _opened_directory_at(
+                archive_fd,
+                destination_name,
+                label="archived execution directory",
+            ):
+                return
+        try:
+            source_identity = _directory_identity(source_fd)
+            _assert_directory_entry(
+                parent_fd,
+                source.name,
+                expected=source_identity,
+                label="source execution directory",
+            )
+            _atomic_rename_no_replace_at(
+                parent_fd,
+                source.name,
+                archive_fd,
+                destination_name,
+            )
+            _assert_directory_entry(
+                archive_fd,
+                destination_name,
+                expected=source_identity,
+                label="archived execution directory",
+            )
+        finally:
+            os.close(source_fd)
+
+
+def _assert_archive_anchor(
+    recovery_fd: int,
+    archive_fd: int,
+    *,
+    expected: tuple[int, int],
+) -> None:
+    if _directory_identity(archive_fd) != expected:
+        raise ValueError("archive safe directory identity changed")
+    _assert_directory_entry(
+        recovery_fd,
+        "archive",
+        expected=expected,
+        label="archive safe directory",
+    )
+
+
+def _write_or_verify_archive_manifest_at(
+    recovery_fd: int,
+    archive_fd: int,
     *,
     intent: Mapping[str, object],
-    archived_sources: Mapping[str, Path],
     presence: Mapping[str, bool],
-) -> Path:
-    destination = recovery_root / "archive_manifest.json"
-    records = [
-        file_record(path, root=recovery_root, role=f"interrupted_{label}").to_dict()
-        for label, root in sorted(archived_sources.items())
-        if presence[label]
-        for path in sorted(item for item in root.rglob("*") if item.is_file())
-    ]
+) -> str:
+    records: list[dict[str, object]] = []
+    for label in sorted(presence):
+        if not presence[label]:
+            continue
+        with _opened_directory_at(
+            archive_fd,
+            label,
+            label="archived execution directory",
+        ) as artifact_fd:
+            records.extend(
+                _directory_records_at(
+                    artifact_fd,
+                    prefix=f"archive/{label}",
+                    role=f"interrupted_{label}",
+                )
+            )
     payload = {
         "attempt_id": intent["attempt_id"],
         "recovery_id": intent["recovery_id"],
         "execution_id": intent["execution_id"],
         "files": records,
     }
-    if destination.exists():
-        existing = _read_json(destination, label="interrupted archive manifest")
-        if existing != payload:
-            raise ValueError("interrupted archive manifest identity differs")
+    expected_bytes = _json_bytes(payload)
+    try:
+        existing_bytes = _read_bytes_at(
+            recovery_fd,
+            "archive_manifest.json",
+            label="interrupted archive manifest",
+        )
+    except FileNotFoundError:
+        _write_bytes_exclusive_at(
+            recovery_fd,
+            "archive_manifest.json",
+            expected_bytes,
+        )
+        existing_bytes = expected_bytes
     else:
-        _write_json_exclusive(destination, payload)
-    for record in records:
-        verify_file_record(record, root=recovery_root)
-    return destination
+        if existing_bytes != expected_bytes:
+            raise ValueError("interrupted archive manifest identity differs")
+    return hashlib.sha256(existing_bytes).hexdigest()
 
 
 def _load_execution_identity(root: Path) -> dict[str, object]:
