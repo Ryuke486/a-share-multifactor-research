@@ -21,6 +21,7 @@ _STATE_SEQUENCE = {
     "awaiting_official_evidence": 2,
     "executing": 3,
 }
+_STATE_BY_SEQUENCE = {sequence: state for state, sequence in _STATE_SEQUENCE.items()}
 _STATE_IDENTITIES = {
     "preparing": frozenset(),
     "awaiting_official_evidence": frozenset({"prepare_manifest_sha256"}),
@@ -60,12 +61,16 @@ def append_attempt_state(
     expected = _STATE_SEQUENCE.get(str(current["state"]), -1) + 1
     if _STATE_SEQUENCE.get(state) != expected:
         raise ValueError("invalid final-test state transition")
+    validated_identities = _validate_state_identities(state, identities or {})
+    _validate_state_identity_inheritance(
+        state, current["identities"], validated_identities
+    )
     payload: AttemptStateEvent = {
         "attempt_id": attempt_id,
         "sequence": expected,
         "state": state,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "identities": _validate_state_identities(state, identities or {}),
+        "identities": validated_identities,
     }
     try:
         _write_exclusive(
@@ -92,13 +97,16 @@ def resolve_attempt_state(registry_root: Path, attempt_id: str) -> dict[str, Any
     state = "registered"
     identities: dict[str, str] = {}
     for expected_sequence, event in enumerate(events, start=1):
-        expected_state = next(
-            name for name, sequence in _STATE_SEQUENCE.items() if sequence == expected_sequence
-        )
+        expected_state = _STATE_BY_SEQUENCE.get(expected_sequence)
+        if expected_state is None:
+            raise ValueError("invalid final-test state event")
         if event["sequence"] != expected_sequence:
             raise ValueError("missing state sequence")
         if event["state"] != expected_state:
             raise ValueError("invalid final-test state event")
+        _validate_state_identity_inheritance(
+            expected_state, identities, event["identities"]
+        )
         state = expected_state
         identities = event["identities"]
 
@@ -162,22 +170,44 @@ def _validate_state_identities(
     return dict(identities)
 
 
+def _validate_state_identity_inheritance(
+    state: str,
+    previous: dict[str, str],
+    identities: dict[str, str],
+) -> None:
+    if state == "executing" and (
+        identities["prepare_manifest_sha256"]
+        != previous.get("prepare_manifest_sha256")
+    ):
+        raise ValueError("executing state prepare manifest identity differs")
+
+
 def _validate_terminal_outcome(outcome: dict[str, Any], attempt_id: str) -> None:
     status = outcome.get("status")
     authoritative = outcome.get("authoritative")
     if (
         outcome.get("attempt_id") != attempt_id
         or status not in {"failed", "succeeded"}
-        or authoritative != (status == "succeeded")
+        or authoritative is not (status == "succeeded")
         or not isinstance(outcome.get("reason"), str)
         or not outcome["reason"].strip()
     ):
         raise ValueError("invalid final-test terminal outcome")
+    release_run_id = outcome.get("release_run_id")
+    release_manifest_sha256 = outcome.get("release_manifest_sha256")
+    if (
+        release_run_id is not None
+        and (not isinstance(release_run_id, str) or not release_run_id)
+    ) or (
+        release_manifest_sha256 is not None
+        and (
+            not isinstance(release_manifest_sha256, str)
+            or _SHA256.fullmatch(release_manifest_sha256) is None
+        )
+    ):
+        raise ValueError("invalid final-test terminal outcome")
     if status == "succeeded" and (
-        not isinstance(outcome.get("release_run_id"), str)
-        or not outcome["release_run_id"]
-        or not isinstance(outcome.get("release_manifest_sha256"), str)
-        or _SHA256.fullmatch(outcome["release_manifest_sha256"]) is None
+        release_run_id is None or release_manifest_sha256 is None
     ):
         raise ValueError("invalid final-test terminal outcome")
 
@@ -239,6 +269,7 @@ def append_attempt_outcome(
         payload["release_run_id"] = release_run_id
     if release_manifest_sha256 is not None:
         payload["release_manifest_sha256"] = release_manifest_sha256
+    _validate_terminal_outcome(payload, attempt_id)
     registry_root.mkdir(parents=True, exist_ok=True)
     destination = registry_root / f"{attempt_id}.outcome.json"
     try:

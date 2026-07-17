@@ -197,3 +197,105 @@ def test_attempt_state_rejects_illegal_event_filename_and_terminal_conflict(
 
     with pytest.raises(ValueError, match="terminal outcome"):
         resolve_attempt_state(registry, "attempt-001")
+
+
+def test_attempt_outcome_rejects_invalid_release_hash_before_writing(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+
+    with pytest.raises(ValueError, match="terminal outcome"):
+        append_attempt_outcome(
+            registry,
+            attempt_id="attempt-001",
+            status="succeeded",
+            authoritative=True,
+            reason="published",
+            release_run_id="final-release",
+            release_manifest_sha256="not-a-sha256",
+        )
+
+    assert not (registry / "attempt-001.outcome.json").exists()
+
+
+def test_executing_state_requires_awaiting_prepare_manifest_identity(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    _awaiting_official_evidence(registry)
+
+    with pytest.raises(ValueError, match="prepare manifest"):
+        append_attempt_state(
+            registry,
+            attempt_id="attempt-001",
+            state="executing",
+            identities={
+                "prepare_manifest_sha256": "d" * 64,
+                "security_event_coverage_sha256": "b" * 64,
+                "corporate_action_coverage_sha256": "c" * 64,
+            },
+        )
+
+    assert not (registry / "attempt-001.state.03-executing.json").exists()
+
+
+def test_attempt_state_rejects_tampered_executing_prepare_manifest_identity(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    _awaiting_official_evidence(registry)
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="executing",
+        identities={
+            "prepare_manifest_sha256": "a" * 64,
+            "security_event_coverage_sha256": "b" * 64,
+            "corporate_action_coverage_sha256": "c" * 64,
+        },
+    )
+    event = registry / "attempt-001.state.03-executing.json"
+    payload = json.loads(event.read_text(encoding="utf-8"))
+    payload["identities"]["prepare_manifest_sha256"] = "d" * 64
+    event.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="prepare manifest"):
+        resolve_attempt_state(registry, "attempt-001")
+
+
+def test_attempt_state_rejects_sequence_beyond_fixed_state_table(tmp_path: Path) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    _awaiting_official_evidence(registry)
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="executing",
+        identities={
+            "prepare_manifest_sha256": "a" * 64,
+            "security_event_coverage_sha256": "b" * 64,
+            "corporate_action_coverage_sha256": "c" * 64,
+        },
+    )
+    (registry / "attempt-001.state.04-executing.json").write_text(
+        json.dumps(
+            {
+                "attempt_id": "attempt-001",
+                "sequence": 4,
+                "state": "executing",
+                "recorded_at": "2026-07-17T00:00:00+00:00",
+                "identities": {
+                    "prepare_manifest_sha256": "a" * 64,
+                    "security_event_coverage_sha256": "b" * 64,
+                    "corporate_action_coverage_sha256": "c" * 64,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="invalid final-test state event"):
+        resolve_attempt_state(registry, "attempt-001")
