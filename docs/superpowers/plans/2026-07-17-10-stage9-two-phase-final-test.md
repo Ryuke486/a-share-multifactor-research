@@ -33,7 +33,7 @@
 - Consumes: 现有不可变`<attempt_id>.json`和`<attempt_id>.outcome.json`。
 - Produces: `AttemptStateEvent`、`append_attempt_state`状态追加接口、`resolve_attempt_state`状态解析接口。
 
-- [ ] **Step 1: 写合法状态链和并发领取失败测试**
+- [x] **Step 1: 写合法状态链和并发领取失败测试**
 
 ```python
 def test_attempt_state_events_are_append_only_and_resume_claim_is_exclusive(tmp_path: Path) -> None:
@@ -68,13 +68,13 @@ def test_attempt_state_events_are_append_only_and_resume_claim_is_exclusive(tmp_
 
 同时增加以下独立反例：跳过`preparing`、从`awaiting_official_evidence`退回`preparing`、终态后追加状态、缺少64位哈希、状态文件内容被修改。
 
-- [ ] **Step 2: 运行RED测试**
+- [x] **Step 2: 运行RED测试**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_registry.py`
 
 Expected: FAIL，导入`append_attempt_state`或`resolve_attempt_state`失败。
 
-- [ ] **Step 3: 实现固定序号状态事件**
+- [x] **Step 3: 实现固定序号状态事件**
 
 ```python
 _STATE_SEQUENCE = {
@@ -112,13 +112,13 @@ def append_attempt_state(
 
 `resolve_attempt_state`必须从基础登记、固定序号事件和终态outcome重建状态；发现重复序号、缺号、非法文件名、身份字段不完整或终态冲突时拒绝。
 
-- [ ] **Step 4: 运行GREEN和既有registry/gate回归**
+- [x] **Step 4: 运行GREEN和既有registry/gate回归**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_registry.py tests/test_final_test_gate.py`
 
 Expected: PASS。
 
-- [ ] **Step 5: 提交并进入任务审查**
+- [x] **Step 5: 提交并进入任务审查**
 
 ```bash
 git add src/ashare_multifactor/final_test/registry.py tests/test_final_test_registry.py
