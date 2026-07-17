@@ -147,7 +147,8 @@ def test_recovery_rejects_published_claim_archive_symlink_before_any_move(
     tmp_path: Path,
 ) -> None:
     preflight, snapshot, final_root, attempt_root, intent = _claimed_interruption(
-        prepared_attempt
+        prepared_attempt,
+        with_all_sources=True,
     )
     recovery_root = final_root / str(intent["recovery_root"])
     recovery_module._resolve_or_publish_claim(recovery_root, intent=intent)
@@ -155,7 +156,12 @@ def test_recovery_rejects_published_claim_archive_symlink_before_any_move(
     external.mkdir()
     (external / "sentinel.bin").write_bytes(b"external must remain unchanged")
     (recovery_root / "archive").symlink_to(external, target_is_directory=True)
-    source_before = (attempt_root / "execution_identity.json").read_bytes()
+    source_roots = {
+        "attempt_run": attempt_root,
+        "execution_input_sources": final_root / "execution_input_sources",
+        "attempt_inputs": final_root / "attempt_inputs" / prepared_attempt.attempt_id,
+    }
+    source_before = {label: _tree_bytes(root) for label, root in source_roots.items()}
     external_before = _tree_bytes(external)
 
     with pytest.raises(ValueError, match="archive.*symlink|safe directory"):
@@ -165,7 +171,9 @@ def test_recovery_rejects_published_claim_archive_symlink_before_any_move(
             coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
         )
 
-    assert (attempt_root / "execution_identity.json").read_bytes() == source_before
+    assert {
+        label: _tree_bytes(root) for label, root in source_roots.items()
+    } == source_before
     assert _tree_bytes(external) == external_before
 
 
@@ -175,13 +183,14 @@ def test_recovery_rename_window_never_follows_replaced_archive_symlink(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     preflight, snapshot, final_root, attempt_root, intent = _claimed_interruption(
-        prepared_attempt
+        prepared_attempt,
+        with_all_sources=True,
     )
     recovery_root = final_root / str(intent["recovery_root"])
     recovery_module._resolve_or_publish_claim(recovery_root, intent=intent)
     archive = recovery_root / "archive"
     archive.mkdir()
-    displaced = recovery_root / "archive-displaced"
+    displaced = tmp_path / "archive-moved-outside-final-test"
     external = tmp_path / "window-external"
     external.mkdir()
     original_rename = recovery_module._atomic_rename_no_replace_at
@@ -210,7 +219,12 @@ def test_recovery_rename_window_never_follows_replaced_archive_symlink(
         "_atomic_rename_no_replace_at",
         replace_archive_then_rename,
     )
-    source_before = (attempt_root / "execution_identity.json").read_bytes()
+    source_roots = {
+        "attempt_run": attempt_root,
+        "execution_input_sources": final_root / "execution_input_sources",
+        "attempt_inputs": final_root / "attempt_inputs" / prepared_attempt.attempt_id,
+    }
+    source_before = {label: _tree_bytes(root) for label, root in source_roots.items()}
 
     with pytest.raises(ValueError, match="archive.*symlink|safe directory"):
         recovery_module.recover_interrupted_execution(
@@ -221,9 +235,10 @@ def test_recovery_rename_window_never_follows_replaced_archive_symlink(
 
     assert swapped
     assert _tree_bytes(external) == {}
-    assert (
-        displaced / "attempt_run/execution_identity.json"
-    ).read_bytes() == source_before
+    assert _tree_bytes(displaced) == {}
+    assert {
+        label: _tree_bytes(root) for label, root in source_roots.items()
+    } == source_before
 
 
 @pytest.mark.parametrize(
@@ -405,7 +420,9 @@ def _preflight(prepared_attempt: PreparedAttempt):
     )
 
 
-def _claimed_interruption(prepared_attempt: PreparedAttempt):
+def _claimed_interruption(
+    prepared_attempt: PreparedAttempt, *, with_all_sources: bool = False
+):
     preflight = _preflight(prepared_attempt)
     snapshot = _snapshot(prepared_attempt, preflight)
     _mark_executing(prepared_attempt, preflight)
@@ -419,6 +436,26 @@ def _claimed_interruption(prepared_attempt: PreparedAttempt):
         execution_id="interrupted-execution",
         snapshot_sha256=snapshot.manifest_sha256,
     )
+    if with_all_sources:
+        source_root = final_root / "execution_input_sources"
+        source_root.mkdir()
+        (source_root / "source_manifest.json").write_text(
+            json.dumps(
+                {
+                    "execution_id": "interrupted-execution",
+                    "attempt_id": prepared_attempt.attempt_id,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (source_root / "source.bin").write_bytes(b"source bytes must roll back")
+        input_root = final_root / "attempt_inputs" / prepared_attempt.attempt_id
+        input_root.mkdir(parents=True)
+        (input_root / "manifest.json").write_text(
+            json.dumps({"execution_id": "interrupted-execution"}),
+            encoding="utf-8",
+        )
+        (input_root / "input.bin").write_bytes(b"attempt input must roll back")
     intent = begin_execution_recovery(
         final_root / "attempts",
         attempt_id=prepared_attempt.attempt_id,
@@ -426,8 +463,8 @@ def _claimed_interruption(prepared_attempt: PreparedAttempt):
         identities=_identities(preflight),
         artifact_presence={
             "attempt_run": True,
-            "execution_input_sources": False,
-            "attempt_inputs": False,
+            "execution_input_sources": with_all_sources,
+            "attempt_inputs": with_all_sources,
         },
     )
     return preflight, snapshot, final_root, attempt_root, intent

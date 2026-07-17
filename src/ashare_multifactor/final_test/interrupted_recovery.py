@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
+from dataclasses import dataclass
 import hashlib
 import json
 import os
@@ -43,6 +44,33 @@ _IDENTITY_KEYS = {
     "corporate_action_coverage_sha256",
     "coverage_snapshot_manifest_sha256",
 }
+
+
+@dataclass(frozen=True)
+class _RecoveryAnchors:
+    parent_fd: int
+    recovery_fd: int
+    recovery_name: str
+    recovery_identity: tuple[int, int]
+    archive_fd: int
+    archive_identity: tuple[int, int]
+
+
+@dataclass(frozen=True)
+class _SourceAnchor:
+    anchor_fd: int
+    parent_fd: int
+    parent_name: str
+    parent_identity: tuple[int, int]
+    source_name: str
+
+
+@dataclass(frozen=True)
+class _MovedArtifact:
+    source: _SourceAnchor
+    archive_fd: int
+    archive_name: str
+    directory_identity: tuple[int, int]
 
 
 def recover_interrupted_execution(
@@ -111,32 +139,40 @@ def recover_interrupted_execution(
         raise ValueError("interrupted recovery root is missing")
     _resolve_or_publish_claim(recovery_root, intent=intent)
     archive = recovery_root / "archive"
-    with _open_recovery_archive(recovery_root, intent=intent) as (
-        recovery_fd,
-        archive_fd,
-        archive_identity,
-    ):
-        for label, source in sources.items():
-            if not presence[label]:
-                continue
-            _assert_archive_anchor(
-                recovery_fd,
-                archive_fd,
-                expected=archive_identity,
-            )
-            _move_source_directory_no_replace(
-                source,
-                destination_name=label,
-                archive_fd=archive_fd,
-            )
-            _assert_archive_anchor(
-                recovery_fd,
-                archive_fd,
-                expected=archive_identity,
-            )
+    with _open_recovery_archive(recovery_root, intent=intent) as recovery:
+        with _open_source_anchors(
+            final_root,
+            attempt_id=attempt_id,
+            presence=presence,
+        ) as source_anchors:
+            moved: list[_MovedArtifact] = []
+            try:
+                for label in sources:
+                    if not presence[label]:
+                        continue
+                    _assert_recovery_anchors(recovery)
+                    _assert_source_anchors(source_anchors)
+                    item = _move_source_directory_no_replace(
+                        source_anchors[label],
+                        destination_name=label,
+                        archive_fd=recovery.archive_fd,
+                    )
+                    if item is not None:
+                        moved.append(item)
+                    _assert_recovery_anchors(recovery)
+                    _assert_source_anchors(source_anchors)
+                _assert_recovery_anchors(recovery)
+                _assert_source_anchors(source_anchors)
+            except BaseException:
+                rollback_error = _rollback_moved_artifacts(moved)
+                if rollback_error is not None:
+                    raise RuntimeError(
+                        "uncoordinated recovery rollback; evidence retained"
+                    ) from rollback_error
+                raise
         archive_manifest_sha256 = _write_or_verify_archive_manifest_at(
-            recovery_fd,
-            archive_fd,
+            recovery.recovery_fd,
+            recovery.archive_fd,
             intent=intent,
             presence=presence,
         )
@@ -251,89 +287,219 @@ def _resolve_or_publish_claim(recovery_root: Path, *, intent: dict[str, object])
 @contextmanager
 def _open_recovery_archive(
     recovery_root: Path, *, intent: Mapping[str, object]
-) -> Iterator[tuple[int, int, tuple[int, int]]]:
-    with _opened_directory(recovery_root, label="recovery claim") as recovery_fd:
-        claim = _read_json_at(
-            recovery_fd,
-            ".intent-claim.json",
-            label="recovery claim",
-        )
-        if claim != intent:
-            raise ValueError("interrupted archive target claim differs")
-        try:
-            os.mkdir("archive", mode=0o700, dir_fd=recovery_fd)
-        except FileExistsError:
-            pass
+) -> Iterator[_RecoveryAnchors]:
+    with _opened_directory(
+        recovery_root.parent,
+        label="recovery parent safe directory",
+    ) as parent_fd:
         with _opened_directory_at(
-            recovery_fd,
-            "archive",
-            label="archive safe directory",
-        ) as archive_fd:
-            identity = _directory_identity(archive_fd)
-            _assert_archive_anchor(recovery_fd, archive_fd, expected=identity)
-            yield recovery_fd, archive_fd, identity
+            parent_fd,
+            recovery_root.name,
+            label="recovery claim",
+        ) as recovery_fd:
+            recovery_identity = _directory_identity(recovery_fd)
+            _assert_directory_entry(
+                parent_fd,
+                recovery_root.name,
+                expected=recovery_identity,
+                label="recovery claim",
+            )
+            claim = _read_json_at(
+                recovery_fd,
+                ".intent-claim.json",
+                label="recovery claim",
+            )
+            if claim != intent:
+                raise ValueError("interrupted archive target claim differs")
+            try:
+                os.mkdir("archive", mode=0o700, dir_fd=recovery_fd)
+            except FileExistsError:
+                pass
+            with _opened_directory_at(
+                recovery_fd,
+                "archive",
+                label="archive safe directory",
+            ) as archive_fd:
+                anchors = _RecoveryAnchors(
+                    parent_fd=parent_fd,
+                    recovery_fd=recovery_fd,
+                    recovery_name=recovery_root.name,
+                    recovery_identity=recovery_identity,
+                    archive_fd=archive_fd,
+                    archive_identity=_directory_identity(archive_fd),
+                )
+                _assert_recovery_anchors(anchors)
+                yield anchors
 
 
 def _move_source_directory_no_replace(
-    source: Path,
+    source: _SourceAnchor,
     *,
     destination_name: str,
     archive_fd: int,
-) -> None:
-    if source.name in {"", ".", ".."} or destination_name in {"", ".", ".."}:
+) -> _MovedArtifact | None:
+    if source.source_name in {"", ".", ".."} or destination_name in {"", ".", ".."}:
         raise ValueError("interrupted execution directory name is unsafe")
-    with _opened_directory(source.parent, label="source parent safe directory") as parent_fd:
-        try:
-            source_fd = _open_directory_at(
-                parent_fd,
-                source.name,
-                label="source execution directory",
-            )
-        except FileNotFoundError:
-            with _opened_directory_at(
-                archive_fd,
-                destination_name,
-                label="archived execution directory",
-            ):
-                return
-        try:
-            source_identity = _directory_identity(source_fd)
-            _assert_directory_entry(
-                parent_fd,
-                source.name,
-                expected=source_identity,
-                label="source execution directory",
-            )
-            _atomic_rename_no_replace_at(
-                parent_fd,
-                source.name,
-                archive_fd,
-                destination_name,
-            )
-            _assert_directory_entry(
-                archive_fd,
-                destination_name,
-                expected=source_identity,
-                label="archived execution directory",
-            )
-        finally:
-            os.close(source_fd)
+    try:
+        source_fd = _open_directory_at(
+            source.parent_fd,
+            source.source_name,
+            label="source execution directory",
+        )
+    except FileNotFoundError:
+        with _opened_directory_at(
+            archive_fd,
+            destination_name,
+            label="archived execution directory",
+        ):
+            return None
+    try:
+        source_identity = _directory_identity(source_fd)
+        _assert_directory_entry(
+            source.parent_fd,
+            source.source_name,
+            expected=source_identity,
+            label="source execution directory",
+        )
+        _atomic_rename_no_replace_at(
+            source.parent_fd,
+            source.source_name,
+            archive_fd,
+            destination_name,
+        )
+        _assert_directory_entry(
+            archive_fd,
+            destination_name,
+            expected=source_identity,
+            label="archived execution directory",
+        )
+        return _MovedArtifact(
+            source=source,
+            archive_fd=archive_fd,
+            archive_name=destination_name,
+            directory_identity=source_identity,
+        )
+    finally:
+        os.close(source_fd)
 
 
-def _assert_archive_anchor(
-    recovery_fd: int,
-    archive_fd: int,
-    *,
-    expected: tuple[int, int],
-) -> None:
-    if _directory_identity(archive_fd) != expected:
+def _assert_recovery_anchors(anchors: _RecoveryAnchors) -> None:
+    if _directory_identity(anchors.recovery_fd) != anchors.recovery_identity:
+        raise ValueError("recovery claim directory identity changed")
+    if _directory_identity(anchors.archive_fd) != anchors.archive_identity:
         raise ValueError("archive safe directory identity changed")
     _assert_directory_entry(
-        recovery_fd,
+        anchors.parent_fd,
+        anchors.recovery_name,
+        expected=anchors.recovery_identity,
+        label="recovery claim",
+    )
+    _assert_directory_entry(
+        anchors.recovery_fd,
         "archive",
-        expected=expected,
+        expected=anchors.archive_identity,
         label="archive safe directory",
     )
+
+
+@contextmanager
+def _open_source_anchors(
+    final_root: Path,
+    *,
+    attempt_id: str,
+    presence: Mapping[str, bool],
+) -> Iterator[dict[str, _SourceAnchor]]:
+    with ExitStack() as stack:
+        processed_fd = stack.enter_context(
+            _opened_directory(
+                final_root.parent,
+                label="processed source anchor",
+            )
+        )
+        final_fd = stack.enter_context(
+            _opened_directory_at(
+                processed_fd,
+                final_root.name,
+                label="final-test source parent",
+            )
+        )
+        final_identity = _directory_identity(final_fd)
+        anchors: dict[str, _SourceAnchor] = {
+            "execution_input_sources": _SourceAnchor(
+                anchor_fd=processed_fd,
+                parent_fd=final_fd,
+                parent_name=final_root.name,
+                parent_identity=final_identity,
+                source_name="execution_input_sources",
+            )
+        }
+        for label, parent_name, source_name in (
+            ("attempt_run", "attempt_runs", attempt_id),
+            ("attempt_inputs", "attempt_inputs", attempt_id),
+        ):
+            if not presence[label]:
+                continue
+            parent_fd = stack.enter_context(
+                _opened_directory_at(
+                    final_fd,
+                    parent_name,
+                    label=f"{label} source parent",
+                )
+            )
+            anchors[label] = _SourceAnchor(
+                anchor_fd=final_fd,
+                parent_fd=parent_fd,
+                parent_name=parent_name,
+                parent_identity=_directory_identity(parent_fd),
+                source_name=source_name,
+            )
+        _assert_source_anchors(anchors)
+        yield anchors
+
+
+def _assert_source_anchors(anchors: Mapping[str, _SourceAnchor]) -> None:
+    for anchor in anchors.values():
+        if _directory_identity(anchor.parent_fd) != anchor.parent_identity:
+            raise ValueError("source parent directory identity changed")
+        _assert_directory_entry(
+            anchor.anchor_fd,
+            anchor.parent_name,
+            expected=anchor.parent_identity,
+            label="source parent directory",
+        )
+
+
+def _rollback_moved_artifacts(
+    moved: list[_MovedArtifact],
+) -> BaseException | None:
+    errors: list[BaseException] = []
+    for item in reversed(moved):
+        try:
+            _atomic_rename_no_replace_at(
+                item.archive_fd,
+                item.archive_name,
+                item.source.parent_fd,
+                item.source.source_name,
+            )
+            _assert_directory_entry(
+                item.source.parent_fd,
+                item.source.source_name,
+                expected=item.directory_identity,
+                label="restored execution source",
+            )
+            try:
+                os.stat(
+                    item.archive_name,
+                    dir_fd=item.archive_fd,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                pass
+            else:
+                raise ValueError("rollback left source content in external archive")
+        except BaseException as error:
+            errors.append(error)
+    return errors[0] if errors else None
 
 
 def _write_or_verify_archive_manifest_at(
