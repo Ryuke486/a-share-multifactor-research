@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import inspect
 import json
@@ -10,10 +11,13 @@ from types import SimpleNamespace
 import polars as pl
 import pytest
 
-from ashare_multifactor.audit.publication import publish_release, resolve_current
+from test_final_test_resume import PreparedAttempt
+
+from ashare_multifactor.audit.publication import publish_release
 from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.backtest import FinalTestBacktestResult
+from ashare_multifactor.final_test import pipeline as pipeline_module
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 from ashare_multifactor.final_test.execution_sources import (
     _normalize_final_dividends,
@@ -32,9 +36,13 @@ from ashare_multifactor.final_test.pipeline import (
     run_final_test_release,
 )
 from ashare_multifactor.final_test.registry import (
+    append_attempt_state,
     append_prepared_publication,
     recover_prepared_publication,
+    register_attempt,
+    resolve_attempt_state,
 )
+from ashare_multifactor.final_test.resume import preflight_resume
 from ashare_multifactor.final_test.release_outputs import (
     _historical_backtest_root,
     _resolve_historical_releases,
@@ -42,6 +50,9 @@ from ashare_multifactor.final_test.release_outputs import (
     _slice_backtest_period,
 )
 from ashare_multifactor.final_test.signals import FinalTestSignals
+
+
+pytest_plugins = ("test_final_test_resume",)
 
 
 @pytest.mark.parametrize("changed", ["manifest.json", "lineage.json"])
@@ -92,12 +103,6 @@ def _signals() -> FinalTestSignals:
 
 
 def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
-    def authorize(**_kwargs: object) -> FinalTestAuthorization:
-        return _authorization()
-
-    def build_data(*_args: object, **_kwargs: object) -> object:
-        return object()
-
     def build_execution_inputs(*_args: object, **_kwargs: object) -> dict[str, object]:
         return {"status": "ready", "files": []}
 
@@ -137,8 +142,6 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
         return "# sealed final-test report\n"
 
     for name, value in {
-        "authorize_final_test": authorize,
-        "build_or_reuse_final_test_daily_panel": build_data,
         "build_final_execution_inputs": build_execution_inputs,
         "build_final_test_signals": build_signals,
         "run_final_test_backtest": backtest,
@@ -156,65 +159,370 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
         monkeypatch.setattr(f"ashare_multifactor.final_test.pipeline.{name}", value)
 
 
-def test_success_publishes_immutable_release_and_locks_another_attempt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+def test_resume_claims_execution_once_and_publishes_same_attempt(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_steps(monkeypatch, publishable=True)
-    result = run_final_test_release(
-        code_root=Path.cwd(),
-        data_root=tmp_path,
-        opening_token_path=tmp_path / "token.json",
-        approval_key=b"synthetic-approval-key",
-        attempt_id="attempt-001",
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
         run_id="final-release",
-        security_event_coverage_path=tmp_path / "security-coverage.json",
-        corporate_action_coverage_root=tmp_path / "action-coverage",
     )
 
-    assert result.publishable is True
+    assert result.attempt_id == prepared_attempt.attempt_id
     assert result.release is not None
-    current = resolve_current(tmp_path / "processed/final_test")
-    assert current.run_id == "final-release"
-    manifest = json.loads(current.manifest.read_text(encoding="utf-8"))
-    lineage = json.loads(current.lineage.read_text(encoding="utf-8"))
-    assert manifest["period"] == ["2022-01-01", "2025-12-31"]
-    assert manifest["sealed_protocol_sha256"] == "c" * 64
-    assert lineage["authorization"]["attempt_id"] == "attempt-001"
-    assert lineage["authorization"]["git_commit"] == "a" * 40
-    assert lineage["upstream"]["robustness_release"] == "stage8-successor"
-    assert lineage["execution"]["started_at"]
-    assert lineage["execution"]["completed_at"]
-    checkpoint = json.loads(
-        (current.artifacts / "checkpoint_c.json").read_text(encoding="utf-8")
-    )
-    assert checkpoint == {
-        "delivery_started": False,
-        "development_stopped": True,
-        "status": "required",
-    }
-    outcome = json.loads(
-        (tmp_path / "processed/final_test/attempts/attempt-001.outcome.json").read_text()
-    )
-    assert outcome["status"] == "succeeded"
-    assert outcome["authoritative"] is True
-    (tmp_path / "processed/final_test/attempts/attempt-001.outcome.json").unlink()
+    with pytest.raises(ValueError, match="already succeeded|state transition"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
 
-    recovered = run_final_test_release(
-        code_root=Path.cwd(),
-        data_root=tmp_path,
-        opening_token_path=tmp_path / "second-token.json",
-        approval_key=b"synthetic-approval-key",
-        attempt_id="attempt-002",
-        run_id="another-release",
-        security_event_coverage_path=tmp_path / "security-coverage.json",
-        corporate_action_coverage_root=tmp_path / "action-coverage",
+
+def test_resume_records_failed_outcome_when_coverage_drifts_after_claim(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    original_verify = pipeline_module.verify_resume_coverages
+
+    def drift_then_verify(*args: object, **kwargs: object) -> None:
+        payload = json.loads(
+            prepared_attempt.security_coverage.read_text(encoding="utf-8")
+        )
+        payload["post_claim_drift"] = True
+        prepared_attempt.security_coverage.write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        original_verify(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "verify_resume_coverages", drift_then_verify)
+
+    with pytest.raises(ValueError, match="coverage identity changed"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    registry = prepared_attempt.data_root / "processed/final_test/attempts"
+    assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "failed"
+    assert not (
+        prepared_attempt.data_root / "processed/final_test/CURRENT.json"
+    ).exists()
+
+
+def test_resume_archives_verified_partial_execution_before_recomputing(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = preflight_resume(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
     )
-    assert recovered.release == current
-    assert recovered.attempt_id == "attempt-001"
+    identities = {
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+    }
+    registry = prepared_attempt.data_root / "processed/final_test/attempts"
+    append_attempt_state(
+        registry,
+        attempt_id=prepared_attempt.attempt_id,
+        state="executing",
+        identities=identities,
+    )
+    partial = (
+        prepared_attempt.data_root
+        / "processed/final_test/attempt_runs"
+        / prepared_attempt.attempt_id
+    )
+    partial.mkdir(parents=True)
+    (partial / "execution_identity.json").write_text(
+        json.dumps(
+            {
+                "execution_id": "interrupted-execution",
+                "attempt_id": prepared_attempt.attempt_id,
+                **identities,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (partial / "partial.bin").write_bytes(b"immutable interrupted bytes")
+    _patch_steps(monkeypatch, publishable=True)
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    archives = list(
+        (
+            prepared_attempt.data_root
+            / "processed/final_test/interrupted_runs"
+            / prepared_attempt.attempt_id
+        ).iterdir()
+    )
+    assert result.release is not None
+    assert len(archives) == 1
+    assert (archives[0] / "partial.bin").read_bytes() == b"immutable interrupted bytes"
+
+
+def test_resume_recovers_published_current_after_publication_interruption(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+
+    def publish_then_interrupt(*args: object, **kwargs: object):
+        publish(*args, **kwargs)
+        raise RuntimeError("interrupted after CURRENT")
+
+    monkeypatch.setattr(pipeline_module, "publish_release", publish_then_interrupt)
+    with pytest.raises(RuntimeError, match="after CURRENT"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    registry = final_root / "attempts"
+    assert (final_root / "CURRENT.json").is_file()
+    assert not (registry / f"{prepared_attempt.attempt_id}.outcome.json").exists()
+    assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "executing"
+
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    assert result.attempt_id == prepared_attempt.attempt_id
+    assert result.release is not None
+    assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "published"
+
+
+def test_resume_publication_failure_records_failed_outcome_without_current(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    monkeypatch.setattr(
+        pipeline_module,
+        "publish_release",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("synthetic publication failure")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="publication failure"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    registry = final_root / "attempts"
+    assert not (final_root / "CURRENT.json").exists()
+    assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "failed"
+
+
+def test_resume_preflight_failure_leaves_attempt_awaiting_without_outputs(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    (prepared_attempt.security_coverage.parent / "szse.pdf").write_bytes(b"changed")
+    final_root = prepared_attempt.data_root / "processed/final_test"
+
+    with pytest.raises(ValueError, match="evidence.*changed"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    registry = final_root / "attempts"
+    assert (
+        resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"]
+        == "awaiting_official_evidence"
+    )
+    assert not (registry / f"{prepared_attempt.attempt_id}.outcome.json").exists()
+    assert not (final_root / "attempt_runs").exists()
+
+
+def test_resume_rejects_partial_execution_with_incomplete_identity(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = preflight_resume(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+    )
+    identities = {
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+    }
+    registry = prepared_attempt.data_root / "processed/final_test/attempts"
+    append_attempt_state(
+        registry,
+        attempt_id=prepared_attempt.attempt_id,
+        state="executing",
+        identities=identities,
+    )
+    partial = (
+        prepared_attempt.data_root
+        / "processed/final_test/attempt_runs"
+        / prepared_attempt.attempt_id
+    )
+    partial.mkdir(parents=True)
+    (partial / "execution_identity.json").write_text(
+        json.dumps(
+            {
+                "execution_id": "interrupted-execution",
+                "attempt_id": prepared_attempt.attempt_id,
+                "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _patch_steps(monkeypatch, publishable=True)
+
+    with pytest.raises(ValueError, match="identity is incomplete"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "failed"
+    assert partial.is_dir()
+    assert not (
+        prepared_attempt.data_root / "processed/final_test/CURRENT.json"
+    ).exists()
+
+
+def test_concurrent_resume_allows_only_one_executor(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+
+    def resume() -> str:
+        try:
+            pipeline_module.resume_final_test_release(
+                code_root=prepared_attempt.code_root,
+                data_root=prepared_attempt.data_root,
+                approval_key=prepared_attempt.approval_key,
+                attempt_id=prepared_attempt.attempt_id,
+                security_event_coverage_path=prepared_attempt.security_coverage,
+                corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+                run_id="final-release",
+            )
+        except ValueError:
+            return "rejected"
+        return "published"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = [future.result(timeout=10) for future in (executor.submit(resume), executor.submit(resume))]
+
+    assert sorted(results) == ["published", "rejected"]
+
+
+def test_resume_core_neither_authorizes_nor_builds_panel(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.gate.authorize_final_test",
+        lambda **_kwargs: pytest.fail("execution must not authorize"),
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_or_reuse_final_test_daily_panel",
+        lambda *_args, **_kwargs: pytest.fail("execution must not build a panel"),
+    )
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    assert result.release is not None
+
+
+def test_legacy_one_shot_pipeline_fails_closed(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="two-phase final-test workflow is required"):
+        run_final_test_release(
+            code_root=Path.cwd(),
+            data_root=tmp_path,
+            opening_token_path=tmp_path / "token.json",
+            approval_key=b"synthetic-approval-key",
+            attempt_id="attempt-001",
+            run_id="final-release",
+            security_event_coverage_path=tmp_path / "security-coverage.json",
+            corporate_action_coverage_root=tmp_path / "action-coverage",
+        )
 
 
 def test_date_gate_failure_cannot_leave_publishable_attempt(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    prepared_attempt: PreparedAttempt, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_steps(monkeypatch, publishable=True)
     monkeypatch.setattr(
@@ -224,42 +532,53 @@ def test_date_gate_failure_cannot_leave_publishable_attempt(
         ),
     )
     with pytest.raises(ValueError, match="artifact outside"):
-        run_final_test_release(
-            code_root=Path.cwd(), data_root=tmp_path,
-            opening_token_path=tmp_path / "token.json",
-            approval_key=b"synthetic-approval-key", attempt_id="attempt-001",
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
             run_id="final-release",
-            security_event_coverage_path=tmp_path / "security.json",
-            corporate_action_coverage_root=tmp_path / "actions",
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
         )
-    attempt = tmp_path / "processed/final_test/attempt_runs/attempt-001"
+    attempt = (
+        prepared_attempt.data_root
+        / "processed/final_test/attempt_runs"
+        / prepared_attempt.attempt_id
+    )
     assert json.loads((attempt / "attempt_manifest.json").read_text())["status"] == "failed"
-    outcome = tmp_path / "processed/final_test/attempts/attempt-001.outcome.json"
+    outcome = (
+        prepared_attempt.data_root
+        / "processed/final_test/attempts"
+        / f"{prepared_attempt.attempt_id}.outcome.json"
+    )
     assert json.loads(outcome.read_text())["status"] == "failed"
 
 
 def test_non_publishable_attempt_is_retained_without_switching_current(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    prepared_attempt: PreparedAttempt, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_steps(monkeypatch, publishable=False)
-    result = run_final_test_release(
-        code_root=Path.cwd(),
-        data_root=tmp_path,
-        opening_token_path=tmp_path / "token.json",
-        approval_key=b"synthetic-approval-key",
-        attempt_id="attempt-001",
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
         run_id="blocked-release",
-        security_event_coverage_path=tmp_path / "security-coverage.json",
-        corporate_action_coverage_root=tmp_path / "action-coverage",
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
     )
 
     assert result.publishable is False
     assert result.release is None
-    root = tmp_path / "processed/final_test"
+    root = prepared_attempt.data_root / "processed/final_test"
     assert not (root / "CURRENT.json").exists()
-    assert (root / "attempt_runs/attempt-001/artifacts/preflight.json").is_file()
-    assert (root / "attempt_runs/attempt-001/attempt_manifest.json").is_file()
-    outcome = json.loads((root / "attempts/attempt-001.outcome.json").read_text())
+    attempt = root / "attempt_runs" / prepared_attempt.attempt_id
+    assert (attempt / "artifacts/preflight.json").is_file()
+    assert (attempt / "attempt_manifest.json").is_file()
+    outcome = json.loads(
+        (root / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json").read_text()
+    )
     assert outcome["status"] == "failed"
     assert outcome["reason"] == "shadow NAV gate failed"
 
@@ -276,8 +595,9 @@ def test_cli_exposes_only_the_authorized_one_shot_entrypoint() -> None:
 
 
 def test_final_pipeline_signature_has_no_security_step_injection() -> None:
-    parameters = inspect.signature(run_final_test_release).parameters
+    parameters = inspect.signature(pipeline_module.resume_final_test_release).parameters
     assert "steps" not in parameters
+    assert "opening_token_path" not in parameters
     assert "security_event_coverage_path" in parameters
     assert "corporate_action_coverage_root" in parameters
 
@@ -851,6 +1171,35 @@ def test_publication_identifiers_reject_escape_forms(value: str) -> None:
 
 def test_prepared_publication_recovers_from_verified_current(tmp_path: Path) -> None:
     registry = tmp_path / "attempts"
+    register_attempt(
+        registry,
+        attempt_id="attempt-001",
+        git_commit="a" * 40,
+        git_tree="b" * 40,
+        sealed_protocol_sha256="c" * 64,
+        robustness_release="stage8-release",
+        approval_id="approval-001",
+        token_sha256="d" * 64,
+        robustness_manifest_sha256="e" * 64,
+        robustness_lineage_sha256="f" * 64,
+    )
+    append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="awaiting_official_evidence",
+        identities={"prepare_manifest_sha256": "a" * 64},
+    )
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="executing",
+        identities={
+            "prepare_manifest_sha256": "a" * 64,
+            "security_event_coverage_sha256": "b" * 64,
+            "corporate_action_coverage_sha256": "c" * 64,
+        },
+    )
     append_prepared_publication(
         registry,
         attempt_id="attempt-001",
@@ -870,6 +1219,46 @@ def test_prepared_publication_recovers_from_verified_current(tmp_path: Path) -> 
 
     assert outcome["status"] == "succeeded"
     assert outcome["release_manifest_sha256"] == "d" * 64
+
+
+def test_prepared_publication_is_reusable_only_for_same_publication_identity(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    first = append_prepared_publication(
+        registry,
+        attempt_id="attempt-001",
+        release_run_id="release-001",
+        sealed_protocol_sha256="c" * 64,
+    )
+
+    assert (
+        append_prepared_publication(
+            registry,
+            attempt_id="attempt-001",
+            release_run_id="release-001",
+            sealed_protocol_sha256="c" * 64,
+        )
+        == first
+    )
+    path = registry / "attempt-001.prepared.json"
+    tampered = json.loads(path.read_text(encoding="utf-8"))
+    tampered["unexpected"] = True
+    path.write_text(json.dumps(tampered), encoding="utf-8")
+    with pytest.raises(ValueError, match="prepared publication identity"):
+        append_prepared_publication(
+            registry,
+            attempt_id="attempt-001",
+            release_run_id="release-001",
+            sealed_protocol_sha256="c" * 64,
+        )
+    with pytest.raises(ValueError, match="prepared publication identity"):
+        append_prepared_publication(
+            registry,
+            attempt_id="attempt-001",
+            release_run_id="different-release",
+            sealed_protocol_sha256="c" * 64,
+        )
 
 
 def test_release_copies_final_data_and_execution_evidence(tmp_path: Path) -> None:

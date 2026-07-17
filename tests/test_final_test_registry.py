@@ -341,7 +341,7 @@ def test_attempt_state_rejects_sequence_beyond_fixed_state_table(tmp_path: Path)
         resolve_attempt_state(registry, "attempt-001")
 
 
-@pytest.mark.parametrize("state", ["preparing", "awaiting"])
+@pytest.mark.parametrize("state", ["registered", "preparing", "awaiting"])
 def test_attempt_outcome_rejects_succeeded_before_executing(
     tmp_path: Path, state: str
 ) -> None:
@@ -364,25 +364,6 @@ def test_attempt_outcome_rejects_succeeded_before_executing(
         )
 
     assert not (registry / "attempt-001.outcome.json").exists()
-
-
-def test_legacy_attempt_without_state_events_accepts_succeeded_outcome(
-    tmp_path: Path,
-) -> None:
-    registry = tmp_path / "attempts"
-    _register(registry)
-
-    append_attempt_outcome(
-        registry,
-        attempt_id="attempt-001",
-        status="succeeded",
-        authoritative=True,
-        reason="legacy publication",
-        release_run_id="final-release",
-        release_manifest_sha256="a" * 64,
-    )
-
-    assert resolve_attempt_state(registry, "attempt-001")["state"] == "published"
 
 
 @pytest.mark.parametrize("state", ["registered", "awaiting"])
@@ -426,76 +407,6 @@ def test_attempt_state_rejects_injected_succeeded_outcome_before_executing(
 
     with pytest.raises(ValueError, match="succeeded outcome requires executing"):
         resolve_attempt_state(registry, "attempt-001")
-
-
-def test_attempt_transition_serializes_legacy_success_and_first_state_event(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    registry = tmp_path / "attempts"
-    _register(registry)
-    original = registry_module._is_legacy_attempt_without_state_events
-    original_resolve = registry_module._resolve_attempt_state_unlocked
-    legacy_checked = Event()
-    release_legacy_write = Event()
-    preparing_entered = Event()
-
-    def pause_after_legacy_check(registry_root: Path, attempt_id: str) -> bool:
-        legacy = original(registry_root, attempt_id)
-        legacy_checked.set()
-        if not release_legacy_write.wait(timeout=3):
-            raise RuntimeError("concurrent legacy attempt did not resume")
-        return legacy
-
-    monkeypatch.setattr(
-        registry_module,
-        "_is_legacy_attempt_without_state_events",
-        pause_after_legacy_check,
-    )
-
-    def signal_preparing_resolution(registry_root: Path, attempt_id: str) -> dict:
-        preparing_entered.set()
-        return original_resolve(registry_root, attempt_id)
-
-    monkeypatch.setattr(
-        registry_module, "_resolve_attempt_state_unlocked", signal_preparing_resolution
-    )
-
-    def append_legacy_success() -> str:
-        try:
-            append_attempt_outcome(
-                registry,
-                attempt_id="attempt-001",
-                status="succeeded",
-                authoritative=True,
-                reason="legacy publication",
-                release_run_id="final-release",
-                release_manifest_sha256="a" * 64,
-            )
-        except ValueError:
-            return "rejected"
-        return "succeeded"
-
-    def append_preparing() -> str:
-        try:
-            append_attempt_state(
-                registry, attempt_id="attempt-001", state="preparing"
-            )
-        except ValueError:
-            return "rejected"
-        return "preparing"
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        legacy = executor.submit(append_legacy_success)
-        assert legacy_checked.wait(timeout=3)
-        preparing = executor.submit(append_preparing)
-        try:
-            assert not preparing_entered.wait(timeout=0.2)
-        finally:
-            release_legacy_write.set()
-        results = {legacy.result(timeout=3), preparing.result(timeout=3)}
-
-    assert results == {"succeeded", "rejected"}
-    assert resolve_attempt_state(registry, "attempt-001")["state"] == "published"
 
 
 def test_attempt_transition_lock_releases_after_write_failure(

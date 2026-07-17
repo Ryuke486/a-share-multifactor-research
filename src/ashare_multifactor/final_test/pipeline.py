@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import platform
 import shutil
+from uuid import uuid4
 
 import polars as pl
 
@@ -30,13 +31,20 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
     FINAL_TEST_START,
     FinalTestAuthorization,
-    authorize_final_test,
+)
+from ashare_multifactor.final_test.resume import (
+    ResumePreflight,
+    preflight_resume,
+    verify_resume_coverages,
 )
 from ashare_multifactor.final_test.registry import (
+    append_execution_recovery_event,
     append_prepared_publication,
     append_attempt_outcome,
     assert_no_authoritative_success,
+    claim_attempt_execution,
     recover_prepared_publication,
+    resolve_attempt_state_readonly,
     validate_publication_id,
 )
 from ashare_multifactor.final_test.release_outputs import (
@@ -83,51 +91,133 @@ def run_final_test_release(
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
 ) -> FinalTestPipelineResult:
-    """Run and publish the single authorized 2022--2025 final-test attempt."""
+    """Fail closed: final-test execution now requires a prepared attempt."""
+    del (
+        code_root,
+        data_root,
+        opening_token_path,
+        approval_key,
+        attempt_id,
+        run_id,
+        security_event_coverage_path,
+        corporate_action_coverage_root,
+    )
+    raise ValueError("two-phase final-test workflow is required")
+
+
+def resume_final_test_release(
+    *,
+    code_root: Path,
+    data_root: Path,
+    approval_key: bytes,
+    attempt_id: str,
+    security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
+    run_id: str,
+) -> FinalTestPipelineResult:
+    """Claim and execute one immutable prepared final-test attempt."""
     code_root = code_root.resolve()
     data_root = data_root.resolve()
     final_root = data_root / "processed/final_test"
     registry_root = final_root / "attempts"
     _assert_safe_roots(data_root, final_root)
-    if (final_root / "CURRENT.json").is_file():
-        return _recover_or_reject_current(final_root, registry_root)
     assert_no_authoritative_success(registry_root)
-    if attempt_id is not None:
-        _validate_publication_id(attempt_id)
-    if run_id is not None:
-        _validate_publication_id(run_id)
-    authorization = authorize_final_test(
+    _validate_publication_id(attempt_id)
+    _validate_publication_id(run_id)
+    state = resolve_attempt_state_readonly(registry_root, attempt_id)["state"]
+    if state not in {"awaiting_official_evidence", "executing"}:
+        raise ValueError("invalid final-test state transition")
+    preflight = preflight_resume(
         code_root=code_root,
-        robustness_root=data_root / "processed/robustness",
-        validation_root=data_root / "processed/validation_evaluation",
-        opening_token_path=opening_token_path,
-        approval_key=approval_key,
-        registry_root=registry_root,
-        requested_start=FINAL_TEST_START,
-        requested_end=FINAL_TEST_END,
+        data_root=data_root,
         attempt_id=attempt_id,
+        approval_key=approval_key,
+        security_event_coverage_path=security_event_coverage_path,
+        corporate_action_coverage_root=corporate_action_coverage_root,
+        expected_state=str(state),
     )
+    identities = {
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+    }
+    with claim_attempt_execution(
+        registry_root,
+        attempt_id=attempt_id,
+        identities=identities,
+    ):
+        try:
+            return _execute_authorized_final_test(
+                code_root=code_root,
+                data_root=data_root,
+                preflight=preflight,
+                security_event_coverage_path=security_event_coverage_path,
+                corporate_action_coverage_root=corporate_action_coverage_root,
+                run_id=run_id,
+            )
+        except BaseException as error:
+            outcome = registry_root / f"{attempt_id}.outcome.json"
+            prepared = registry_root / f"{attempt_id}.prepared.json"
+            publication_may_need_recovery = (
+                prepared.is_file() and (final_root / "CURRENT.json").is_file()
+            )
+            if not outcome.exists() and not publication_may_need_recovery:
+                append_attempt_outcome(
+                    registry_root,
+                    attempt_id=attempt_id,
+                    status="failed",
+                    authoritative=False,
+                    reason=f"{type(error).__name__}: {error}",
+                )
+            raise
+
+
+def _execute_authorized_final_test(
+    *,
+    code_root: Path,
+    data_root: Path,
+    preflight: ResumePreflight,
+    security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
+    run_id: str,
+) -> FinalTestPipelineResult:
+    """Execute only from a verified preparation; never authorize or build data."""
+    authorization = preflight.authorization
     _assert_authorization(authorization)
-    actual_run_id = run_id or authorization.attempt_id
-    _validate_publication_id(actual_run_id)
+    final_root = data_root / "processed/final_test"
+    registry_root = final_root / "attempts"
+    if (final_root / "CURRENT.json").is_file():
+        return _recover_or_reject_current(
+            final_root,
+            registry_root,
+            attempt_id=authorization.attempt_id,
+            run_id=run_id,
+        )
+    verify_resume_coverages(
+        preflight,
+        security_event_coverage_path=security_event_coverage_path,
+        corporate_action_coverage_root=corporate_action_coverage_root,
+    )
     attempt_root = final_root / "attempt_runs" / authorization.attempt_id
     if attempt_root.exists() or attempt_root.is_symlink():
-        raise FileExistsError(f"final-test attempt artifacts already exist: {attempt_root}")
+        recover_interrupted_execution(final_root, preflight=preflight)
     datasets = attempt_root / "datasets"
     artifacts = attempt_root / "artifacts"
     datasets.mkdir(parents=True)
     artifacts.mkdir()
+    _write_json(
+        attempt_root / "execution_identity.json",
+        {
+            "execution_id": uuid4().hex,
+            "attempt_id": authorization.attempt_id,
+            "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+            "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+            "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+        },
+    )
     started_at = datetime.now(timezone.utc).isoformat()
-    published_release: PublishedRelease | None = None
     try:
         config = _load_frozen_config(code_root, data_root)
-        build_or_reuse_final_test_daily_panel(
-            config,
-            authorization,
-            FINAL_TEST_START,
-            FINAL_TEST_END,
-            code_root=code_root,
-        )
         execution_manifest = build_final_execution_inputs(
             authorization,
             code_root=code_root,
@@ -229,12 +319,12 @@ def run_final_test_release(
         append_prepared_publication(
             registry_root,
             attempt_id=authorization.attempt_id,
-            release_run_id=actual_run_id,
+            release_run_id=run_id,
             sealed_protocol_sha256=authorization.sealed_protocol_sha256,
         )
         release = publish_release(
             final_root,
-            run_id=actual_run_id,
+            run_id=run_id,
             staged_datasets=datasets,
             staged_artifacts=artifacts,
             lineage=lineage,
@@ -246,7 +336,6 @@ def run_final_test_release(
                 "publishable": True,
             },
         )
-        published_release = release
         append_attempt_outcome(
             registry_root,
             attempt_id=authorization.attempt_id,
@@ -271,16 +360,64 @@ def run_final_test_release(
                 status="failed",
                 reason=f"{type(error).__name__}: {error}",
             )
-        outcome = registry_root / f"{authorization.attempt_id}.outcome.json"
-        if published_release is None and not outcome.exists():
-            append_attempt_outcome(
-                registry_root,
-                attempt_id=authorization.attempt_id,
-                status="failed",
-                authoritative=False,
-                reason=f"{type(error).__name__}: {error}",
-            )
         raise
+
+
+def recover_interrupted_execution(
+    final_root: Path,
+    *,
+    preflight: ResumePreflight,
+) -> Path:
+    """Archive a verified partial run without changing its attempt identity."""
+    attempt_id = preflight.authorization.attempt_id
+    partial = final_root / "attempt_runs" / attempt_id
+    if partial.is_symlink() or not partial.is_dir():
+        raise ValueError("partial final-test execution is missing or uses a symlink")
+    identity_path = partial / "execution_identity.json"
+    if identity_path.is_symlink():
+        raise ValueError("partial final-test execution identity uses a symlink")
+    try:
+        identity = json.loads(identity_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("partial final-test execution identity is incomplete") from error
+    expected = {
+        "attempt_id": attempt_id,
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+    }
+    execution_id = identity.get("execution_id") if isinstance(identity, dict) else None
+    if (
+        not isinstance(identity, dict)
+        or set(identity) != {"execution_id", *expected}
+        or not isinstance(execution_id, str)
+        or not execution_id
+        or any(identity.get(key) != value for key, value in expected.items())
+    ):
+        raise ValueError("partial final-test execution identity is incomplete or differs")
+    validate_publication_id(execution_id)
+    recovery_id = uuid4().hex
+    archive_parent = final_root / "interrupted_runs" / attempt_id
+    if archive_parent.is_symlink():
+        raise ValueError("interrupted final-test archive uses a symlink")
+    archive_parent.mkdir(parents=True, exist_ok=True)
+    archive = archive_parent / recovery_id
+    if archive.exists() or archive.is_symlink():
+        raise FileExistsError("interrupted final-test archive already exists")
+    os.replace(partial, archive)
+    append_execution_recovery_event(
+        final_root / "attempts",
+        attempt_id=attempt_id,
+        recovery_id=recovery_id,
+        execution_id=execution_id,
+        archived_path=str(archive.relative_to(final_root)),
+        identities={
+            "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+            "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+            "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+        },
+    )
+    return archive
 
 
 def build_or_reuse_final_test_daily_panel(
@@ -552,6 +689,7 @@ def _assert_safe_roots(data_root: Path, final_root: Path) -> None:
         processed,
         final_root,
         final_root / "attempt_runs",
+        final_root / "interrupted_runs",
         final_root / "attempts",
         final_root / "attempt_inputs",
         final_root / "execution_input_sources",
@@ -568,37 +706,43 @@ def _assert_safe_roots(data_root: Path, final_root: Path) -> None:
 
 
 def _recover_or_reject_current(
-    final_root: Path, registry_root: Path
+    final_root: Path,
+    registry_root: Path,
+    *,
+    attempt_id: str,
+    run_id: str,
 ) -> FinalTestPipelineResult:
     release = resolve_current(final_root)
+    if release.run_id != run_id:
+        raise ValueError("prepared final-test publication run identity differs")
     current = {"run_id": release.run_id, "manifest_sha256": release.manifest_sha256}
-    for path in sorted(registry_root.glob("*.prepared.json")):
-        prepared = json.loads(path.read_text(encoding="utf-8"))
-        if prepared.get("release_run_id") != release.run_id:
-            continue
-        attempt_id = str(prepared.get("attempt_id", ""))
-        lineage = json.loads(release.lineage.read_text(encoding="utf-8"))
-        identity = lineage.get("authorization")
-        if not isinstance(identity, dict) or (
-            identity.get("attempt_id") != attempt_id
-            or identity.get("sealed_protocol_sha256")
-            != prepared.get("sealed_protocol_sha256")
-        ):
-            raise ValueError("prepared final-test publication differs from release lineage")
-        outcome = registry_root / f"{attempt_id}.outcome.json"
-        if outcome.exists():
-            raise ValueError("authoritative final-test run already succeeded")
-        recover_prepared_publication(
-            registry_root, attempt_id=attempt_id, current=current
-        )
-        return FinalTestPipelineResult(
-            attempt_id,
-            True,
-            final_root / "attempt_runs" / attempt_id,
-            release,
-            (),
-        )
-    raise ValueError("authoritative final-test run already succeeded")
+    prepared_path = registry_root / f"{attempt_id}.prepared.json"
+    try:
+        prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("prepared final-test publication is missing or invalid") from error
+    lineage = json.loads(release.lineage.read_text(encoding="utf-8"))
+    identity = lineage.get("authorization")
+    if (
+        prepared.get("attempt_id") != attempt_id
+        or prepared.get("release_run_id") != run_id
+        or not isinstance(identity, dict)
+        or identity.get("attempt_id") != attempt_id
+        or identity.get("sealed_protocol_sha256")
+        != prepared.get("sealed_protocol_sha256")
+    ):
+        raise ValueError("prepared final-test publication differs from release lineage")
+    outcome = registry_root / f"{attempt_id}.outcome.json"
+    if outcome.exists():
+        raise ValueError("authoritative final-test run already succeeded")
+    recover_prepared_publication(registry_root, attempt_id=attempt_id, current=current)
+    return FinalTestPipelineResult(
+        attempt_id,
+        True,
+        final_root / "attempt_runs" / attempt_id,
+        release,
+        (),
+    )
 
 
 def _copy_release_inputs(

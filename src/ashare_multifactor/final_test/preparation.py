@@ -200,6 +200,7 @@ def verify_preparation(
     *,
     attempt_id: str,
     authorization: FinalTestAuthorization,
+    expected_state: str = "awaiting_official_evidence",
 ) -> FinalTestPreparation:
     """Verify exact files and identities; never rebuild or replace symbol scope."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -210,9 +211,12 @@ def verify_preparation(
     final_root = final_root.resolve()
     if authorization.attempt_id != attempt_id:
         raise ValueError("preparation attempt differs from authorization")
+    if expected_state not in {"awaiting_official_evidence", "executing"}:
+        raise ValueError("invalid final-test preparation expected state")
     state = resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
-    if state["state"] != "awaiting_official_evidence":
-        raise ValueError("final-test preparation is not awaiting official evidence")
+    if state["state"] != expected_state:
+        label = expected_state.replace("_", " ")
+        raise ValueError(f"final-test preparation is not {label}")
     _assert_registered_identity(state, authorization)
     resolution = resolve_final_test_data_panel(final_root)
     if resolution.claim_status != "published" or resolution.requires_recovery:
@@ -225,7 +229,7 @@ def verify_preparation(
     )
     if state["identities"].get("prepare_manifest_sha256") != result.manifest_sha256:
         raise ValueError("attempt state preparation manifest identity differs")
-    return result
+    return replace(result, state=expected_state)
 
 
 def _load_frozen_config(code_root: Path, data_root: Path) -> ResearchConfig:

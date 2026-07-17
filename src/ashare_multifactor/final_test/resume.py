@@ -142,6 +142,7 @@ def preflight_resume(
     approval_key: bytes,
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
+    expected_state: str = "awaiting_official_evidence",
 ) -> ResumePreflight:
     """Verify a prepared attempt and exact official evidence without state writes."""
     authorization = load_registered_authorization(
@@ -155,6 +156,7 @@ def preflight_resume(
         final_root,
         attempt_id=attempt_id,
         authorization=authorization,
+        expected_state=expected_state,
     )
     symbols = _load_bound_symbol_scope(preparation)
     security, corporate = validate_final_execution_coverages(
@@ -162,7 +164,7 @@ def preflight_resume(
         security_event_coverage_path=security_event_coverage_path,
         corporate_action_coverage_root=corporate_action_coverage_root,
     )
-    return ResumePreflight(
+    result = ResumePreflight(
         authorization=authorization,
         preparation=preparation,
         security_event_coverage_sha256=_coverage_manifest_sha256(
@@ -172,6 +174,41 @@ def preflight_resume(
             corporate, "corporate-action coverage"
         ),
     )
+    state = resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
+    if state["state"] != expected_state:
+        raise ValueError("final-test attempt state changed during resume preflight")
+    if expected_state == "executing" and state["identities"] != {
+        "prepare_manifest_sha256": result.preparation.manifest_sha256,
+        "security_event_coverage_sha256": result.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": result.corporate_action_coverage_sha256,
+    }:
+        raise ValueError("executing state identity differs from resume preflight")
+    return result
+
+
+def verify_resume_coverages(
+    preflight: ResumePreflight,
+    *,
+    security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
+) -> None:
+    """Revalidate the exact evidence bytes after execution has been claimed."""
+    symbols = _load_bound_symbol_scope(preflight.preparation)
+    security, corporate = validate_final_execution_coverages(
+        symbols=symbols,
+        security_event_coverage_path=security_event_coverage_path,
+        corporate_action_coverage_root=corporate_action_coverage_root,
+    )
+    current = (
+        _coverage_manifest_sha256(security, "security-event coverage"),
+        _coverage_manifest_sha256(corporate, "corporate-action coverage"),
+    )
+    expected = (
+        preflight.security_event_coverage_sha256,
+        preflight.corporate_action_coverage_sha256,
+    )
+    if current != expected:
+        raise ValueError("official coverage identity changed after execution claim")
 
 
 def _verify_registration(record: dict[str, object], attempt_id: str) -> None:
