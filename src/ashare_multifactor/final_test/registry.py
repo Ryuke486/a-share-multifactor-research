@@ -114,6 +114,8 @@ def resolve_attempt_state(registry_root: Path, attempt_id: str) -> dict[str, Any
     if outcome_path.exists():
         outcome = _read_registry_json(outcome_path)
         _validate_terminal_outcome(outcome, attempt_id)
+        if outcome["status"] == "succeeded" and state != "executing":
+            raise ValueError("succeeded outcome requires executing state")
         state = "published" if outcome["status"] == "succeeded" else "failed"
     resolved = dict(record)
     resolved.update(
@@ -270,6 +272,10 @@ def append_attempt_outcome(
     if release_manifest_sha256 is not None:
         payload["release_manifest_sha256"] = release_manifest_sha256
     _validate_terminal_outcome(payload, attempt_id)
+    if status == "succeeded" and (
+        resolve_attempt_state(registry_root, attempt_id)["state"] != "executing"
+    ):
+        raise ValueError("succeeded outcome requires executing state")
     registry_root.mkdir(parents=True, exist_ok=True)
     destination = registry_root / f"{attempt_id}.outcome.json"
     try:

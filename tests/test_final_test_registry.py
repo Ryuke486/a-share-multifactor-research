@@ -299,3 +299,71 @@ def test_attempt_state_rejects_sequence_beyond_fixed_state_table(tmp_path: Path)
 
     with pytest.raises(ValueError, match="invalid final-test state event"):
         resolve_attempt_state(registry, "attempt-001")
+
+
+@pytest.mark.parametrize("state", ["registered", "preparing", "awaiting"])
+def test_attempt_outcome_rejects_succeeded_before_executing(
+    tmp_path: Path, state: str
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    if state == "preparing":
+        append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+    elif state == "awaiting":
+        _awaiting_official_evidence(registry)
+
+    with pytest.raises(ValueError, match="succeeded outcome requires executing"):
+        append_attempt_outcome(
+            registry,
+            attempt_id="attempt-001",
+            status="succeeded",
+            authoritative=True,
+            reason="published",
+            release_run_id="final-release",
+            release_manifest_sha256="a" * 64,
+        )
+
+    assert not (registry / "attempt-001.outcome.json").exists()
+
+
+@pytest.mark.parametrize("state", ["registered", "awaiting"])
+def test_attempt_outcome_accepts_early_failed_state(tmp_path: Path, state: str) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    if state == "awaiting":
+        _awaiting_official_evidence(registry)
+
+    append_attempt_outcome(
+        registry,
+        attempt_id="attempt-001",
+        status="failed",
+        authoritative=False,
+        reason="identity verification failed",
+    )
+
+    assert resolve_attempt_state(registry, "attempt-001")["state"] == "failed"
+
+
+def test_attempt_state_rejects_injected_succeeded_outcome_before_executing(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    _awaiting_official_evidence(registry)
+    (registry / "attempt-001.outcome.json").write_text(
+        json.dumps(
+            {
+                "attempt_id": "attempt-001",
+                "recorded_at": "2026-07-17T00:00:00+00:00",
+                "status": "succeeded",
+                "authoritative": True,
+                "reason": "published",
+                "release_run_id": "final-release",
+                "release_manifest_sha256": "a" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="succeeded outcome requires executing"):
+        resolve_attempt_state(registry, "attempt-001")
