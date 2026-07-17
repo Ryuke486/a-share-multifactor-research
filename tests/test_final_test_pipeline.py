@@ -535,6 +535,41 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
         validate_security_event_coverage(coverage)
 
 
+def test_security_event_validator_hashes_the_single_manifest_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coverage = _write_security_event_coverage(
+        tmp_path,
+        symbol="000001",
+        market="sz",
+        source="szse",
+        source_url="https://disc.static.szse.cn/download/disc/security.pdf",
+    )
+    disk_bytes = coverage.read_bytes()
+    captured_payload = json.loads(disk_bytes)
+    captured_payload["capture_marker"] = "B"
+    captured_bytes = json.dumps(captured_payload, sort_keys=True).encode()
+    original_read_bytes = Path.read_bytes
+    manifest_reads = 0
+
+    def capture_once(path: Path) -> bytes:
+        nonlocal manifest_reads
+        if path == coverage:
+            manifest_reads += 1
+            return captured_bytes
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", capture_once)
+
+    verified = validate_security_event_coverage(coverage, symbols=["000001"])
+
+    assert manifest_reads == 1
+    assert verified["coverage_manifest_sha256"] == hashlib.sha256(
+        captured_bytes
+    ).hexdigest()
+    assert original_read_bytes(coverage) == disk_bytes
+
+
 def test_all_mutable_final_roots_reject_symlink_ancestors(tmp_path: Path) -> None:
     data_root = tmp_path / "data"
     final_root = data_root / "processed/final_test"

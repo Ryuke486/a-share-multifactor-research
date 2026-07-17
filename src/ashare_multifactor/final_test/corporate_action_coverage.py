@@ -21,8 +21,9 @@ def validate_corporate_action_coverage(
     """Validate exact official exchange coverage and candidate reconciliation."""
     manifest_path, coverage_root = _resolve_corporate_action_root(root)
     try:
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
+        manifest_bytes = manifest_path.read_bytes()
+        payload = json.loads(manifest_bytes)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("invalid official corporate-action coverage") from error
     required_records = {
         "candidate_file": "baostock_corporate_action_candidates",
@@ -270,6 +271,7 @@ def validate_corporate_action_coverage(
     result.update(
         {
             "coverage_manifest_path": manifest_path,
+            "coverage_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
             "coverage_root": coverage_root,
             "candidate_file": paths["candidate_file"],
             "coverage_file": paths["query_coverage"],

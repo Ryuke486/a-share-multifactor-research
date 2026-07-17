@@ -190,6 +190,31 @@ def test_resume_rejects_missing_attempt_lock_without_creating_files(
     assert not lock.exists()
 
 
+def test_preparation_rejects_lock_removed_after_authorization_without_recreating_it(
+    prepared_attempt: PreparedAttempt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = prepared_attempt.data_root / "processed/final_test/attempts"
+    lock = registry / f"{prepared_attempt.attempt_id}.lock"
+    original_load = resume_module.load_registered_authorization
+    after_removal: dict[str, bytes] = {}
+
+    def load_then_remove_lock(*args: object, **kwargs: object):
+        authorization = original_load(*args, **kwargs)
+        lock.unlink()
+        after_removal.update(_registry_snapshot(prepared_attempt))
+        return authorization
+
+    monkeypatch.setattr(
+        resume_module, "load_registered_authorization", load_then_remove_lock
+    )
+
+    with pytest.raises(ValueError, match="lock"):
+        _preflight(prepared_attempt)
+
+    assert _registry_snapshot(prepared_attempt) == after_removal
+    assert not lock.exists()
+
+
 @pytest.mark.parametrize(
     "changed",
     ["registration", "token", "ledger", "stage8_manifest", "lineage", "seal", "git"],
@@ -368,7 +393,7 @@ def test_preflight_rejects_coverage_evidence_hash_drift_without_state_change(
 
 
 @pytest.mark.parametrize("coverage", ["security", "corporate"])
-def test_preflight_rejects_manifest_change_during_coverage_validation(
+def test_preflight_uses_validator_hash_if_manifest_changes_after_validation(
     prepared_attempt: PreparedAttempt,
     monkeypatch: pytest.MonkeyPatch,
     coverage: str,
@@ -379,9 +404,13 @@ def test_preflight_rejects_manifest_change_during_coverage_validation(
         else "validate_corporate_action_coverage"
     )
     original_validate = getattr(execution_sources_module, attribute)
+    validated_hashes: list[str] = []
 
     def mutate_after_validate(*args: object, **kwargs: object):
         verified = original_validate(*args, **kwargs)
+        validated_hash = verified["coverage_manifest_sha256"]
+        assert isinstance(validated_hash, str)
+        validated_hashes.append(validated_hash)
         manifest = verified["coverage_manifest_path"]
         assert isinstance(manifest, Path)
         manifest.write_text('{"changed":true}\n', encoding="utf-8")
@@ -389,8 +418,14 @@ def test_preflight_rejects_manifest_change_during_coverage_validation(
 
     monkeypatch.setattr(execution_sources_module, attribute, mutate_after_validate)
 
-    with pytest.raises(ValueError, match="changed during validation"):
-        _preflight(prepared_attempt)
+    result = _preflight(prepared_attempt)
+
+    result_hash = (
+        result.security_event_coverage_sha256
+        if coverage == "security"
+        else result.corporate_action_coverage_sha256
+    )
+    assert result_hash == validated_hashes[0]
 
 
 def test_preflight_returns_verified_coverage_manifest_hashes(

@@ -25,6 +25,38 @@ def test_corporate_action_coverage_requires_every_target_symbol(tmp_path: Path) 
         validate_corporate_action_coverage(root, symbols=["000001", "600000"])
 
 
+def test_corporate_action_validator_hashes_the_single_manifest_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = _write_coverage(tmp_path)
+    manifest = root / "coverage.json"
+    disk_bytes = manifest.read_bytes()
+    captured_payload = json.loads(disk_bytes)
+    captured_payload["capture_marker"] = "B"
+    captured_bytes = json.dumps(captured_payload, sort_keys=True).encode()
+    original_read_bytes = Path.read_bytes
+    manifest_reads = 0
+
+    def capture_once(path: Path) -> bytes:
+        nonlocal manifest_reads
+        if path == manifest:
+            manifest_reads += 1
+            return captured_bytes
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", capture_once)
+
+    verified = validate_corporate_action_coverage(
+        root, symbols=["000001", "600000"]
+    )
+
+    assert manifest_reads == 1
+    assert verified["coverage_manifest_sha256"] == hashlib.sha256(
+        captured_bytes
+    ).hexdigest()
+    assert original_read_bytes(manifest) == disk_bytes
+
+
 def test_zero_event_symbol_still_requires_successful_official_query(tmp_path: Path) -> None:
     root = _write_coverage(tmp_path)
     coverage = pl.read_parquet(root / "query_coverage.parquet").with_columns(

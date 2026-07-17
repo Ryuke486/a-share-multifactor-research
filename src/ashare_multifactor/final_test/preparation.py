@@ -36,6 +36,7 @@ from ashare_multifactor.final_test.gate import (
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
     resolve_attempt_state,
+    resolve_attempt_state_readonly,
     validate_publication_id,
 )
 
@@ -209,7 +210,7 @@ def verify_preparation(
     final_root = final_root.resolve()
     if authorization.attempt_id != attempt_id:
         raise ValueError("preparation attempt differs from authorization")
-    state = resolve_attempt_state(final_root / "attempts", attempt_id)
+    state = resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
     if state["state"] != "awaiting_official_evidence":
         raise ValueError("final-test preparation is not awaiting official evidence")
     _assert_registered_identity(state, authorization)
