@@ -158,7 +158,7 @@ def preflight_resume(
         authorization=authorization,
         expected_state=expected_state,
     )
-    symbols = _load_bound_symbol_scope(preparation)
+    symbols = load_bound_symbol_scope(preparation)
     security, corporate = validate_final_execution_coverages(
         symbols=symbols,
         security_event_coverage_path=security_event_coverage_path,
@@ -193,7 +193,7 @@ def verify_resume_coverages(
     corporate_action_coverage_root: Path,
 ) -> None:
     """Revalidate the exact evidence bytes after execution has been claimed."""
-    symbols = _load_bound_symbol_scope(preflight.preparation)
+    symbols = load_bound_symbol_scope(preflight.preparation)
     security, corporate = validate_final_execution_coverages(
         symbols=symbols,
         security_event_coverage_path=security_event_coverage_path,
@@ -313,7 +313,8 @@ def _verify_data_paths(data_root: Path, final_root: Path, registry_root: Path) -
         raise ValueError("final-test data path escapes processed root")
 
 
-def _load_bound_symbol_scope(preparation: FinalTestPreparation) -> list[str]:
+def load_bound_symbol_scope(preparation: FinalTestPreparation) -> list[str]:
+    """Load the sorted symbols already bound by the verified preparation."""
     try:
         frame = pl.read_parquet(preparation.symbol_scope_path)
         if frame.columns != ["symbol"] or frame.get_column("symbol").null_count():

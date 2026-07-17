@@ -58,6 +58,11 @@ def build_final_execution_inputs(
     final_root: Path,
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
+    symbols: list[str],
+    prepare_manifest_sha256: str,
+    expected_security_event_coverage_sha256: str,
+    expected_corporate_action_coverage_sha256: str,
+    execution_id: str,
 ) -> dict[str, object]:
     """Generate, then bind, the frozen action/event inputs to this attempt."""
     del data_root
@@ -78,6 +83,15 @@ def build_final_execution_inputs(
             final_root=final_root,
             security_event_coverage_path=security_event_coverage_path,
             corporate_action_coverage_root=corporate_action_coverage_root,
+            symbols=symbols,
+            prepare_manifest_sha256=prepare_manifest_sha256,
+            expected_security_event_coverage_sha256=(
+                expected_security_event_coverage_sha256
+            ),
+            expected_corporate_action_coverage_sha256=(
+                expected_corporate_action_coverage_sha256
+            ),
+            execution_id=execution_id,
         )
     else:
         _verify_reusable_source_root(
@@ -86,6 +100,15 @@ def build_final_execution_inputs(
             security_event_coverage_path=security_event_coverage_path,
             corporate_action_coverage_root=corporate_action_coverage_root,
             final_root=final_root,
+            symbols=symbols,
+            prepare_manifest_sha256=prepare_manifest_sha256,
+            expected_security_event_coverage_sha256=(
+                expected_security_event_coverage_sha256
+            ),
+            expected_corporate_action_coverage_sha256=(
+                expected_corporate_action_coverage_sha256
+            ),
+            execution_id=execution_id,
         )
     source_actions = source_root / "corporate_actions.parquet"
     source_events = source_root / "security_events.parquet"
@@ -115,6 +138,22 @@ def build_final_execution_inputs(
         file_record(path, root=source_root, role="final_execution_source").to_dict()
         for path in sorted(item for item in source_root.rglob("*") if item.is_file())
     ]
+    manifest.update(
+        {
+            "execution_id": execution_id,
+            "prepare_manifest_sha256": prepare_manifest_sha256,
+            "security_event_coverage_sha256": (
+                expected_security_event_coverage_sha256
+            ),
+            "corporate_action_coverage_sha256": (
+                expected_corporate_action_coverage_sha256
+            ),
+            "symbols_sha256": hashlib.sha256(
+                ("\n".join(symbols) + "\n").encode()
+            ).hexdigest(),
+        }
+    )
+    write_json(execution_root / "manifest.json", manifest)
     return manifest
 
 
@@ -125,6 +164,11 @@ def generate_final_execution_sources(
     final_root: Path,
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
+    symbols: list[str],
+    prepare_manifest_sha256: str,
+    expected_security_event_coverage_sha256: str,
+    expected_corporate_action_coverage_sha256: str,
+    execution_id: str,
 ) -> Path:
     """Bind verified official action/event evidence to canonical execution inputs."""
     _assert_authorization(authorization)
@@ -134,22 +178,12 @@ def generate_final_execution_sources(
     resolution = resolve_final_test_data_panel(final_root)
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication requires recovery")
-    files = tuple(sorted(resolution.root.glob("year=*/part-*.parquet")))
-    if not files:
-        raise ValueError("verified final-test daily panel is empty")
-    symbols = sorted(
-        pl.scan_parquet(files)
-        .select(pl.col("symbol").cast(pl.String).str.zfill(6))
-        .unique()
-        .collect()
-        .get_column("symbol")
-    )
-    symbols = [
-        symbol for symbol in symbols
-        if market_for_symbol(symbol) in contract.supported_markets
-    ]
-    if not symbols:
-        raise ValueError("final execution input acquisition requires symbols")
+    if (
+        not symbols
+        or symbols != sorted(set(symbols))
+        or any(market_for_symbol(symbol) not in contract.supported_markets for symbol in symbols)
+    ):
+        raise ValueError("final execution input symbols differ from preparation scope")
     security_coverage = validate_security_event_coverage(
         security_event_coverage_path,
         symbols=symbols,
@@ -160,6 +194,13 @@ def generate_final_execution_sources(
         corporate_action_coverage_root,
         symbols=symbols,
     )
+    if (
+        security_coverage.get("coverage_manifest_sha256")
+        != expected_security_event_coverage_sha256
+        or corporate_coverage.get("coverage_manifest_sha256")
+        != expected_corporate_action_coverage_sha256
+    ):
+        raise ValueError("execution coverage snapshot differs from claimed identity")
     actions = corporate_coverage["actions"]
     event_file = security_coverage.get("events_file")
     events = pl.read_parquet(event_file) if isinstance(event_file, Path) else pl.DataFrame(
@@ -227,12 +268,17 @@ def generate_final_execution_sources(
                 "git_commit": authorization.git_commit,
                 "git_tree": authorization.git_tree,
                 "data_manifest_sha256": resolution.data_manifest_sha256,
-                "security_event_coverage_sha256": sha256_file(
-                    coverage_manifest_path
+                "execution_id": execution_id,
+                "prepare_manifest_sha256": prepare_manifest_sha256,
+                "security_event_coverage_sha256": (
+                    expected_security_event_coverage_sha256
                 ),
-                "corporate_action_coverage_sha256": sha256_file(
-                    corporate_coverage["coverage_manifest_path"]
+                "corporate_action_coverage_sha256": (
+                    expected_corporate_action_coverage_sha256
                 ),
+                "symbols_sha256": hashlib.sha256(
+                    ("\n".join(symbols) + "\n").encode()
+                ).hexdigest(),
                 "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
                 "provider": contract.provider,
                 "query_year_type": contract.query_year_type,
@@ -261,6 +307,11 @@ def _verify_reusable_source_root(
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
     final_root: Path,
+    symbols: list[str],
+    prepare_manifest_sha256: str,
+    expected_security_event_coverage_sha256: str,
+    expected_corporate_action_coverage_sha256: str,
+    execution_id: str,
 ) -> None:
     if root.is_symlink() or root.resolve() != final_root.resolve() / "execution_input_sources":
         raise ValueError("reusable final execution source path is unsafe")
@@ -269,23 +320,32 @@ def _verify_reusable_source_root(
     except (FileNotFoundError, json.JSONDecodeError) as error:
         raise ValueError("invalid reusable final execution source manifest") from error
     resolution = resolve_final_test_data_panel(final_root)
-    security_coverage = validate_security_event_coverage(security_event_coverage_path)
+    security_coverage = validate_security_event_coverage(
+        security_event_coverage_path, symbols=symbols
+    )
     corporate_coverage = validate_corporate_action_coverage(
-        corporate_action_coverage_root
+        corporate_action_coverage_root, symbols=symbols
     )
     expected = {
         "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
         "git_commit": authorization.git_commit,
         "git_tree": authorization.git_tree,
         "data_manifest_sha256": resolution.data_manifest_sha256,
-        "security_event_coverage_sha256": sha256_file(
-            security_coverage["coverage_manifest_path"]
-        ),
-        "corporate_action_coverage_sha256": sha256_file(
-            corporate_coverage["coverage_manifest_path"]
-        ),
+        "execution_id": execution_id,
+        "prepare_manifest_sha256": prepare_manifest_sha256,
+        "security_event_coverage_sha256": expected_security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": expected_corporate_action_coverage_sha256,
+        "symbols_sha256": hashlib.sha256(
+            ("\n".join(symbols) + "\n").encode()
+        ).hexdigest(),
     }
-    if any(manifest.get(key) != value for key, value in expected.items()):
+    if (
+        security_coverage.get("coverage_manifest_sha256")
+        != expected_security_event_coverage_sha256
+        or corporate_coverage.get("coverage_manifest_sha256")
+        != expected_corporate_action_coverage_sha256
+        or any(manifest.get(key) != value for key, value in expected.items())
+    ):
         raise ValueError("final execution sources cannot be reused across sealed inputs")
     for record in manifest.get("files", []):
         verify_file_record(record, root=root)

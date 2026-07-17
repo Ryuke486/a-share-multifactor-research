@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 from typing import Any
+from uuid import uuid4
 
 
 _ATTEMPT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
@@ -505,36 +506,173 @@ def _prepared_publication_matches(
     )
 
 
-def append_execution_recovery_event(
+def resolve_prepared_publication(
     registry_root: Path,
     *,
     attempt_id: str,
-    recovery_id: str,
+    release_run_id: str,
+    sealed_protocol_sha256: str,
+) -> dict[str, Any]:
+    """Resolve one prepared record only when its complete immutable schema matches."""
+    validate_publication_id(attempt_id)
+    validate_publication_id(release_run_id)
+    expected = {
+        "attempt_id": attempt_id,
+        "status": "prepared",
+        "authoritative": False,
+        "release_run_id": release_run_id,
+        "sealed_protocol_sha256": sealed_protocol_sha256,
+    }
+    try:
+        prepared = _read_registry_json(
+            registry_root / f"{attempt_id}.prepared.json"
+        )
+    except FileNotFoundError as error:
+        raise ValueError("prepared final-test publication is missing") from error
+    if (
+        _SHA256.fullmatch(sealed_protocol_sha256) is None
+        or not _prepared_publication_matches(prepared, expected)
+    ):
+        raise ValueError("prepared final-test publication identity differs")
+    return prepared
+
+
+def begin_execution_recovery(
+    registry_root: Path,
+    *,
+    attempt_id: str,
     execution_id: str,
-    archived_path: str,
     identities: dict[str, str],
 ) -> dict[str, Any]:
-    """Record one immutable interrupted-execution archive."""
+    """Claim one immutable recovery intent, or return its incomplete predecessor."""
     validate_publication_id(attempt_id)
-    validate_publication_id(recovery_id)
     validate_publication_id(execution_id)
     validated = _validate_state_identities("executing", identities)
     with _attempt_transition_lock(registry_root, attempt_id):
         state = _resolve_attempt_state_unlocked(registry_root, attempt_id)
         if state["state"] != "executing" or state["identities"] != validated:
             raise ValueError("execution recovery identity differs from executing attempt")
+        pending = _pending_execution_recovery_unlocked(registry_root, attempt_id)
+        if pending is not None:
+            if (
+                pending.get("execution_id") != execution_id
+                or pending.get("identities") != validated
+            ):
+                raise ValueError("pending execution recovery identity differs")
+            return pending
+        recovery_id = uuid4().hex
         payload: dict[str, Any] = {
             "attempt_id": attempt_id,
             "recovery_id": recovery_id,
             "execution_id": execution_id,
             "recorded_at": datetime.now(timezone.utc).isoformat(),
-            "archived_path": archived_path,
+            "source_path": f"attempt_runs/{attempt_id}",
+            "recovery_root": f"interrupted_runs/{attempt_id}/{recovery_id}",
+            "archived_path": f"interrupted_runs/{attempt_id}/{recovery_id}/archive",
             "identities": validated,
+            "status": "intent",
         }
         _write_exclusive(
-            registry_root / f"{attempt_id}.recovery.{recovery_id}.json",
+            registry_root / f"{attempt_id}.recovery.{recovery_id}.intent.json",
             _json_bytes(payload),
         )
+        return payload
+
+
+def pending_execution_recovery(
+    registry_root: Path, attempt_id: str
+) -> dict[str, Any] | None:
+    validate_publication_id(attempt_id)
+    with _attempt_lock(registry_root, attempt_id, fcntl.LOCK_SH):
+        return _pending_execution_recovery_unlocked(registry_root, attempt_id)
+
+
+def _pending_execution_recovery_unlocked(
+    registry_root: Path, attempt_id: str
+) -> dict[str, Any] | None:
+    pending: list[dict[str, Any]] = []
+    for path in sorted(registry_root.glob(f"{attempt_id}.recovery.*.intent.json")):
+        payload = _read_registry_json(path)
+        recovery_id = _validate_execution_recovery_intent(
+            payload, attempt_id=attempt_id, path=path
+        )
+        complete = registry_root / f"{attempt_id}.recovery.{recovery_id}.complete.json"
+        if complete.exists():
+            continue
+        pending.append(payload)
+    if len(pending) > 1:
+        raise ValueError("multiple incomplete execution recovery intents")
+    return pending[0] if pending else None
+
+
+def _validate_execution_recovery_intent(
+    payload: dict[str, Any], *, attempt_id: str, path: Path
+) -> str:
+    expected_keys = {
+        "attempt_id",
+        "recovery_id",
+        "execution_id",
+        "recorded_at",
+        "source_path",
+        "recovery_root",
+        "archived_path",
+        "identities",
+        "status",
+    }
+    try:
+        recovery_id = validate_publication_id(str(payload.get("recovery_id", "")))
+        validate_publication_id(str(payload.get("execution_id", "")))
+        identities = _validate_state_identities("executing", payload["identities"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("invalid execution recovery intent") from error
+    expected_paths = {
+        "source_path": f"attempt_runs/{attempt_id}",
+        "recovery_root": f"interrupted_runs/{attempt_id}/{recovery_id}",
+        "archived_path": f"interrupted_runs/{attempt_id}/{recovery_id}/archive",
+    }
+    if (
+        set(payload) != expected_keys
+        or payload.get("attempt_id") != attempt_id
+        or payload.get("status") != "intent"
+        or payload.get("identities") != identities
+        or not isinstance(payload.get("recorded_at"), str)
+        or not payload["recorded_at"]
+        or any(payload.get(key) != value for key, value in expected_paths.items())
+        or path.name != f"{attempt_id}.recovery.{recovery_id}.intent.json"
+    ):
+        raise ValueError("invalid execution recovery intent")
+    return recovery_id
+
+
+def complete_execution_recovery(
+    registry_root: Path,
+    *,
+    intent: dict[str, Any],
+) -> dict[str, Any]:
+    """Append the terminal audit event for an already moved partial directory."""
+    attempt_id = validate_publication_id(str(intent.get("attempt_id", "")))
+    recovery_id = validate_publication_id(str(intent.get("recovery_id", "")))
+    with _attempt_transition_lock(registry_root, attempt_id):
+        pending = _pending_execution_recovery_unlocked(registry_root, attempt_id)
+        destination = registry_root / f"{attempt_id}.recovery.{recovery_id}.complete.json"
+        payload: dict[str, Any] = {
+            "attempt_id": attempt_id,
+            "recovery_id": recovery_id,
+            "execution_id": intent.get("execution_id"),
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "archived_path": intent.get("archived_path"),
+            "identities": intent.get("identities"),
+            "status": "complete",
+        }
+        if destination.exists():
+            existing = _read_registry_json(destination)
+            comparable = {key: value for key, value in payload.items() if key != "recorded_at"}
+            if all(existing.get(key) == value for key, value in comparable.items()):
+                return existing
+            raise ValueError("completed execution recovery identity differs")
+        if pending != intent:
+            raise ValueError("execution recovery intent changed before completion")
+        _write_exclusive(destination, _json_bytes(payload))
         return payload
 
 
@@ -545,22 +683,15 @@ def recover_prepared_publication(
     current: dict[str, object],
 ) -> dict[str, Any]:
     validate_publication_id(attempt_id)
-    prepared = json.loads(
-        (registry_root / f"{attempt_id}.prepared.json").read_text(encoding="utf-8")
+    run_id = str(current.get("run_id", ""))
+    raw = _read_registry_json(registry_root / f"{attempt_id}.prepared.json")
+    resolve_prepared_publication(
+        registry_root,
+        attempt_id=attempt_id,
+        release_run_id=run_id,
+        sealed_protocol_sha256=str(raw.get("sealed_protocol_sha256", "")),
     )
-    expected = {
-        "attempt_id": attempt_id,
-        "status": "prepared",
-        "authoritative": False,
-        "release_run_id": prepared.get("release_run_id"),
-        "sealed_protocol_sha256": prepared.get("sealed_protocol_sha256"),
-    }
-    if (
-        not _prepared_publication_matches(prepared, expected)
-        or _SHA256.fullmatch(str(prepared.get("sealed_protocol_sha256", ""))) is None
-        or current.get("run_id") != prepared.get("release_run_id")
-        or not re.fullmatch(r"[0-9a-f]{64}", str(current.get("manifest_sha256", "")))
-    ):
+    if not re.fullmatch(r"[0-9a-f]{64}", str(current.get("manifest_sha256", ""))):
         raise ValueError("prepared final-test publication differs from CURRENT")
     return append_attempt_outcome(
         registry_root,

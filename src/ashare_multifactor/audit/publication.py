@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+from uuid import uuid4
 
 from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
 
@@ -76,6 +77,47 @@ def resolve_current(root: Path) -> PublishedRelease:
     for item in manifest["files"]:
         verify_file_record(item, root=published.root)
     return published
+
+
+def resolve_release(root: Path, run_id: str) -> PublishedRelease:
+    """Resolve and fully verify one release without consulting CURRENT."""
+    release = root / "releases" / run_id
+    if release.is_symlink() or not release.is_dir():
+        raise ValueError("release is missing or uses a symlink")
+    manifest = release / "manifest.json"
+    manifest_hash = sha256_file(manifest)
+    published = _published(root, run_id, manifest_hash)
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("invalid release manifest") from error
+    if not isinstance(payload, dict) or payload.get("run_id") != run_id:
+        raise ValueError("release manifest identity differs")
+    records = payload.get("files")
+    if not isinstance(records, list):
+        raise ValueError("release manifest files are missing")
+    for item in records:
+        verify_file_record(item, root=release)
+    return published
+
+
+def restore_current(root: Path, release: PublishedRelease) -> None:
+    """Atomically create CURRENT for one already verified orphan release."""
+    verified = resolve_release(root, release.run_id)
+    if verified.manifest_sha256 != release.manifest_sha256:
+        raise ValueError("orphan release identity changed before CURRENT recovery")
+    current = root / "CURRENT.json"
+    if current.exists() or current.is_symlink():
+        raise FileExistsError("CURRENT already exists")
+    temporary = root / f".CURRENT.{uuid4().hex}.tmp"
+    _write_json(
+        temporary,
+        {"manifest_sha256": release.manifest_sha256, "run_id": release.run_id},
+    )
+    try:
+        os.link(temporary, current)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def _published(root: Path, run_id: str, manifest_hash: str) -> PublishedRelease:

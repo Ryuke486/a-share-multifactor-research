@@ -15,12 +15,19 @@ from uuid import uuid4
 
 import polars as pl
 
-from ashare_multifactor.audit.publication import PublishedRelease, publish_release, resolve_current
+from ashare_multifactor.audit.publication import (
+    PublishedRelease,
+    publish_release,
+    resolve_current,
+    resolve_release,
+    restore_current,
+)
 from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.final_test.backtest import (
     FinalTestBacktestResult,
     run_final_test_backtest,
 )
+from ashare_multifactor.final_test.coverage_snapshot import snapshot_execution_coverages
 from ashare_multifactor.final_test.data_extension import (
     _input_inventory,
     build_final_test_daily_panel,
@@ -32,18 +39,22 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.interrupted_recovery import (
+    has_recoverable_execution_archive,
+    recover_interrupted_execution,
+)
 from ashare_multifactor.final_test.resume import (
     ResumePreflight,
     preflight_resume,
     verify_resume_coverages,
 )
 from ashare_multifactor.final_test.registry import (
-    append_execution_recovery_event,
     append_prepared_publication,
     append_attempt_outcome,
     assert_no_authoritative_success,
     claim_attempt_execution,
     recover_prepared_publication,
+    resolve_prepared_publication,
     resolve_attempt_state_readonly,
     validate_publication_id,
 )
@@ -161,6 +172,23 @@ def resume_final_test_release(
             publication_may_need_recovery = (
                 prepared.is_file() and (final_root / "CURRENT.json").is_file()
             )
+            if prepared.is_file() and not publication_may_need_recovery:
+                try:
+                    publication_may_need_recovery = (
+                        _verify_orphan_release(
+                            final_root,
+                            preflight=preflight,
+                            run_id=run_id,
+                        )
+                        is not None
+                    )
+                except ValueError:
+                    publication_may_need_recovery = False
+            if not publication_may_need_recovery:
+                publication_may_need_recovery = has_recoverable_execution_archive(
+                    final_root,
+                    attempt_id=attempt_id,
+                )
             if not outcome.exists() and not publication_may_need_recovery:
                 append_attempt_outcome(
                     registry_root,
@@ -193,28 +221,44 @@ def _execute_authorized_final_test(
             attempt_id=authorization.attempt_id,
             run_id=run_id,
         )
+    orphan = _recover_orphan_release(
+        final_root,
+        registry_root=registry_root,
+        preflight=preflight,
+        run_id=run_id,
+    )
+    if orphan is not None:
+        return orphan
     verify_resume_coverages(
         preflight,
         security_event_coverage_path=security_event_coverage_path,
         corporate_action_coverage_root=corporate_action_coverage_root,
     )
+    coverage_snapshot = snapshot_execution_coverages(
+        final_root,
+        attempt_id=authorization.attempt_id,
+        preparation=preflight.preparation,
+        security_event_coverage_path=security_event_coverage_path,
+        corporate_action_coverage_root=corporate_action_coverage_root,
+        expected_security_sha256=preflight.security_event_coverage_sha256,
+        expected_corporate_sha256=preflight.corporate_action_coverage_sha256,
+    )
+    recover_interrupted_execution(final_root, preflight=preflight)
     attempt_root = final_root / "attempt_runs" / authorization.attempt_id
-    if attempt_root.exists() or attempt_root.is_symlink():
-        recover_interrupted_execution(final_root, preflight=preflight)
     datasets = attempt_root / "datasets"
     artifacts = attempt_root / "artifacts"
     datasets.mkdir(parents=True)
     artifacts.mkdir()
-    _write_json(
-        attempt_root / "execution_identity.json",
-        {
-            "execution_id": uuid4().hex,
-            "attempt_id": authorization.attempt_id,
-            "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
-            "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
-            "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
-        },
-    )
+    execution_identity = {
+        "execution_id": uuid4().hex,
+        "attempt_id": authorization.attempt_id,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+        "coverage_snapshot_manifest_sha256": coverage_snapshot.manifest_sha256,
+    }
+    _write_json(attempt_root / "execution_identity.json", execution_identity)
     started_at = datetime.now(timezone.utc).isoformat()
     try:
         config = _load_frozen_config(code_root, data_root)
@@ -223,8 +267,17 @@ def _execute_authorized_final_test(
             code_root=code_root,
             data_root=data_root,
             final_root=final_root,
-            security_event_coverage_path=security_event_coverage_path,
-            corporate_action_coverage_root=corporate_action_coverage_root,
+            security_event_coverage_path=coverage_snapshot.security_event_coverage_path,
+            corporate_action_coverage_root=coverage_snapshot.corporate_action_coverage_root,
+            symbols=list(coverage_snapshot.symbols),
+            prepare_manifest_sha256=preflight.preparation.manifest_sha256,
+            expected_security_event_coverage_sha256=(
+                preflight.security_event_coverage_sha256
+            ),
+            expected_corporate_action_coverage_sha256=(
+                preflight.corporate_action_coverage_sha256
+            ),
+            execution_id=str(execution_identity["execution_id"]),
         )
         signals = build_final_test_signals(
             authorization,
@@ -291,6 +344,7 @@ def _execute_authorized_final_test(
             supported_markets=config.supported_markets,
             started_at=started_at,
             completed_at=completed_at,
+            execution_identity=execution_identity,
         )
         report = build_final_report(
             authorization,
@@ -333,6 +387,17 @@ def _execute_authorized_final_test(
                 "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
                 "attempt_id": authorization.attempt_id,
                 "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+                "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+                "security_event_coverage_sha256": (
+                    preflight.security_event_coverage_sha256
+                ),
+                "corporate_action_coverage_sha256": (
+                    preflight.corporate_action_coverage_sha256
+                ),
+                "execution_id": execution_identity["execution_id"],
+                "coverage_snapshot_manifest_sha256": (
+                    coverage_snapshot.manifest_sha256
+                ),
                 "publishable": True,
             },
         )
@@ -361,63 +426,6 @@ def _execute_authorized_final_test(
                 reason=f"{type(error).__name__}: {error}",
             )
         raise
-
-
-def recover_interrupted_execution(
-    final_root: Path,
-    *,
-    preflight: ResumePreflight,
-) -> Path:
-    """Archive a verified partial run without changing its attempt identity."""
-    attempt_id = preflight.authorization.attempt_id
-    partial = final_root / "attempt_runs" / attempt_id
-    if partial.is_symlink() or not partial.is_dir():
-        raise ValueError("partial final-test execution is missing or uses a symlink")
-    identity_path = partial / "execution_identity.json"
-    if identity_path.is_symlink():
-        raise ValueError("partial final-test execution identity uses a symlink")
-    try:
-        identity = json.loads(identity_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
-        raise ValueError("partial final-test execution identity is incomplete") from error
-    expected = {
-        "attempt_id": attempt_id,
-        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
-        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
-        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
-    }
-    execution_id = identity.get("execution_id") if isinstance(identity, dict) else None
-    if (
-        not isinstance(identity, dict)
-        or set(identity) != {"execution_id", *expected}
-        or not isinstance(execution_id, str)
-        or not execution_id
-        or any(identity.get(key) != value for key, value in expected.items())
-    ):
-        raise ValueError("partial final-test execution identity is incomplete or differs")
-    validate_publication_id(execution_id)
-    recovery_id = uuid4().hex
-    archive_parent = final_root / "interrupted_runs" / attempt_id
-    if archive_parent.is_symlink():
-        raise ValueError("interrupted final-test archive uses a symlink")
-    archive_parent.mkdir(parents=True, exist_ok=True)
-    archive = archive_parent / recovery_id
-    if archive.exists() or archive.is_symlink():
-        raise FileExistsError("interrupted final-test archive already exists")
-    os.replace(partial, archive)
-    append_execution_recovery_event(
-        final_root / "attempts",
-        attempt_id=attempt_id,
-        recovery_id=recovery_id,
-        execution_id=execution_id,
-        archived_path=str(archive.relative_to(final_root)),
-        identities={
-            "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
-            "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
-            "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
-        },
-    )
-    return archive
 
 
 def build_or_reuse_final_test_daily_panel(
@@ -690,6 +698,7 @@ def _assert_safe_roots(data_root: Path, final_root: Path) -> None:
         final_root,
         final_root / "attempt_runs",
         final_root / "interrupted_runs",
+        final_root / "execution_coverage_snapshots",
         final_root / "attempts",
         final_root / "attempt_inputs",
         final_root / "execution_input_sources",
@@ -743,6 +752,95 @@ def _recover_or_reject_current(
         release,
         (),
     )
+
+
+def _recover_orphan_release(
+    final_root: Path,
+    *,
+    registry_root: Path,
+    preflight: ResumePreflight,
+    run_id: str,
+) -> FinalTestPipelineResult | None:
+    release = _verify_orphan_release(final_root, preflight=preflight, run_id=run_id)
+    if release is None:
+        return None
+    restore_current(final_root, release)
+    recover_prepared_publication(
+        registry_root,
+        attempt_id=preflight.authorization.attempt_id,
+        current={"run_id": release.run_id, "manifest_sha256": release.manifest_sha256},
+    )
+    return FinalTestPipelineResult(
+        preflight.authorization.attempt_id,
+        True,
+        final_root / "attempt_runs" / preflight.authorization.attempt_id,
+        release,
+        (),
+    )
+
+
+def _verify_orphan_release(
+    final_root: Path,
+    *,
+    preflight: ResumePreflight,
+    run_id: str,
+) -> PublishedRelease | None:
+    release_root = final_root / "releases" / run_id
+    if not release_root.exists():
+        return None
+    release = resolve_release(final_root, run_id)
+    attempt_id = preflight.authorization.attempt_id
+    identity_path = final_root / "attempt_runs" / attempt_id / "execution_identity.json"
+    try:
+        execution_identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        manifest = json.loads(release.manifest.read_text(encoding="utf-8"))
+        lineage = json.loads(release.lineage.read_text(encoding="utf-8"))
+        prepared = resolve_prepared_publication(
+            final_root / "attempts",
+            attempt_id=attempt_id,
+            release_run_id=run_id,
+            sealed_protocol_sha256=preflight.authorization.sealed_protocol_sha256,
+        )
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("orphan final-test release identity is incomplete") from error
+    except ValueError as error:
+        raise ValueError("orphan final-test release identity differs") from error
+    expected = {
+        "attempt_id": attempt_id,
+        "sealed_protocol_sha256": preflight.authorization.sealed_protocol_sha256,
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
+        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
+    }
+    authorization = lineage.get("authorization") if isinstance(lineage, dict) else None
+    execution = lineage.get("execution") if isinstance(lineage, dict) else None
+    if (
+        not isinstance(execution_identity, dict)
+        or any(execution_identity.get(key) != value for key, value in expected.items())
+        or not isinstance(execution_identity.get("execution_id"), str)
+        or not isinstance(
+            execution_identity.get("coverage_snapshot_manifest_sha256"), str
+        )
+        or not isinstance(manifest, dict)
+        or manifest.get("run_id") != run_id
+        or manifest.get("publishable") is not True
+        or any(manifest.get(key) != value for key, value in expected.items())
+        or manifest.get("execution_id") != execution_identity["execution_id"]
+        or manifest.get("coverage_snapshot_manifest_sha256")
+        != execution_identity["coverage_snapshot_manifest_sha256"]
+        or not isinstance(authorization, dict)
+        or authorization.get("attempt_id") != attempt_id
+        or authorization.get("sealed_protocol_sha256")
+        != preflight.authorization.sealed_protocol_sha256
+        or not isinstance(execution, dict)
+        or execution.get("identity") != execution_identity
+        or prepared.get("attempt_id") != attempt_id
+        or prepared.get("release_run_id") != run_id
+        or prepared.get("sealed_protocol_sha256")
+        != preflight.authorization.sealed_protocol_sha256
+    ):
+        raise ValueError("orphan final-test release identity differs")
+    return release
 
 
 def _copy_release_inputs(
@@ -975,6 +1073,7 @@ def _lineage(
     supported_markets: tuple[str, ...],
     started_at: str,
     completed_at: str,
+    execution_identity: Mapping[str, object],
 ) -> dict[str, object]:
     return {
         "stage": "final_test",
@@ -1004,7 +1103,11 @@ def _lineage(
                 )
             },
         },
-        "execution": {"started_at": started_at, "completed_at": completed_at},
+        "execution": {
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "identity": dict(execution_identity),
+        },
         "policy": {
             "parameter_search": False,
             "test_tuning": False,
