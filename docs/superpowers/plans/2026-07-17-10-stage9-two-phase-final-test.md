@@ -235,7 +235,7 @@ git commit -m "feat(final-test): publish immutable preparation scope"
 - Consumes: attempt登记、token snapshot、opening ledger、`FinalTestPreparation`和两类coverage。
 - Produces: `load_registered_authorization`授权恢复接口、`preflight_resume`恢复预检接口。
 
-- [ ] **Step 1: 写resume不二次消费令牌及漂移失败测试**
+- [x] **Step 1: 写resume不二次消费令牌及漂移失败测试**
 
 ```python
 def test_resume_reconstructs_same_authorization_without_consuming_token_again(
@@ -254,13 +254,13 @@ def test_resume_reconstructs_same_authorization_without_consuming_token_again(
 
 增加独立反例：token snapshot、ledger、Stage8 manifest/lineage/seal、Git commit/tree、prepare manifest、symbol scope任一漂移；状态不是`awaiting_official_evidence`；coverage缺证券、额外证券、零事件无成功证据或哈希变化。
 
-- [ ] **Step 2: 运行RED测试**
+- [x] **Step 2: 运行RED测试**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_resume.py`
 
 Expected: FAIL with `ModuleNotFoundError`。
 
-- [ ] **Step 3: 实现授权重建**
+- [x] **Step 3: 实现授权重建**
 
 ```python
 def load_registered_authorization(
@@ -279,7 +279,7 @@ def load_registered_authorization(
 
 该函数只读取已登记身份；不得调用`authorize_final_test`或`verify_test_opening_token`，因为后者会再次创建消费ledger。
 
-- [ ] **Step 4: 提取无写入coverage预检**
+- [x] **Step 4: 提取无写入coverage预检**
 
 ```python
 @dataclass(frozen=True)
@@ -304,13 +304,13 @@ def validate_final_execution_coverages(
 
 `preflight_resume`先验证准备清单，再加载`symbol_scope.parquet`并调用该函数。coverage尚未就绪时只抛出门禁错误，不追加`failed`或`executing`状态。
 
-- [ ] **Step 5: 运行GREEN和coverage回归**
+- [x] **Step 5: 运行GREEN和coverage回归**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_resume.py tests/test_final_test_pipeline.py tests/test_corporate_action_coverage.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交并进入任务审查**
+- [x] **Step 6: 提交并进入任务审查**
 
 ```bash
 git add src/ashare_multifactor/final_test/resume.py src/ashare_multifactor/final_test/execution_sources.py tests/test_final_test_resume.py
