@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
+import fcntl
 import hashlib
 import json
 import os
@@ -49,6 +51,23 @@ def validate_publication_id(value: str) -> str:
     return value
 
 
+@contextmanager
+def _attempt_transition_lock(registry_root: Path, attempt_id: str):
+    """Serialize state transitions while retaining exclusive event writes."""
+    registry_root.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        registry_root / f"{attempt_id}.lock", os.O_WRONLY | os.O_CREAT, 0o600
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
 def append_attempt_state(
     registry_root: Path,
     *,
@@ -57,29 +76,31 @@ def append_attempt_state(
     identities: dict[str, str] | None = None,
 ) -> AttemptStateEvent:
     """Append the next immutable state event for one final-test attempt."""
-    current = resolve_attempt_state(registry_root, attempt_id)
-    expected = _STATE_SEQUENCE.get(str(current["state"]), -1) + 1
-    if _STATE_SEQUENCE.get(state) != expected:
-        raise ValueError("invalid final-test state transition")
-    validated_identities = _validate_state_identities(state, identities or {})
-    _validate_state_identity_inheritance(
-        state, current["identities"], validated_identities
-    )
-    payload: AttemptStateEvent = {
-        "attempt_id": attempt_id,
-        "sequence": expected,
-        "state": state,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "identities": validated_identities,
-    }
-    try:
-        _write_exclusive(
-            registry_root / f"{attempt_id}.state.{expected:02d}-{state}.json",
-            _json_bytes(payload),
+    validate_publication_id(attempt_id)
+    with _attempt_transition_lock(registry_root, attempt_id):
+        current = resolve_attempt_state(registry_root, attempt_id)
+        expected = _STATE_SEQUENCE.get(str(current["state"]), -1) + 1
+        if _STATE_SEQUENCE.get(state) != expected:
+            raise ValueError("invalid final-test state transition")
+        validated_identities = _validate_state_identities(state, identities or {})
+        _validate_state_identity_inheritance(
+            state, current["identities"], validated_identities
         )
-    except FileExistsError as exc:
-        raise ValueError("invalid final-test state transition") from exc
-    return payload
+        payload: AttemptStateEvent = {
+            "attempt_id": attempt_id,
+            "sequence": expected,
+            "state": state,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "identities": validated_identities,
+        }
+        try:
+            _write_exclusive(
+                registry_root / f"{attempt_id}.state.{expected:02d}-{state}.json",
+                _json_bytes(payload),
+            )
+        except FileExistsError as exc:
+            raise ValueError("invalid final-test state transition") from exc
+        return payload
 
 
 def resolve_attempt_state(registry_root: Path, attempt_id: str) -> dict[str, Any]:
@@ -263,42 +284,42 @@ def append_attempt_outcome(
 ) -> dict[str, Any]:
     """Append one terminal outcome without rewriting the opening attempt record."""
     validate_publication_id(attempt_id)
-    if status not in {"failed", "succeeded"}:
-        raise ValueError("invalid final-test attempt outcome")
-    if authoritative != (status == "succeeded"):
-        raise ValueError("only a succeeded final-test outcome can be authoritative")
-    if not reason.strip():
-        raise ValueError("final-test attempt outcome reason is required")
-    if authoritative and (not release_run_id or not release_manifest_sha256):
-        raise ValueError("authoritative outcome requires release identity")
-    payload: dict[str, Any] = {
-        "attempt_id": attempt_id,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "status": status,
-        "authoritative": authoritative,
-        "reason": reason.strip(),
-    }
-    if release_run_id is not None:
-        payload["release_run_id"] = release_run_id
-    if release_manifest_sha256 is not None:
-        payload["release_manifest_sha256"] = release_manifest_sha256
-    _validate_terminal_outcome(payload, attempt_id)
-    if (
-        status == "succeeded"
-        and not _is_legacy_attempt_without_state_events(registry_root, attempt_id)
-        and resolve_attempt_state(registry_root, attempt_id)["state"] != "executing"
-    ):
-        raise ValueError("succeeded outcome requires executing state")
-    registry_root.mkdir(parents=True, exist_ok=True)
-    destination = registry_root / f"{attempt_id}.outcome.json"
-    try:
-        _write_exclusive(
-            destination,
-            (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(),
-        )
-    except FileExistsError as exc:
-        raise ValueError("final-test attempt outcome is already recorded") from exc
-    return payload
+    with _attempt_transition_lock(registry_root, attempt_id):
+        if status not in {"failed", "succeeded"}:
+            raise ValueError("invalid final-test attempt outcome")
+        if authoritative != (status == "succeeded"):
+            raise ValueError("only a succeeded final-test outcome can be authoritative")
+        if not reason.strip():
+            raise ValueError("final-test attempt outcome reason is required")
+        if authoritative and (not release_run_id or not release_manifest_sha256):
+            raise ValueError("authoritative outcome requires release identity")
+        payload: dict[str, Any] = {
+            "attempt_id": attempt_id,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "authoritative": authoritative,
+            "reason": reason.strip(),
+        }
+        if release_run_id is not None:
+            payload["release_run_id"] = release_run_id
+        if release_manifest_sha256 is not None:
+            payload["release_manifest_sha256"] = release_manifest_sha256
+        _validate_terminal_outcome(payload, attempt_id)
+        if (
+            status == "succeeded"
+            and not _is_legacy_attempt_without_state_events(registry_root, attempt_id)
+            and resolve_attempt_state(registry_root, attempt_id)["state"] != "executing"
+        ):
+            raise ValueError("succeeded outcome requires executing state")
+        destination = registry_root / f"{attempt_id}.outcome.json"
+        try:
+            _write_exclusive(
+                destination,
+                _json_bytes(payload),
+            )
+        except FileExistsError as exc:
+            raise ValueError("final-test attempt outcome is already recorded") from exc
+        return payload
 
 
 def register_attempt(
