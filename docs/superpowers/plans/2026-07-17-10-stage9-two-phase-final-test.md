@@ -330,7 +330,7 @@ git commit -m "feat(final-test): verify resumable prepared attempts"
 - Consumes: `ResumePreflight`和精确coverage路径。
 - Produces: `resume_final_test_release`续跑接口，返回`FinalTestPipelineResult`。
 
-- [ ] **Step 1: 写领取执行权后继续同一attempt的失败测试**
+- [x] **Step 1: 写领取执行权后继续同一attempt的失败测试**
 
 ```python
 def test_resume_claims_execution_once_and_publishes_same_attempt(
@@ -362,13 +362,13 @@ def test_resume_claims_execution_once_and_publishes_same_attempt(
 
 增加反例：coverage预检失败时仍为`awaiting_official_evidence`；领取后coverage漂移写失败outcome；账务门禁失败保留attempt且无`CURRENT`；发布中断沿prepared-publication恢复。
 
-- [ ] **Step 2: 运行RED测试**
+- [x] **Step 2: 运行RED测试**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_pipeline.py -k 'resume or prepared_attempt'`
 
 Expected: FAIL，缺少`resume_final_test_release`。
 
-- [ ] **Step 3: 将现有一体化函数拆为准备外壳和执行核心**
+- [x] **Step 3: 将现有一体化函数拆为准备外壳和执行核心**
 
 ```python
 def resume_final_test_release(
@@ -410,7 +410,7 @@ def resume_final_test_release(
 
 `_execute_authorized_final_test`复用现有execution inputs、signals、backtest、metrics、report和publish逻辑；删除从该核心内部重新授权或重建数据面板的路径。旧`run_final_test_release`改为抛出`ValueError("two-phase final-test workflow is required")`，不得保留可绕过prepare的生产入口。
 
-- [ ] **Step 4: 实现执行崩溃恢复**
+- [x] **Step 4: 实现执行崩溃恢复**
 
 执行工作目录增加唯一`execution_id`。若状态为`executing`且无终态：
 
@@ -430,13 +430,13 @@ def recover_interrupted_execution(final_root: Path, attempt_id: str) -> Path:
 
 只允许归档并以同一attempt、同一prepare/coverage哈希重新计算；归档文件不可删除或覆盖。若partial身份不完整或与attempt不符则失败关闭。
 
-- [ ] **Step 5: 运行GREEN和完整pipeline相关测试**
+- [x] **Step 5: 运行GREEN和完整pipeline相关测试**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_pipeline.py tests/test_final_test_backtest.py tests/test_final_test_metrics.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交并进入任务审查**
+- [x] **Step 6: 提交并进入任务审查**
 
 ```bash
 git add src/ashare_multifactor/final_test/pipeline.py src/ashare_multifactor/final_test/registry.py tests/test_final_test_pipeline.py
