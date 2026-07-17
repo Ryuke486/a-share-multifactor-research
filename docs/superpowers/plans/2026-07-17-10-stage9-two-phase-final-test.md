@@ -457,7 +457,7 @@ git commit -m "feat(final-test): resume prepared one-shot execution"
 - Consumes: `prepare_final_test`和`resume_final_test_release`。
 - Produces: `final-test prepare`与`final-test resume`两个唯一生产入口。
 
-- [ ] **Step 1: 写CLI契约和完整状态流失败测试**
+- [x] **Step 1: 写CLI契约和完整状态流失败测试**
 
 ```python
 def test_cli_requires_explicit_prepare_or_resume() -> None:
@@ -495,13 +495,13 @@ def test_synthetic_two_phase_flow_uses_one_approval_and_one_attempt(tmp_path: Pa
 
 增加端到端反例：无子命令拒绝、prepare传入coverage参数拒绝、resume传入opening token拒绝、resume前尝试读取结果目录不存在、北交所代码导致prepare失败、第二次resume拒绝。
 
-- [ ] **Step 2: 运行RED测试**
+- [x] **Step 2: 运行RED测试**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_two_phase.py`
 
 Expected: FAIL，因为CLI仍是一体化入口。
 
-- [ ] **Step 3: 实现显式子命令**
+- [x] **Step 3: 实现显式子命令**
 
 ```python
 parser.add_argument("command", choices=("prepare", "resume"))
@@ -511,11 +511,11 @@ parser.add_argument("--data-root", type=Path, required=True)
 
 `prepare`只接受opening token、批准密钥和attempt ID；`resume`只接受批准密钥、attempt ID、两类coverage和run ID。参数不属于所选子命令时由argparse拒绝。
 
-- [ ] **Step 4: 更新阶段9主计划状态说明**
+- [x] **Step 4: 更新阶段9主计划状态说明**
 
 只记录两阶段实现及旧封印失效；Task 4–6和验收清单保持未勾选，直到真实最终测试完成。
 
-- [ ] **Step 5: 运行GREEN、全量测试和ruff**
+- [x] **Step 5: 运行GREEN、全量测试和ruff**
 
 Run:
 
@@ -527,7 +527,7 @@ git diff --check
 
 Expected: 全部PASS，ruff输出`All checks passed!`，diff check无输出。
 
-- [ ] **Step 6: 提交并完成任务级与整分支审查**
+- [x] **Step 6: 提交并完成任务级与整分支审查**
 
 ```bash
 git add src/ashare_multifactor/cli/final_test.py tests/test_final_test_two_phase.py tests/test_final_test_pipeline.py docs/superpowers/plans/2026-07-15-09-one-shot-final-test.md
