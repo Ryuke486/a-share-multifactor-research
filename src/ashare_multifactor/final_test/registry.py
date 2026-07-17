@@ -704,6 +704,7 @@ def complete_execution_recovery(
     *,
     intent: dict[str, Any],
     archive_manifest_sha256: str,
+    archive_manifest_bytes: bytes | None = None,
 ) -> dict[str, Any]:
     """Append the terminal audit event for an already moved partial directory."""
     attempt_id = validate_publication_id(str(intent.get("attempt_id", "")))
@@ -722,7 +723,12 @@ def complete_execution_recovery(
         )
         if stored_intent != intent:
             raise ValueError("execution recovery intent changed before completion")
-        if _archive_manifest_sha256(registry_root, intent) != archive_manifest_sha256:
+        verified_archive_sha256 = (
+            hashlib.sha256(archive_manifest_bytes).hexdigest()
+            if archive_manifest_bytes is not None
+            else _archive_manifest_sha256(registry_root, intent)
+        )
+        if verified_archive_sha256 != archive_manifest_sha256:
             raise ValueError("completed execution recovery archive hash differs")
         destination = registry_root / f"{attempt_id}.recovery.{recovery_id}.complete.json"
         payload: dict[str, Any] = {

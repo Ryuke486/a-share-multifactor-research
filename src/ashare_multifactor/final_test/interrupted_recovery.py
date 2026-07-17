@@ -5,12 +5,9 @@ from __future__ import annotations
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import hashlib
-import json
 import os
 from pathlib import Path
-import shutil
 from typing import Iterator, Mapping
-from uuid import uuid4
 
 from ashare_multifactor.final_test.registry import (
     begin_execution_recovery,
@@ -20,17 +17,22 @@ from ashare_multifactor.final_test.registry import (
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
     assert_directory_entry as _assert_directory_entry,
-    atomic_rename_no_replace as _atomic_rename_no_replace,
     atomic_rename_no_replace_at as _atomic_rename_no_replace_at,
     directory_identity as _directory_identity,
     directory_records_at as _directory_records_at,
     json_bytes as _json_bytes,
     open_directory_at as _open_directory_at,
-    opened_directory as _opened_directory,
     opened_directory_at as _opened_directory_at,
     read_bytes_at as _read_bytes_at,
     read_json_at as _read_json_at,
     write_bytes_exclusive_at as _write_bytes_exclusive_at,
+)
+from ashare_multifactor.final_test.recovery_namespace import (
+    assert_recovery_anchors as _assert_recovery_anchors,
+    nested_directory_exists_at as _nested_directory_exists_at,
+    opened_final_root as _opened_final_root,
+    open_recovery_archive_at as _open_recovery_archive_at,
+    reject_unsafe_optional_directory_at as _reject_unsafe_optional_directory_at,
 )
 from ashare_multifactor.final_test.resume import ResumePreflight
 
@@ -47,20 +49,10 @@ _IDENTITY_KEYS = {
 
 
 @dataclass(frozen=True)
-class _RecoveryAnchors:
-    parent_fd: int
-    recovery_fd: int
-    recovery_name: str
-    recovery_identity: tuple[int, int]
-    archive_fd: int
-    archive_identity: tuple[int, int]
-
-
-@dataclass(frozen=True)
 class _SourceAnchor:
-    anchor_fd: int
+    anchor_fd: int | None
     parent_fd: int
-    parent_name: str
+    parent_name: str | None
     parent_identity: tuple[int, int]
     source_name: str
 
@@ -82,118 +74,191 @@ def recover_interrupted_execution(
     """Archive all directories bound to one interrupted execution, then audit it."""
     attempt_id = preflight.authorization.attempt_id
     registry_root = final_root / "attempts"
-    sources = _execution_artifact_sources(final_root, attempt_id=attempt_id)
-    intent = pending_execution_recovery(registry_root, attempt_id)
-    recovery_root = (
-        final_root / str(intent["recovery_root"])
-        if intent is not None
-        else None
-    )
-    identity_root = sources["attempt_run"]
-    if intent is not None and not identity_root.exists():
-        identity_root = recovery_root / "archive" / "attempt_run"
-    elif intent is None and not identity_root.exists() and not identity_root.is_symlink():
-        return None
-    identity = _load_execution_identity(identity_root)
-    expected_identity = _expected_execution_identity(
-        preflight,
-        execution_id=identity.get("execution_id"),
-        coverage_snapshot_manifest_sha256=coverage_snapshot_manifest_sha256,
-    )
-    if identity != expected_identity:
-        raise ValueError("partial final-test execution identity schema or values differ")
-    execution_id = str(identity["execution_id"])
-    presence = (
-        dict(intent["artifact_presence"])
-        if intent is not None
-        else {key: path.exists() for key, path in sources.items()}
-    )
-    _verify_bound_artifacts(
-        sources,
-        presence=presence,
-        execution_id=execution_id,
-        attempt_id=attempt_id,
-        allow_moved=intent is not None,
-    )
     identities = {
         "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
         "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
         "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
     }
-    if intent is None:
-        intent = begin_execution_recovery(
-            registry_root,
-            attempt_id=attempt_id,
-            execution_id=execution_id,
-            identities=identities,
-            artifact_presence=presence,
+    with _opened_final_root(final_root) as (final_fd, final_identity):
+        _reject_unsafe_optional_directory_at(
+            final_fd,
+            "interrupted_runs",
+            label="interrupted_runs safe directory",
         )
-        recovery_root = final_root / str(intent["recovery_root"])
-    if (
-        intent.get("execution_id") != execution_id
-        or intent.get("identities") != identities
-        or intent.get("artifact_presence") != presence
-    ):
-        raise ValueError("pending execution recovery identity differs")
-    if recovery_root is None:
-        raise ValueError("interrupted recovery root is missing")
-    _resolve_or_publish_claim(recovery_root, intent=intent)
-    archive = recovery_root / "archive"
-    with _open_recovery_archive(recovery_root, intent=intent) as recovery:
-        with _open_source_anchors(
-            final_root,
+        intent = pending_execution_recovery(registry_root, attempt_id)
+        presence = (
+            dict(intent["artifact_presence"])
+            if intent is not None
+            else _artifact_presence_at(final_fd, attempt_id=attempt_id)
+        )
+        if intent is None and not presence["attempt_run"]:
+            return None
+        with _open_source_anchors_at(
+            final_fd,
+            final_identity=final_identity,
             attempt_id=attempt_id,
             presence=presence,
         ) as source_anchors:
-            moved: list[_MovedArtifact] = []
-            try:
-                for label in sources:
-                    if not presence[label]:
-                        continue
-                    _assert_recovery_anchors(recovery)
-                    _assert_source_anchors(source_anchors)
-                    item = _move_source_directory_no_replace(
-                        source_anchors[label],
-                        destination_name=label,
-                        archive_fd=recovery.archive_fd,
+            if intent is None:
+                identity = _load_and_verify_bound_artifacts_at(
+                    source_anchors,
+                    archive_fd=None,
+                    presence=presence,
+                    attempt_id=attempt_id,
+                    allow_moved=False,
+                )
+                expected_identity = _expected_execution_identity(
+                    preflight,
+                    execution_id=identity.get("execution_id"),
+                    coverage_snapshot_manifest_sha256=(
+                        coverage_snapshot_manifest_sha256
+                    ),
+                )
+                if identity != expected_identity:
+                    raise ValueError(
+                        "partial final-test execution identity schema or values differ"
                     )
-                    if item is not None:
-                        moved.append(item)
+                intent = begin_execution_recovery(
+                    registry_root,
+                    attempt_id=attempt_id,
+                    execution_id=str(identity["execution_id"]),
+                    identities=identities,
+                    artifact_presence=presence,
+                )
+            with _open_recovery_archive_at(
+                final_fd,
+                final_identity=final_identity,
+                attempt_id=attempt_id,
+                intent=intent,
+            ) as recovery:
+                identity = _load_and_verify_bound_artifacts_at(
+                    source_anchors,
+                    archive_fd=recovery.archive_fd,
+                    presence=presence,
+                    attempt_id=attempt_id,
+                    allow_moved=True,
+                )
+                expected_identity = _expected_execution_identity(
+                    preflight,
+                    execution_id=identity.get("execution_id"),
+                    coverage_snapshot_manifest_sha256=(
+                        coverage_snapshot_manifest_sha256
+                    ),
+                )
+                if identity != expected_identity:
+                    raise ValueError(
+                        "partial final-test execution identity schema or values differ"
+                    )
+                execution_id = str(identity["execution_id"])
+                if (
+                    intent.get("execution_id") != execution_id
+                    or intent.get("identities") != identities
+                    or intent.get("artifact_presence") != presence
+                ):
+                    raise ValueError("pending execution recovery identity differs")
+                moved: list[_MovedArtifact] = []
+                try:
+                    for label in (
+                        "attempt_run",
+                        "execution_input_sources",
+                        "attempt_inputs",
+                    ):
+                        if not presence[label]:
+                            continue
+                        _assert_recovery_anchors(recovery)
+                        _assert_source_anchors(source_anchors)
+                        item = _move_source_directory_no_replace(
+                            source_anchors[label],
+                            destination_name=label,
+                            archive_fd=recovery.archive_fd,
+                        )
+                        if item is not None:
+                            moved.append(item)
+                        _assert_recovery_anchors(recovery)
+                        _assert_source_anchors(source_anchors)
                     _assert_recovery_anchors(recovery)
                     _assert_source_anchors(source_anchors)
+                except BaseException:
+                    rollback_error = _rollback_moved_artifacts(moved)
+                    if rollback_error is not None:
+                        raise RuntimeError(
+                            "uncoordinated recovery rollback; evidence retained"
+                        ) from rollback_error
+                    raise
+                archive_manifest_sha256 = _write_or_verify_archive_manifest_at(
+                    recovery.recovery_fd,
+                    recovery.archive_fd,
+                    intent=intent,
+                    presence=presence,
+                )
+                archive_manifest_bytes = _read_bytes_at(
+                    recovery.recovery_fd,
+                    "archive_manifest.json",
+                    label="interrupted archive manifest",
+                )
                 _assert_recovery_anchors(recovery)
-                _assert_source_anchors(source_anchors)
-            except BaseException:
-                rollback_error = _rollback_moved_artifacts(moved)
-                if rollback_error is not None:
-                    raise RuntimeError(
-                        "uncoordinated recovery rollback; evidence retained"
-                    ) from rollback_error
-                raise
-        archive_manifest_sha256 = _write_or_verify_archive_manifest_at(
-            recovery.recovery_fd,
-            recovery.archive_fd,
-            intent=intent,
-            presence=presence,
-        )
-        complete_execution_recovery(
-            registry_root,
-            intent=intent,
-            archive_manifest_sha256=archive_manifest_sha256,
-        )
-    return archive
+                complete_execution_recovery(
+                    registry_root,
+                    intent=intent,
+                    archive_manifest_sha256=archive_manifest_sha256,
+                    archive_manifest_bytes=archive_manifest_bytes,
+                )
+    return final_root / str(intent["archived_path"])
 
 
 def has_recoverable_execution_archive(final_root: Path, *, attempt_id: str) -> bool:
     try:
-        intent = pending_execution_recovery(final_root / "attempts", attempt_id)
-    except ValueError:
+        with _opened_final_root(final_root) as (final_fd, _final_identity):
+            intent = pending_execution_recovery(final_root / "attempts", attempt_id)
+            if intent is None:
+                return False
+            if _nested_directory_exists_at(
+                final_fd,
+                parent_name="attempt_runs",
+                child_name=attempt_id,
+                label="partial execution source",
+            ):
+                return False
+            recovery_id = validate_publication_id(
+                str(intent.get("recovery_id", ""))
+            )
+            with _opened_directory_at(
+                final_fd,
+                "interrupted_runs",
+                label="interrupted_runs safe directory",
+            ) as interrupted_fd:
+                with _opened_directory_at(
+                    interrupted_fd,
+                    attempt_id,
+                    label="interrupted attempt directory",
+                ) as attempt_fd:
+                    with _opened_directory_at(
+                        attempt_fd,
+                        recovery_id,
+                        label="recovery claim",
+                    ) as recovery_fd:
+                        if (
+                            _read_json_at(
+                                recovery_fd,
+                                ".intent-claim.json",
+                                label="recovery claim",
+                            )
+                            != intent
+                        ):
+                            return False
+                        with _opened_directory_at(
+                            recovery_fd,
+                            "archive",
+                            label="archive safe directory",
+                        ) as archive_fd:
+                            with _opened_directory_at(
+                                archive_fd,
+                                "attempt_run",
+                                label="archived execution directory",
+                            ):
+                                return True
+    except (FileNotFoundError, ValueError):
         return False
-    if intent is None:
-        return False
-    partial = final_root / str(intent.get("source_path", ""))
-    archive = final_root / str(intent.get("archived_path", "")) / "attempt_run"
-    return not partial.exists() and archive.is_dir() and not archive.is_symlink()
 
 
 def _expected_execution_identity(
@@ -216,120 +281,36 @@ def _expected_execution_identity(
     }
 
 
-def _execution_artifact_sources(
-    final_root: Path, *, attempt_id: str
-) -> dict[str, Path]:
-    return {
-        "attempt_run": final_root / "attempt_runs" / attempt_id,
-        "execution_input_sources": final_root / "execution_input_sources",
-        "attempt_inputs": final_root / "attempt_inputs" / attempt_id,
+def _artifact_presence_at(final_fd: int, *, attempt_id: str) -> dict[str, bool]:
+    presence = {
+        "execution_input_sources": _reject_unsafe_optional_directory_at(
+            final_fd,
+            "execution_input_sources",
+            label="execution_input_sources source directory",
+        )
     }
-
-
-def _verify_bound_artifacts(
-    roots: Mapping[str, Path],
-    *,
-    presence: Mapping[str, bool],
-    execution_id: str,
-    attempt_id: str,
-    allow_moved: bool,
-) -> None:
-    for label, root in roots.items():
-        if not presence[label]:
-            if root.exists() and not allow_moved:
-                raise ValueError("unexpected interrupted execution artifact")
+    for label, parent_name in (
+        ("attempt_run", "attempt_runs"),
+        ("attempt_inputs", "attempt_inputs"),
+    ):
+        if not _reject_unsafe_optional_directory_at(
+            final_fd,
+            parent_name,
+            label=f"{label} source parent",
+        ):
+            presence[label] = False
             continue
-        if not root.exists():
-            if allow_moved:
-                continue
-            raise ValueError("interrupted execution artifact is missing")
-        if root.is_symlink() or not root.is_dir():
-            raise ValueError("interrupted execution artifact uses a symlink")
-        manifest_name = {
-            "attempt_run": "execution_identity.json",
-            "execution_input_sources": "source_manifest.json",
-            "attempt_inputs": "manifest.json",
-        }[label]
-        payload = _read_json(root / manifest_name, label=f"{label} identity")
-        if payload.get("execution_id") != execution_id:
-            raise ValueError("interrupted execution artifact identity differs")
-        if label != "attempt_inputs" and payload.get("attempt_id") != attempt_id:
-            raise ValueError("interrupted execution artifact attempt differs")
-
-
-def _resolve_or_publish_claim(recovery_root: Path, *, intent: dict[str, object]) -> None:
-    if recovery_root.exists() or recovery_root.is_symlink():
-        with _opened_directory(recovery_root, label="recovery claim") as recovery_fd:
-            try:
-                payload = _read_json_at(
-                    recovery_fd,
-                    ".intent-claim.json",
-                    label="recovery claim",
-                )
-            except ValueError as error:
-                raise FileExistsError(
-                    "recovery claim target already exists"
-                ) from error
-            if payload != intent:
-                raise ValueError("interrupted archive target claim differs")
-        return
-    recovery_root.parent.mkdir(parents=True, exist_ok=True)
-    temporary = recovery_root.parent / f".{recovery_root.name}.{uuid4().hex}.tmp"
-    temporary.mkdir()
-    try:
-        _write_json_exclusive(temporary / ".intent-claim.json", intent)
-        _atomic_rename_no_replace(temporary, recovery_root)
-    except BaseException:
-        shutil.rmtree(temporary, ignore_errors=True)
-        raise
-
-
-@contextmanager
-def _open_recovery_archive(
-    recovery_root: Path, *, intent: Mapping[str, object]
-) -> Iterator[_RecoveryAnchors]:
-    with _opened_directory(
-        recovery_root.parent,
-        label="recovery parent safe directory",
-    ) as parent_fd:
         with _opened_directory_at(
-            parent_fd,
-            recovery_root.name,
-            label="recovery claim",
-        ) as recovery_fd:
-            recovery_identity = _directory_identity(recovery_fd)
-            _assert_directory_entry(
+            final_fd,
+            parent_name,
+            label=f"{label} source parent",
+        ) as parent_fd:
+            presence[label] = _reject_unsafe_optional_directory_at(
                 parent_fd,
-                recovery_root.name,
-                expected=recovery_identity,
-                label="recovery claim",
+                attempt_id,
+                label=f"{label} source directory",
             )
-            claim = _read_json_at(
-                recovery_fd,
-                ".intent-claim.json",
-                label="recovery claim",
-            )
-            if claim != intent:
-                raise ValueError("interrupted archive target claim differs")
-            try:
-                os.mkdir("archive", mode=0o700, dir_fd=recovery_fd)
-            except FileExistsError:
-                pass
-            with _opened_directory_at(
-                recovery_fd,
-                "archive",
-                label="archive safe directory",
-            ) as archive_fd:
-                anchors = _RecoveryAnchors(
-                    parent_fd=parent_fd,
-                    recovery_fd=recovery_fd,
-                    recovery_name=recovery_root.name,
-                    recovery_identity=recovery_identity,
-                    archive_fd=archive_fd,
-                    archive_identity=_directory_identity(archive_fd),
-                )
-                _assert_recovery_anchors(anchors)
-                yield anchors
+    return {key: presence[key] for key in sorted(presence)}
 
 
 def _move_source_directory_no_replace(
@@ -383,56 +364,24 @@ def _move_source_directory_no_replace(
         os.close(source_fd)
 
 
-def _assert_recovery_anchors(anchors: _RecoveryAnchors) -> None:
-    if _directory_identity(anchors.recovery_fd) != anchors.recovery_identity:
-        raise ValueError("recovery claim directory identity changed")
-    if _directory_identity(anchors.archive_fd) != anchors.archive_identity:
-        raise ValueError("archive safe directory identity changed")
-    _assert_directory_entry(
-        anchors.parent_fd,
-        anchors.recovery_name,
-        expected=anchors.recovery_identity,
-        label="recovery claim",
-    )
-    _assert_directory_entry(
-        anchors.recovery_fd,
-        "archive",
-        expected=anchors.archive_identity,
-        label="archive safe directory",
-    )
-
-
 @contextmanager
-def _open_source_anchors(
-    final_root: Path,
+def _open_source_anchors_at(
+    final_fd: int,
     *,
+    final_identity: tuple[int, int],
     attempt_id: str,
     presence: Mapping[str, bool],
 ) -> Iterator[dict[str, _SourceAnchor]]:
     with ExitStack() as stack:
-        processed_fd = stack.enter_context(
-            _opened_directory(
-                final_root.parent,
-                label="processed source anchor",
-            )
-        )
-        final_fd = stack.enter_context(
-            _opened_directory_at(
-                processed_fd,
-                final_root.name,
-                label="final-test source parent",
-            )
-        )
-        final_identity = _directory_identity(final_fd)
-        anchors: dict[str, _SourceAnchor] = {
-            "execution_input_sources": _SourceAnchor(
-                anchor_fd=processed_fd,
+        anchors: dict[str, _SourceAnchor] = {}
+        if presence["execution_input_sources"]:
+            anchors["execution_input_sources"] = _SourceAnchor(
+                anchor_fd=None,
                 parent_fd=final_fd,
-                parent_name=final_root.name,
+                parent_name=None,
                 parent_identity=final_identity,
                 source_name="execution_input_sources",
             )
-        }
         for label, parent_name, source_name in (
             ("attempt_run", "attempt_runs", attempt_id),
             ("attempt_inputs", "attempt_inputs", attempt_id),
@@ -461,12 +410,78 @@ def _assert_source_anchors(anchors: Mapping[str, _SourceAnchor]) -> None:
     for anchor in anchors.values():
         if _directory_identity(anchor.parent_fd) != anchor.parent_identity:
             raise ValueError("source parent directory identity changed")
-        _assert_directory_entry(
-            anchor.anchor_fd,
-            anchor.parent_name,
-            expected=anchor.parent_identity,
-            label="source parent directory",
-        )
+        if anchor.anchor_fd is not None and anchor.parent_name is not None:
+            _assert_directory_entry(
+                anchor.anchor_fd,
+                anchor.parent_name,
+                expected=anchor.parent_identity,
+                label="source parent directory",
+            )
+
+
+def _load_and_verify_bound_artifacts_at(
+    anchors: Mapping[str, _SourceAnchor],
+    *,
+    archive_fd: int | None,
+    presence: Mapping[str, bool],
+    attempt_id: str,
+    allow_moved: bool,
+) -> dict[str, object]:
+    payloads: dict[str, dict[str, object]] = {}
+    for label in (
+        "attempt_run",
+        "execution_input_sources",
+        "attempt_inputs",
+    ):
+        if not presence[label]:
+            continue
+        anchor = anchors[label]
+        with ExitStack() as stack:
+            try:
+                artifact_fd = stack.enter_context(
+                    _opened_directory_at(
+                        anchor.parent_fd,
+                        anchor.source_name,
+                        label=f"{label} source directory",
+                    )
+                )
+            except FileNotFoundError as error:
+                if not allow_moved or archive_fd is None:
+                    raise ValueError(
+                        "interrupted execution artifact is missing"
+                    ) from error
+                try:
+                    artifact_fd = stack.enter_context(
+                        _opened_directory_at(
+                            archive_fd,
+                            label,
+                            label=f"archived {label} directory",
+                        )
+                    )
+                except FileNotFoundError as archive_error:
+                    raise ValueError(
+                        "interrupted execution artifact is missing"
+                    ) from archive_error
+            manifest_name = {
+                "attempt_run": "execution_identity.json",
+                "execution_input_sources": "source_manifest.json",
+                "attempt_inputs": "manifest.json",
+            }[label]
+            payloads[label] = _read_json_at(
+                artifact_fd,
+                manifest_name,
+                label=f"{label} identity",
+            )
+    identity = payloads["attempt_run"]
+    if set(identity) != _IDENTITY_KEYS:
+        raise ValueError("partial final-test execution identity schema differs")
+    execution_id = identity.get("execution_id")
+    for label, payload in payloads.items():
+        if payload.get("execution_id") != execution_id:
+            raise ValueError("interrupted execution artifact identity differs")
+        if label != "attempt_inputs" and payload.get("attempt_id") != attempt_id:
+            raise ValueError("interrupted execution artifact attempt differs")
+    return identity
 
 
 def _rollback_moved_artifacts(
@@ -549,33 +564,3 @@ def _write_or_verify_archive_manifest_at(
         if existing_bytes != expected_bytes:
             raise ValueError("interrupted archive manifest identity differs")
     return hashlib.sha256(existing_bytes).hexdigest()
-
-
-def _load_execution_identity(root: Path) -> dict[str, object]:
-    value = _read_json(root / "execution_identity.json", label="execution identity")
-    if set(value) != _IDENTITY_KEYS:
-        raise ValueError("partial final-test execution identity schema differs")
-    return value
-
-
-def _read_json(path: Path, *, label: str) -> dict[str, object]:
-    if path.is_symlink():
-        raise ValueError(f"{label} uses a symlink")
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
-        raise ValueError(f"{label} is missing or invalid") from error
-    if not isinstance(value, dict):
-        raise ValueError(f"{label} is missing or invalid")
-    return value
-
-
-def _write_json_exclusive(path: Path, payload: Mapping[str, object]) -> None:
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, indent=2, sort_keys=True)
-            stream.write("\n")
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise

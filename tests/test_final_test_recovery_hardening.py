@@ -151,7 +151,7 @@ def test_recovery_rejects_published_claim_archive_symlink_before_any_move(
         with_all_sources=True,
     )
     recovery_root = final_root / str(intent["recovery_root"])
-    recovery_module._resolve_or_publish_claim(recovery_root, intent=intent)
+    _publish_claim_fixture(recovery_root, intent)
     external = tmp_path / "external-archive"
     external.mkdir()
     (external / "sentinel.bin").write_bytes(b"external must remain unchanged")
@@ -177,6 +177,95 @@ def test_recovery_rejects_published_claim_archive_symlink_before_any_move(
     assert _tree_bytes(external) == external_before
 
 
+def test_recovery_rejects_interrupted_runs_replaced_after_pipeline_safety_check(
+    prepared_attempt: PreparedAttempt,
+    tmp_path: Path,
+) -> None:
+    preflight, snapshot, final_root, attempt_root, _intent = _claimed_interruption(
+        prepared_attempt,
+        with_all_sources=True,
+    )
+    pipeline_module._assert_safe_roots(prepared_attempt.data_root, final_root)
+    interrupted_runs = final_root / "interrupted_runs"
+    interrupted_runs.mkdir()
+    displaced = tmp_path / "original-interrupted-runs"
+    interrupted_runs.rename(displaced)
+    external = tmp_path / "external-interrupted-runs"
+    external.mkdir()
+    interrupted_runs.symlink_to(external, target_is_directory=True)
+    source_roots = {
+        "attempt_run": attempt_root,
+        "execution_input_sources": final_root / "execution_input_sources",
+        "attempt_inputs": final_root / "attempt_inputs" / prepared_attempt.attempt_id,
+    }
+    source_before = {label: _tree_bytes(root) for label, root in source_roots.items()}
+
+    with pytest.raises(ValueError, match="interrupted_runs.*symlink|safe directory"):
+        recovery_module.recover_interrupted_execution(
+            final_root,
+            preflight=preflight,
+            coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+        )
+
+    assert _tree_bytes(external) == {}
+    assert _tree_bytes(displaced) == {}
+    assert {
+        label: _tree_bytes(root) for label, root in source_roots.items()
+    } == source_before
+
+
+def test_recovery_never_follows_interrupted_runs_replaced_after_anchor_check(
+    prepared_attempt: PreparedAttempt,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight, snapshot, final_root, attempt_root, _intent = _claimed_interruption(
+        prepared_attempt,
+        with_all_sources=True,
+    )
+    interrupted_runs = final_root / "interrupted_runs"
+    interrupted_runs.mkdir()
+    displaced = tmp_path / "checked-interrupted-runs"
+    external = tmp_path / "window-external-interrupted-runs"
+    external.mkdir()
+    original_pending = recovery_module.pending_execution_recovery
+    swapped = False
+
+    def replace_after_initial_anchor_check(*args: object, **kwargs: object):
+        nonlocal swapped
+        result = original_pending(*args, **kwargs)
+        interrupted_runs.rename(displaced)
+        interrupted_runs.symlink_to(external, target_is_directory=True)
+        swapped = True
+        return result
+
+    monkeypatch.setattr(
+        recovery_module,
+        "pending_execution_recovery",
+        replace_after_initial_anchor_check,
+    )
+    source_roots = {
+        "attempt_run": attempt_root,
+        "execution_input_sources": final_root / "execution_input_sources",
+        "attempt_inputs": final_root / "attempt_inputs" / prepared_attempt.attempt_id,
+    }
+    source_before = {label: _tree_bytes(root) for label, root in source_roots.items()}
+
+    with pytest.raises(ValueError, match="interrupted_runs.*symlink|safe directory"):
+        recovery_module.recover_interrupted_execution(
+            final_root,
+            preflight=preflight,
+            coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+        )
+
+    assert swapped
+    assert _tree_bytes(external) == {}
+    assert _tree_bytes(displaced) == {}
+    assert {
+        label: _tree_bytes(root) for label, root in source_roots.items()
+    } == source_before
+
+
 def test_recovery_rename_window_never_follows_replaced_archive_symlink(
     prepared_attempt: PreparedAttempt,
     tmp_path: Path,
@@ -187,7 +276,7 @@ def test_recovery_rename_window_never_follows_replaced_archive_symlink(
         with_all_sources=True,
     )
     recovery_root = final_root / str(intent["recovery_root"])
-    recovery_module._resolve_or_publish_claim(recovery_root, intent=intent)
+    _publish_claim_fixture(recovery_root, intent)
     archive = recovery_root / "archive"
     archive.mkdir()
     displaced = tmp_path / "archive-moved-outside-final-test"
@@ -542,3 +631,14 @@ def _tree_bytes(root: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*"))
         if path.is_file()
     }
+
+
+def _publish_claim_fixture(
+    recovery_root: Path,
+    intent: dict[str, object],
+) -> None:
+    recovery_root.mkdir(parents=True)
+    (recovery_root / ".intent-claim.json").write_text(
+        json.dumps(intent, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
