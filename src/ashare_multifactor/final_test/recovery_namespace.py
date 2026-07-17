@@ -206,6 +206,64 @@ def open_recovery_archive_at(
                     yield anchors
 
 
+@contextmanager
+def open_existing_recovery_archive_at(
+    final_fd: int,
+    *,
+    final_identity: tuple[int, int],
+    attempt_id: str,
+    intent: Mapping[str, object],
+) -> Iterator[RecoveryAnchors]:
+    """Open an existing complete recovery without creating any path component."""
+    recovery_name = validate_publication_id(str(intent.get("recovery_id", "")))
+    with opened_directory_at(
+        final_fd,
+        "interrupted_runs",
+        label="interrupted_runs safe directory",
+    ) as interrupted_fd:
+        interrupted_identity = directory_identity(interrupted_fd)
+        with opened_directory_at(
+            interrupted_fd,
+            attempt_id,
+            label="interrupted attempt directory",
+        ) as attempt_fd:
+            attempt_identity = directory_identity(attempt_fd)
+            with opened_directory_at(
+                attempt_fd,
+                recovery_name,
+                label="recovery claim",
+            ) as recovery_fd:
+                recovery_identity = directory_identity(recovery_fd)
+                claim = read_json_at(
+                    recovery_fd,
+                    ".intent-claim.json",
+                    label="recovery claim",
+                )
+                if claim != intent:
+                    raise ValueError("interrupted archive target claim differs")
+                with opened_directory_at(
+                    recovery_fd,
+                    "archive",
+                    label="archive safe directory",
+                ) as archive_fd:
+                    anchors = RecoveryAnchors(
+                        final_fd=final_fd,
+                        final_identity=final_identity,
+                        interrupted_fd=interrupted_fd,
+                        interrupted_identity=interrupted_identity,
+                        attempt_fd=attempt_fd,
+                        attempt_name=attempt_id,
+                        attempt_identity=attempt_identity,
+                        recovery_fd=recovery_fd,
+                        recovery_name=recovery_name,
+                        recovery_identity=recovery_identity,
+                        archive_fd=archive_fd,
+                        archive_identity=directory_identity(archive_fd),
+                    )
+                    assert_recovery_anchors(anchors)
+                    yield anchors
+
+
 def _resolve_or_publish_claim_at(
     attempt_fd: int,
     recovery_name: str,

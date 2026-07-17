@@ -12,6 +12,7 @@ from typing import Iterator, Mapping
 from ashare_multifactor.final_test.registry import (
     begin_execution_recovery,
     complete_execution_recovery,
+    completed_execution_recovery_intents,
     pending_execution_recovery,
     validate_publication_id,
 )
@@ -31,6 +32,7 @@ from ashare_multifactor.final_test.recovery_namespace import (
     assert_recovery_anchors as _assert_recovery_anchors,
     nested_directory_exists_at as _nested_directory_exists_at,
     opened_final_root as _opened_final_root,
+    open_existing_recovery_archive_at as _open_existing_recovery_archive_at,
     open_recovery_archive_at as _open_recovery_archive_at,
     reject_unsafe_optional_directory_at as _reject_unsafe_optional_directory_at,
 )
@@ -85,7 +87,17 @@ def recover_interrupted_execution(
             "interrupted_runs",
             label="interrupted_runs safe directory",
         )
-        intent = pending_execution_recovery(registry_root, attempt_id)
+        verified_completed = _verified_completed_archive_hashes_at(
+            final_fd,
+            final_identity=final_identity,
+            registry_root=registry_root,
+            attempt_id=attempt_id,
+        )
+        intent = pending_execution_recovery(
+            registry_root,
+            attempt_id,
+            verified_completed_archive_manifest_sha256=verified_completed,
+        )
         presence = (
             dict(intent["artifact_presence"])
             if intent is not None
@@ -124,6 +136,7 @@ def recover_interrupted_execution(
                     execution_id=str(identity["execution_id"]),
                     identities=identities,
                     artifact_presence=presence,
+                    verified_completed_archive_manifest_sha256=verified_completed,
                 )
             with _open_recovery_archive_at(
                 final_fd,
@@ -200,8 +213,9 @@ def recover_interrupted_execution(
                 complete_execution_recovery(
                     registry_root,
                     intent=intent,
-                    archive_manifest_sha256=archive_manifest_sha256,
-                    archive_manifest_bytes=archive_manifest_bytes,
+                    verified_archive_manifest_sha256=archive_manifest_sha256,
+                    verified_archive_manifest_bytes=archive_manifest_bytes,
+                    verified_completed_archive_manifest_sha256=verified_completed,
                 )
     return final_root / str(intent["archived_path"])
 
@@ -209,7 +223,18 @@ def recover_interrupted_execution(
 def has_recoverable_execution_archive(final_root: Path, *, attempt_id: str) -> bool:
     try:
         with _opened_final_root(final_root) as (final_fd, _final_identity):
-            intent = pending_execution_recovery(final_root / "attempts", attempt_id)
+            registry_root = final_root / "attempts"
+            verified_completed = _verified_completed_archive_hashes_at(
+                final_fd,
+                final_identity=_final_identity,
+                registry_root=registry_root,
+                attempt_id=attempt_id,
+            )
+            intent = pending_execution_recovery(
+                registry_root,
+                attempt_id,
+                verified_completed_archive_manifest_sha256=verified_completed,
+            )
             if intent is None:
                 return False
             if _nested_directory_exists_at(
@@ -259,6 +284,32 @@ def has_recoverable_execution_archive(final_root: Path, *, attempt_id: str) -> b
                                 return True
     except (FileNotFoundError, ValueError):
         return False
+
+
+def _verified_completed_archive_hashes_at(
+    final_fd: int,
+    *,
+    final_identity: tuple[int, int],
+    registry_root: Path,
+    attempt_id: str,
+) -> dict[str, str]:
+    verified: dict[str, str] = {}
+    for intent in completed_execution_recovery_intents(registry_root, attempt_id):
+        recovery_id = validate_publication_id(str(intent.get("recovery_id", "")))
+        with _open_existing_recovery_archive_at(
+            final_fd,
+            final_identity=final_identity,
+            attempt_id=attempt_id,
+            intent=intent,
+        ) as recovery:
+            manifest_bytes = _read_bytes_at(
+                recovery.recovery_fd,
+                "archive_manifest.json",
+                label="completed execution recovery archive manifest",
+            )
+            _assert_recovery_anchors(recovery)
+            verified[recovery_id] = hashlib.sha256(manifest_bytes).hexdigest()
+    return verified
 
 
 def _expected_execution_identity(

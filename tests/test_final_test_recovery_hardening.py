@@ -266,6 +266,69 @@ def test_recovery_never_follows_interrupted_runs_replaced_after_anchor_check(
     } == source_before
 
 
+def test_existing_complete_reentry_rejects_external_manifest_after_anchor_check(
+    prepared_attempt: PreparedAttempt,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight, snapshot, final_root, _attempt_root, intent = _claimed_interruption(
+        prepared_attempt,
+        with_all_sources=True,
+    )
+    archive = recovery_module.recover_interrupted_execution(
+        final_root,
+        preflight=preflight,
+        coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+    )
+    assert archive is not None
+    recovery_root = archive.parent
+    manifest_bytes = (recovery_root / "archive_manifest.json").read_bytes()
+    audit_root = final_root / "attempts"
+    audit_before = _tree_bytes(audit_root)
+    interrupted_runs = final_root / "interrupted_runs"
+    displaced = tmp_path / "completed-interrupted-runs"
+    external = tmp_path / "external-completed-interrupted-runs"
+    external_recovery = external / prepared_attempt.attempt_id / str(intent["recovery_id"])
+    external_recovery.mkdir(parents=True)
+    (external_recovery / "archive_manifest.json").write_bytes(manifest_bytes)
+    external_before = _tree_bytes(external)
+    displaced_before = _tree_bytes(interrupted_runs)
+    original_check = recovery_module._reject_unsafe_optional_directory_at
+    swapped = False
+
+    def replace_after_initial_anchor_check(
+        parent_fd: int,
+        name: str,
+        *,
+        label: str,
+    ) -> bool:
+        nonlocal swapped
+        result = original_check(parent_fd, name, label=label)
+        if not swapped and name == "interrupted_runs":
+            interrupted_runs.rename(displaced)
+            interrupted_runs.symlink_to(external, target_is_directory=True)
+            swapped = True
+        return result
+
+    monkeypatch.setattr(
+        recovery_module,
+        "_reject_unsafe_optional_directory_at",
+        replace_after_initial_anchor_check,
+    )
+
+    with pytest.raises(ValueError, match="interrupted_runs|recovery.*safe|identity"):
+        recovery_module.recover_interrupted_execution(
+            final_root,
+            preflight=preflight,
+            coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+        )
+
+    assert swapped
+    assert _tree_bytes(external) == external_before
+    assert _tree_bytes(displaced) == displaced_before
+    assert _tree_bytes(audit_root) == audit_before
+
+
 def test_recovery_rename_window_never_follows_replaced_archive_symlink(
     prepared_attempt: PreparedAttempt,
     tmp_path: Path,
@@ -364,7 +427,8 @@ def test_existing_recovery_complete_requires_exact_schema_and_hashes(
     complete = complete_execution_recovery(
         registry,
         intent=intent,
-        archive_manifest_sha256=archive_sha256,
+        verified_archive_manifest_sha256=archive_sha256,
+        verified_archive_manifest_bytes=archive_manifest.read_bytes(),
     )
     path = registry / (
         f"{prepared_attempt.attempt_id}.recovery.{intent['recovery_id']}.complete.json"
@@ -381,12 +445,16 @@ def test_existing_recovery_complete_requires_exact_schema_and_hashes(
     else:
         archive_manifest.write_text('{"status":"tampered"}\n', encoding="utf-8")
     path.write_text(json.dumps(changed), encoding="utf-8")
+    verified_sha256 = (
+        sha256_file(archive_manifest) if mutation == "archive_bytes" else archive_sha256
+    )
 
     with pytest.raises(ValueError, match="completed execution recovery"):
         complete_execution_recovery(
             registry,
             intent=intent,
-            archive_manifest_sha256=archive_sha256,
+            verified_archive_manifest_sha256=verified_sha256,
+            verified_archive_manifest_bytes=archive_manifest.read_bytes(),
         )
 
 
