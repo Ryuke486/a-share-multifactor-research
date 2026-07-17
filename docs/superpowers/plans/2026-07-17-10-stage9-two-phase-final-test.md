@@ -137,7 +137,7 @@ git commit -m "feat(final-test): add append-only attempt states"
 - Consumes: `FinalTestAuthorization`、已验证`ResearchConfig`和现有`build_final_test_daily_panel`接口。
 - Produces: `FinalTestPreparation`、`prepare_final_test`准备接口、`verify_preparation`复核接口。
 
-- [ ] **Step 1: 写prepare先登记、后扫描且不进入研究链路的失败测试**
+- [x] **Step 1: 写prepare先登记、后扫描且不进入研究链路的失败测试**
 
 ```python
 def test_prepare_registers_before_scan_and_stops_before_signals(
@@ -166,13 +166,13 @@ def test_prepare_registers_before_scan_and_stops_before_signals(
 
 增加真实Polars夹具反例：证券升序去重、`4/8/92`代码拒绝、日期超出2022–2025拒绝、数据manifest漂移拒绝、prepare目录预存在拒绝。
 
-- [ ] **Step 2: 运行RED测试**
+- [x] **Step 2: 运行RED测试**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_preparation.py`
 
 Expected: FAIL with `ModuleNotFoundError`。
 
-- [ ] **Step 3: 实现准备对象和确定性证券摘要**
+- [x] **Step 3: 实现准备对象和确定性证券摘要**
 
 ```python
 @dataclass(frozen=True)
@@ -195,7 +195,7 @@ def _symbols_digest(symbols: list[str]) -> str:
 
 准备目录固定为`processed/final_test/preparations/<attempt_id>`。manifest字段必须与规格一致，文件通过临时目录和`os.replace`一次发布；不导入signals、backtest、metrics或report模块。
 
-- [ ] **Step 4: 实现prepare恢复限制**
+- [x] **Step 4: 实现prepare恢复限制**
 
 ```python
 def verify_preparation(
@@ -209,13 +209,13 @@ def verify_preparation(
 
 若状态已是`awaiting_official_evidence`，只允许验证并返回同一准备清单；若状态为`preparing`，只允许沿现有data claim恢复，禁止重新发现一套不同输入。
 
-- [ ] **Step 5: 运行GREEN和数据模块回归**
+- [x] **Step 5: 运行GREEN和数据模块回归**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest -q tests/test_final_test_preparation.py tests/test_final_test_data.py`
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交并进入任务审查**
+- [x] **Step 6: 提交并进入任务审查**
 
 ```bash
 git add src/ashare_multifactor/final_test/preparation.py tests/test_final_test_preparation.py
