@@ -31,7 +31,7 @@ from ashare_multifactor.final_test.preparation import (
     verify_preparation,
 )
 from ashare_multifactor.final_test.registry import (
-    resolve_attempt_state,
+    resolve_attempt_state_readonly,
     validate_publication_id,
 )
 
@@ -62,7 +62,7 @@ def load_registered_authorization(
     record_path = registry_root / f"{attempt_id}.json"
     if record_path.is_symlink():
         raise ValueError("final-test attempt registration uses a symlink")
-    record = resolve_attempt_state(registry_root, attempt_id)
+    record = resolve_attempt_state_readonly(registry_root, attempt_id)
     _verify_registration(record, attempt_id)
 
     current_commit = _git(code_root, "rev-parse", "HEAD").strip()
@@ -156,24 +156,21 @@ def preflight_resume(
         attempt_id=attempt_id,
         authorization=authorization,
     )
-    symbols = (
-        pl.read_parquet(preparation.symbol_scope_path)
-        .get_column("symbol")
-        .cast(pl.String)
-        .to_list()
-    )
+    symbols = _load_bound_symbol_scope(preparation)
     security, corporate = validate_final_execution_coverages(
         symbols=symbols,
         security_event_coverage_path=security_event_coverage_path,
         corporate_action_coverage_root=corporate_action_coverage_root,
     )
-    security_manifest = _coverage_manifest_path(security, "security-event coverage")
-    corporate_manifest = _coverage_manifest_path(corporate, "corporate-action coverage")
     return ResumePreflight(
         authorization=authorization,
         preparation=preparation,
-        security_event_coverage_sha256=sha256_file(security_manifest),
-        corporate_action_coverage_sha256=sha256_file(corporate_manifest),
+        security_event_coverage_sha256=_coverage_manifest_sha256(
+            security, "security-event coverage"
+        ),
+        corporate_action_coverage_sha256=_coverage_manifest_sha256(
+            corporate, "corporate-action coverage"
+        ),
     )
 
 
@@ -279,8 +276,26 @@ def _verify_data_paths(data_root: Path, final_root: Path, registry_root: Path) -
         raise ValueError("final-test data path escapes processed root")
 
 
-def _coverage_manifest_path(coverage: dict[str, object], label: str) -> Path:
-    path = coverage.get("coverage_manifest_path")
-    if not isinstance(path, Path) or not path.is_file() or path.is_symlink():
-        raise ValueError(f"verified {label} manifest is invalid")
-    return path
+def _load_bound_symbol_scope(preparation: FinalTestPreparation) -> list[str]:
+    try:
+        frame = pl.read_parquet(preparation.symbol_scope_path)
+        if frame.columns != ["symbol"] or frame.get_column("symbol").null_count():
+            raise ValueError("invalid final-test preparation symbol scope")
+        symbols = frame.get_column("symbol").cast(pl.String).to_list()
+    except pl.exceptions.PolarsError as error:
+        raise ValueError("invalid final-test preparation symbol scope") from error
+    symbols_sha256 = hashlib.sha256(("\n".join(symbols) + "\n").encode()).hexdigest()
+    if (
+        len(symbols) != preparation.symbol_count
+        or symbols != sorted(set(symbols))
+        or symbols_sha256 != preparation.symbols_sha256
+    ):
+        raise ValueError("final-test preparation symbol scope identity changed")
+    return symbols
+
+
+def _coverage_manifest_sha256(coverage: dict[str, object], label: str) -> str:
+    value = coverage.get("coverage_manifest_sha256")
+    if not isinstance(value, str) or not _valid_sha256(value):
+        raise ValueError(f"verified {label} identity is invalid")
+    return value

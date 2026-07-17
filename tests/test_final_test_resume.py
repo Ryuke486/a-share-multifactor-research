@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+import subprocess
 from types import SimpleNamespace
 
 import polars as pl
@@ -20,10 +21,12 @@ from test_final_test_gate import (
 )
 
 from ashare_multifactor.audit.records import file_record, sha256_file
+from ashare_multifactor.final_test import execution_sources as execution_sources_module
+from ashare_multifactor.final_test import gate as gate_module
+from ashare_multifactor.final_test import resume as resume_module
 from ashare_multifactor.final_test.preparation import _publish_preparation
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
-    resolve_attempt_state,
 )
 from ashare_multifactor.final_test.resume import (
     load_registered_authorization,
@@ -143,6 +146,50 @@ def test_resume_reconstructs_same_authorization_without_consuming_token_again(
     assert prepared_attempt.consumption_ledger.read_bytes() == before
 
 
+def test_resume_uses_git_with_optional_locks_disabled(
+    prepared_attempt: PreparedAttempt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_run = subprocess.run
+    git_environments: list[dict[str, str] | None] = []
+
+    def capture_run(*args: object, **kwargs: object):
+        command = args[0] if args else kwargs.get("args")
+        if isinstance(command, tuple) and command and command[0] == "git":
+            environment = kwargs.get("env")
+            git_environments.append(environment if isinstance(environment, dict) else None)
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(gate_module.subprocess, "run", capture_run)
+
+    load_registered_authorization(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        attempt_id=prepared_attempt.attempt_id,
+        approval_key=prepared_attempt.approval_key,
+    )
+
+    assert git_environments
+    assert all(
+        environment is not None and environment.get("GIT_OPTIONAL_LOCKS") == "0"
+        for environment in git_environments
+    )
+
+
+def test_resume_rejects_missing_attempt_lock_without_creating_files(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    registry = prepared_attempt.data_root / "processed/final_test/attempts"
+    lock = registry / f"{prepared_attempt.attempt_id}.lock"
+    lock.unlink()
+    before = _registry_snapshot(prepared_attempt)
+
+    with pytest.raises(ValueError, match="lock"):
+        _preflight(prepared_attempt)
+
+    assert _registry_snapshot(prepared_attempt) == before
+    assert not lock.exists()
+
+
 @pytest.mark.parametrize(
     "changed",
     ["registration", "token", "ledger", "stage8_manifest", "lineage", "seal", "git"],
@@ -187,6 +234,27 @@ def test_resume_rejects_registered_authorization_identity_drift(
         )
 
 
+def test_resume_rejects_current_stage8_run_id_drift(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    stage8 = prepared_attempt.data_root / "processed/robustness"
+    current_path = stage8 / "CURRENT.json"
+    current = json.loads(current_path.read_text(encoding="utf-8"))
+    original = stage8 / "releases" / str(current["run_id"])
+    replacement_id = "replacement-stage8-run"
+    shutil.copytree(original, stage8 / "releases" / replacement_id)
+    current["run_id"] = replacement_id
+    current_path.write_text(json.dumps(current), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="Stage-8 identity"):
+        load_registered_authorization(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            attempt_id=prepared_attempt.attempt_id,
+            approval_key=prepared_attempt.approval_key,
+        )
+
+
 def test_preflight_verifies_preparation_before_reading_coverages(
     prepared_attempt: PreparedAttempt,
 ) -> None:
@@ -204,6 +272,22 @@ def test_preflight_rejects_symbol_scope_drift(
     prepared_attempt: PreparedAttempt,
 ) -> None:
     pl.DataFrame({"symbol": ["000001"]}).write_parquet(prepared_attempt.symbol_scope)
+
+    with pytest.raises(ValueError, match="symbol scope"):
+        _preflight(prepared_attempt)
+
+
+def test_preflight_rejects_symbol_scope_reordered_after_preparation_verification(
+    prepared_attempt: PreparedAttempt, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_verify = resume_module.verify_preparation
+
+    def reorder_after_verify(*args: object, **kwargs: object):
+        preparation = original_verify(*args, **kwargs)
+        pl.DataFrame({"symbol": ["600000", "000001"]}).write_parquet(preparation.symbol_scope_path)
+        return preparation
+
+    monkeypatch.setattr(resume_module, "verify_preparation", reorder_after_verify)
 
     with pytest.raises(ValueError, match="symbol scope"):
         _preflight(prepared_attempt)
@@ -283,6 +367,32 @@ def test_preflight_rejects_coverage_evidence_hash_drift_without_state_change(
     assert _attempt_state(prepared_attempt) == "awaiting_official_evidence"
 
 
+@pytest.mark.parametrize("coverage", ["security", "corporate"])
+def test_preflight_rejects_manifest_change_during_coverage_validation(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    coverage: str,
+) -> None:
+    attribute = (
+        "validate_security_event_coverage"
+        if coverage == "security"
+        else "validate_corporate_action_coverage"
+    )
+    original_validate = getattr(execution_sources_module, attribute)
+
+    def mutate_after_validate(*args: object, **kwargs: object):
+        verified = original_validate(*args, **kwargs)
+        manifest = verified["coverage_manifest_path"]
+        assert isinstance(manifest, Path)
+        manifest.write_text('{"changed":true}\n', encoding="utf-8")
+        return verified
+
+    monkeypatch.setattr(execution_sources_module, attribute, mutate_after_validate)
+
+    with pytest.raises(ValueError, match="changed during validation"):
+        _preflight(prepared_attempt)
+
+
 def test_preflight_returns_verified_coverage_manifest_hashes(
     prepared_attempt: PreparedAttempt,
 ) -> None:
@@ -318,7 +428,7 @@ def _registry_snapshot(attempt: PreparedAttempt) -> dict[str, bytes]:
 
 def _attempt_state(attempt: PreparedAttempt) -> str:
     registry = attempt.data_root / "processed/final_test/attempts"
-    return str(resolve_attempt_state(registry, attempt.attempt_id)["state"])
+    return str(resume_module.resolve_attempt_state_readonly(registry, attempt.attempt_id)["state"])
 
 
 def _write_security_coverage(root: Path, *, symbols: list[str]) -> Path:

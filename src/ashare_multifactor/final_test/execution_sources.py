@@ -37,17 +37,71 @@ def validate_final_execution_coverages(
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    """Validate both exact official coverages without publishing any state."""
+    """Validate and bind both official coverages to the bytes actually checked."""
+    security_path, security_bytes = _coverage_manifest_snapshot(
+        security_event_coverage_path,
+        label="security-event",
+    )
+    corporate_path, corporate_bytes = _coverage_manifest_snapshot(
+        corporate_action_coverage_root / "coverage.json",
+        label="corporate-action",
+    )
+    security = validate_security_event_coverage(
+        security_event_coverage_path,
+        symbols=symbols,
+    )
+    corporate = validate_corporate_action_coverage(
+        corporate_action_coverage_root,
+        symbols=symbols,
+    )
     return (
-        validate_security_event_coverage(
-            security_event_coverage_path,
-            symbols=symbols,
+        _bind_coverage_manifest(
+            security,
+            path=security_path,
+            validated_bytes=security_bytes,
+            label="security-event",
         ),
-        validate_corporate_action_coverage(
-            corporate_action_coverage_root,
-            symbols=symbols,
+        _bind_coverage_manifest(
+            corporate,
+            path=corporate_path,
+            validated_bytes=corporate_bytes,
+            label="corporate-action",
         ),
     )
+
+
+def _coverage_manifest_snapshot(path: Path, *, label: str) -> tuple[Path, bytes]:
+    absolute = (path if path.is_absolute() else Path.cwd() / path).absolute()
+    try:
+        resolved = absolute.resolve(strict=True)
+        return resolved, resolved.read_bytes()
+    except OSError as error:
+        raise ValueError(f"invalid official {label} coverage") from error
+
+
+def _bind_coverage_manifest(
+    coverage: dict[str, object],
+    *,
+    path: Path,
+    validated_bytes: bytes,
+    label: str,
+) -> dict[str, object]:
+    verified_path = coverage.get("coverage_manifest_path")
+    if not isinstance(verified_path, Path) or verified_path != path:
+        raise ValueError(f"official {label} coverage manifest identity changed")
+    try:
+        current_bytes = verified_path.read_bytes()
+    except OSError as error:
+        raise ValueError(
+            f"official {label} coverage changed during validation"
+        ) from error
+    if current_bytes != validated_bytes:
+        raise ValueError(f"official {label} coverage changed during validation")
+    bound = dict(coverage)
+    bound["coverage_manifest_sha256"] = hashlib.sha256(
+        validated_bytes
+    ).hexdigest()
+    return bound
 
 
 def build_final_execution_inputs(

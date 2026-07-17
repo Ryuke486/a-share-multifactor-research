@@ -6,6 +6,7 @@ import hashlib
 import hmac
 from importlib.metadata import version
 import json
+import os
 from pathlib import Path
 import platform
 import subprocess
@@ -251,6 +252,7 @@ def _verify_frozen_contract(
         ("git", "merge-base", "--is-ancestor", sealed_commit, "HEAD"),
         cwd=code_root,
         capture_output=True,
+        env=_git_readonly_env(),
     ).returncode:
         raise ValueError("current code does not descend from the sealed commit")
 
@@ -357,8 +359,13 @@ def _git(root: Path, *args: str) -> str:
         cwd=root,
         check=True,
         capture_output=True,
+        env=_git_readonly_env(),
         text=True,
     ).stdout
+
+
+def _git_readonly_env() -> dict[str, str]:
+    return {**os.environ, "GIT_OPTIONAL_LOCKS": "0"}
 
 
 def _valid_sha256(value: str) -> bool:

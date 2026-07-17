@@ -43,6 +43,41 @@ def _awaiting_official_evidence(registry: Path) -> None:
     )
 
 
+def test_readonly_attempt_state_rejects_missing_lock_without_creating_files(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    before = {path.name: path.read_bytes() for path in registry.iterdir()}
+
+    with pytest.raises(ValueError, match="lock"):
+        registry_module.resolve_attempt_state_readonly(registry, "attempt-001")
+
+    assert {path.name: path.read_bytes() for path in registry.iterdir()} == before
+
+
+def test_readonly_attempt_state_opens_existing_lock_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    _awaiting_official_evidence(registry)
+    original_open = os.open
+    lock_flags: list[int] = []
+
+    def capture_open(path: Path, flags: int, *args: object) -> int:
+        if Path(path).name == "attempt-001.lock":
+            lock_flags.append(flags)
+        return original_open(path, flags, *args)
+
+    monkeypatch.setattr(registry_module.os, "open", capture_open)
+
+    state = registry_module.resolve_attempt_state_readonly(registry, "attempt-001")
+
+    assert state["state"] == "awaiting_official_evidence"
+    assert lock_flags == [os.O_RDONLY]
+
+
 def test_attempt_state_events_are_append_only_and_resume_claim_is_exclusive(
     tmp_path: Path,
 ) -> None:

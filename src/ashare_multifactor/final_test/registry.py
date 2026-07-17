@@ -75,6 +75,23 @@ def _attempt_transition_lock(registry_root: Path, attempt_id: str):
         yield
 
 
+@contextmanager
+def _attempt_read_lock(registry_root: Path, attempt_id: str):
+    """Share an existing attempt lock without creating any filesystem entry."""
+    try:
+        descriptor = os.open(registry_root / f"{attempt_id}.lock", os.O_RDONLY)
+    except FileNotFoundError as error:
+        raise ValueError("final-test attempt lock is missing") from error
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_SH)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
+
 def append_attempt_state(
     registry_root: Path,
     *,
@@ -114,6 +131,15 @@ def resolve_attempt_state(registry_root: Path, attempt_id: str) -> dict[str, Any
     """Rebuild an attempt state from immutable registration, events, and outcome."""
     validate_publication_id(attempt_id)
     with _attempt_lock(registry_root, attempt_id, fcntl.LOCK_SH):
+        return _resolve_attempt_state_unlocked(registry_root, attempt_id)
+
+
+def resolve_attempt_state_readonly(
+    registry_root: Path, attempt_id: str
+) -> dict[str, Any]:
+    """Resolve an initialized attempt without creating its directory or lock."""
+    validate_publication_id(attempt_id)
+    with _attempt_read_lock(registry_root, attempt_id):
         return _resolve_attempt_state_unlocked(registry_root, attempt_id)
 
 
