@@ -371,6 +371,7 @@ def _execute_authorized_final_test(
         preflight,
         security_event_coverage_path=security_event_coverage_path,
         corporate_action_coverage_root=corporate_action_coverage_root,
+        root_binding=root_binding,
     )
     root_binding.assert_bound()
     coverage_snapshot = snapshot_execution_coverages(

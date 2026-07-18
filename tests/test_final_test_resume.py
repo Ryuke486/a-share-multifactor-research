@@ -23,8 +23,10 @@ from test_final_test_gate import (
 from ashare_multifactor.audit.records import file_record, sha256_file
 from ashare_multifactor.final_test import execution_sources as execution_sources_module
 from ashare_multifactor.final_test import gate as gate_module
+from ashare_multifactor.final_test import preparation as preparation_module
 from ashare_multifactor.final_test import resume as resume_module
-from ashare_multifactor.final_test.preparation import _publish_preparation
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
+from ashare_multifactor.final_test.preparation import _publish_preparation, verify_preparation
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
@@ -33,6 +35,7 @@ from test_final_test_official_query_index import _write_index
 from ashare_multifactor.final_test.resume import (
     load_registered_authorization,
     preflight_resume,
+    verify_resume_coverages,
 )
 
 
@@ -47,6 +50,14 @@ class PreparedAttempt:
     symbol_scope: Path
     security_coverage: Path
     corporate_coverage: Path
+
+
+def _tree_bytes(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
 
 
 @pytest.fixture
@@ -100,8 +111,16 @@ def prepared_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Prepare
         lambda _root: resolution,
     )
     monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation.resolve_final_test_data_panel_at",
+        lambda _root, _fd: resolution,
+    )
+    monkeypatch.setattr(
         "ashare_multifactor.final_test.preparation.validate_panel_source",
         lambda _root, _period: SimpleNamespace(files=(partition,)),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation._symbols_from_verified_panel_at",
+        lambda _fd: symbols,
     )
 
     security_root = tmp_path / "security-coverage"
@@ -318,6 +337,217 @@ def test_preflight_rejects_symbol_scope_reordered_after_preparation_verification
 
     with pytest.raises(ValueError, match="symbol scope"):
         _preflight(prepared_attempt)
+
+
+def test_bound_preparation_verification_uses_held_root_during_transient_replacement(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A binding must not fall back to the lexical final-test name mid-read."""
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    resolution = SimpleNamespace(
+        root=final_root / "daily_panel",
+        claim_status="published",
+        requires_recovery=False,
+        data_manifest_sha256=hashlib.sha256(
+            (final_root / "daily_panel/data_manifest.json").read_bytes()
+        ).hexdigest(),
+    )
+    displaced = tmp_path / "held-final-root"
+    replacement_before: dict[str, bytes] | None = None
+    replacement_after: dict[str, bytes] | None = None
+    attacked = False
+    restored = False
+
+    def restore() -> None:
+        nonlocal replacement_after, restored
+        if restored or not attacked:
+            return
+        replacement_after = _tree_bytes(final_root)
+        shutil.rmtree(final_root)
+        displaced.rename(final_root)
+        restored = True
+
+    def resolve_from_held_root(_root: Path, final_fd: int) -> SimpleNamespace:
+        assert final_fd >= 0
+        return resolution
+
+    original_scope = getattr(preparation_module, "_verify_symbol_scope_at", None)
+
+    def scope_from_held_root(preparation_fd: int, record: object) -> object:
+        nonlocal attacked, replacement_before
+        assert callable(original_scope)
+        attacked = True
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        (
+            final_root
+            / "preparations"
+            / prepared_attempt.attempt_id
+            / "symbol_scope.parquet"
+        ).write_bytes(b"replacement scope must never be read\n")
+        replacement_before = _tree_bytes(final_root)
+        try:
+            return original_scope(preparation_fd, record)
+        finally:
+            restore()
+
+    def symbols_from_held_panel(_panel_fd: int) -> list[str]:
+        try:
+            return ["000001", "600000"]
+        finally:
+            restore()
+
+    monkeypatch.setattr(
+        preparation_module,
+        "resolve_final_test_data_panel_at",
+        resolve_from_held_root,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        preparation_module,
+        "_verify_symbol_scope_at",
+        scope_from_held_root,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        preparation_module, "_symbols_from_verified_panel_at", symbols_from_held_panel, raising=False
+    )
+
+    with FinalRootBinding.open(final_root) as binding:
+        try:
+            authorization = load_registered_authorization(
+                code_root=prepared_attempt.code_root,
+                data_root=prepared_attempt.data_root,
+                attempt_id=prepared_attempt.attempt_id,
+                approval_key=prepared_attempt.approval_key,
+                root_binding=binding,
+            )
+            result = verify_preparation(
+                final_root,
+                attempt_id=prepared_attempt.attempt_id,
+                authorization=authorization,
+                root_binding=binding,
+            )
+        finally:
+            restore()
+
+    assert attacked
+    assert replacement_before == replacement_after
+    assert result.symbols_sha256 == hashlib.sha256(b"000001\n600000\n").hexdigest()
+
+
+def test_bound_coverage_revalidation_uses_held_scope_during_transient_replacement(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The post-claim check must not reload a replacement symbol scope by path."""
+    preflight = _preflight(prepared_attempt)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    displaced = tmp_path / "held-final-root"
+    replacement_before: dict[str, bytes] | None = None
+    replacement_after: dict[str, bytes] | None = None
+    attacked = False
+    original = resume_module.load_bound_symbol_scope_at
+
+    def load_from_held_root(final_fd: int, preparation: object) -> list[str]:
+        nonlocal attacked, replacement_before, replacement_after
+        attacked = True
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        (
+            final_root
+            / "preparations"
+            / prepared_attempt.attempt_id
+            / "symbol_scope.parquet"
+        ).write_bytes(b"replacement scope must never be read\n")
+        replacement_before = _tree_bytes(final_root)
+        try:
+            return original(final_fd, preparation)  # type: ignore[arg-type]
+        finally:
+            replacement_after = _tree_bytes(final_root)
+            shutil.rmtree(final_root)
+            displaced.rename(final_root)
+
+    monkeypatch.setattr(resume_module, "load_bound_symbol_scope_at", load_from_held_root)
+
+    with FinalRootBinding.open(final_root) as binding:
+        verify_resume_coverages(
+            preflight,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            root_binding=binding,
+        )
+
+    assert attacked
+    assert replacement_before == replacement_after
+
+
+def test_bound_authorization_does_not_lexically_validate_final_root(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The held binding is the final-root authority, not a later path check."""
+    def fail_on_lexical_final_root(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("bound authorization revalidated final-test root by path")
+
+    monkeypatch.setattr(resume_module, "_verify_data_paths", fail_on_lexical_final_root)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    displaced = tmp_path / "held-final-root"
+    replacement_before: dict[str, bytes] | None = None
+    replacement_after: dict[str, bytes] | None = None
+    with FinalRootBinding.open(final_root) as binding:
+        original_assert_bound = FinalRootBinding.assert_bound
+        original_resolve_state = resume_module.resolve_attempt_state_at
+        replaced = False
+
+        def replace_after_initial_assert(current: FinalRootBinding) -> None:
+            nonlocal replaced, replacement_before
+            original_assert_bound(current)
+            if current is not binding or replaced:
+                return
+            replaced = True
+            final_root.rename(displaced)
+            shutil.copytree(displaced, final_root)
+            replacement = final_root / "attempts" / f"{prepared_attempt.attempt_id}.json"
+            replacement.unlink()
+            replacement.symlink_to(tmp_path / "replacement-registration.json")
+            (tmp_path / "replacement-registration.json").write_bytes(
+                b"replacement registration must never be read\n"
+            )
+            replacement_before = _tree_bytes(final_root)
+
+        def resolve_from_held_registry(registry_fd: int, attempt_id: str) -> dict[str, object]:
+            nonlocal replacement_after
+            try:
+                return original_resolve_state(registry_fd, attempt_id)
+            finally:
+                replacement_after = _tree_bytes(final_root)
+                shutil.rmtree(final_root)
+                displaced.rename(final_root)
+
+        monkeypatch.setattr(FinalRootBinding, "assert_bound", replace_after_initial_assert)
+        monkeypatch.setattr(resume_module, "resolve_attempt_state_at", resolve_from_held_registry)
+        try:
+            authorization = load_registered_authorization(
+                code_root=prepared_attempt.code_root,
+                data_root=prepared_attempt.data_root,
+                attempt_id=prepared_attempt.attempt_id,
+                approval_key=prepared_attempt.approval_key,
+                root_binding=binding,
+            )
+        finally:
+            if displaced.exists():
+                replacement_after = _tree_bytes(final_root)
+                shutil.rmtree(final_root)
+                displaced.rename(final_root)
+
+    assert authorization.attempt_id == prepared_attempt.attempt_id
+    assert replaced
+    assert replacement_before == replacement_after
 
 
 def test_preflight_requires_awaiting_official_evidence_state(

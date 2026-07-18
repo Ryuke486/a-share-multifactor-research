@@ -22,13 +22,16 @@ from ashare_multifactor.final_test.data_extension import (
     recover_final_test_daily_panel,
 )
 from ashare_multifactor.final_test.data_inventory import (
+    load_verified_panel_symbols_at,
     verify_file_identity,
+    verify_file_identity_at,
 )
 from ashare_multifactor.final_test.data_publication import (
     FinalTestDataResolution,
     read_data_claim,
     read_data_claim_at,
     resolve_final_test_data_panel,
+    resolve_final_test_data_panel_at,
 )
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
@@ -52,6 +55,7 @@ from ashare_multifactor.final_test.registry import (
 from ashare_multifactor.final_test.recovery_secure_fs import (
     atomic_rename_no_replace_at,
     open_directory_at,
+    opened_directory_at,
     read_bytes_at,
     write_bytes_exclusive_at,
 )
@@ -299,32 +303,43 @@ def verify_preparation(
     if not isinstance(authorization, FinalTestAuthorization):
         raise TypeError("authorization must be a FinalTestAuthorization")
     validate_publication_id(attempt_id)
-    if final_root.is_symlink():
-        raise ValueError("final-test preparation root uses a symlink")
-    final_root = final_root.resolve()
     if authorization.attempt_id != attempt_id:
         raise ValueError("preparation attempt differs from authorization")
     if expected_state not in {"awaiting_official_evidence", "executing", "failed"}:
         raise ValueError("invalid final-test preparation expected state")
-    state = (
-        resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
-        if root_binding is None
-        else resolve_attempt_state_at(root_binding.attempts_fd, attempt_id)
-    )
+    if root_binding is None:
+        if final_root.is_symlink():
+            raise ValueError("final-test preparation root uses a symlink")
+        final_root = final_root.resolve()
+        state = resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
+    else:
+        root_binding.assert_bound()
+        state = resolve_attempt_state_at(root_binding.attempts_fd, attempt_id)
     if state["state"] != expected_state:
         label = expected_state.replace("_", " ")
         raise ValueError(f"final-test preparation is not {label}")
     _assert_registered_identity(state, authorization)
-    resolution = resolve_final_test_data_panel(final_root)
-    if resolution.claim_status != "published" or resolution.requires_recovery:
-        raise ValueError("final-test data publication is not ready for preparation")
-    result = _verify_preparation_files(
-        final_root,
-        preparation_root=final_root / "preparations" / attempt_id,
-        authorization=authorization,
-        resolution=resolution,
-    )
-    if root_binding is not None:
+    if root_binding is None:
+        resolution = resolve_final_test_data_panel(final_root)
+        if resolution.claim_status != "published" or resolution.requires_recovery:
+            raise ValueError("final-test data publication is not ready for preparation")
+        result = _verify_preparation_files(
+            final_root,
+            preparation_root=final_root / "preparations" / attempt_id,
+            authorization=authorization,
+            resolution=resolution,
+        )
+    else:
+        resolution = resolve_final_test_data_panel_at(final_root, root_binding.final_fd)
+        root_binding.assert_bound()
+        if resolution.claim_status != "published" or resolution.requires_recovery:
+            raise ValueError("final-test data publication is not ready for preparation")
+        result = _verify_preparation_files_at(
+            final_root,
+            final_fd=root_binding.final_fd,
+            authorization=authorization,
+            resolution=resolution,
+        )
         root_binding.assert_bound()
     if state["identities"].get("prepare_manifest_sha256") != result.manifest_sha256:
         raise ValueError("attempt state preparation manifest identity differs")
@@ -671,6 +686,61 @@ def _verify_preparation_files(
     )
 
 
+def _verify_preparation_files_at(
+    final_root: Path,
+    *,
+    final_fd: int,
+    authorization: FinalTestAuthorization,
+    resolution: FinalTestDataResolution,
+) -> FinalTestPreparation:
+    """Verify preparation evidence only through one held final-root descriptor."""
+    with opened_directory_at(
+        final_fd, "preparations", label="final-test preparations"
+    ) as preparations_fd:
+        with opened_directory_at(
+            preparations_fd,
+            authorization.attempt_id,
+            label="final-test preparation",
+        ) as preparation_fd:
+            try:
+                manifest_bytes = read_bytes_at(
+                    preparation_fd,
+                    "prepare_manifest.json",
+                    label="final-test preparation manifest",
+                )
+                manifest = json.loads(manifest_bytes)
+            except json.JSONDecodeError as error:
+                raise ValueError("invalid final-test preparation manifest") from error
+            _validate_preparation_manifest(manifest, authorization, resolution)
+            symbol_count, symbols_sha256, symbols = _verify_symbol_scope_at(
+                preparation_fd,
+                manifest["symbol_scope"],
+            )
+    data_manifest = manifest["data_manifest"]
+    if not isinstance(data_manifest, dict):
+        raise ValueError("final-test preparation data manifest identity differs")
+    data_manifest_bytes = verify_file_identity_at(
+        final_fd,
+        data_manifest,
+        "data manifest",
+    )
+    if hashlib.sha256(data_manifest_bytes).hexdigest() != resolution.data_manifest_sha256:
+        raise ValueError("preparation data manifest path is not canonical")
+    if symbols != _symbols_from_verified_panel_at(final_fd):
+        raise ValueError("revalidated final-test panel symbol scope differs")
+    root = final_root / "preparations" / authorization.attempt_id
+    return FinalTestPreparation(
+        attempt_id=authorization.attempt_id,
+        state="awaiting_official_evidence",
+        root=root,
+        manifest_path=root / "prepare_manifest.json",
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+        symbol_scope_path=root / "symbol_scope.parquet",
+        symbol_count=symbol_count,
+        symbols_sha256=symbols_sha256,
+    )
+
+
 def _validate_preparation_manifest(
     manifest: object,
     authorization: FinalTestAuthorization,
@@ -751,6 +821,45 @@ def _verify_symbol_scope(root: Path, record: object) -> tuple[Path, int, str, li
     if record["symbol_count"] != len(symbols) or record["symbols_sha256"] != digest:
         raise ValueError("final-test preparation symbol scope identity differs")
     return path, len(symbols), digest, symbols
+
+
+def _verify_symbol_scope_at(
+    preparation_fd: int,
+    record: object,
+) -> tuple[int, str, list[str]]:
+    if not isinstance(record, dict):
+        raise ValueError("invalid final-test preparation symbol scope")
+    payload = verify_file_identity_at(preparation_fd, record, "symbol scope")
+    try:
+        frame = pl.read_parquet(BytesIO(payload))
+    except pl.exceptions.PolarsError as error:
+        raise ValueError("invalid final-test preparation symbol scope") from error
+    if frame.columns != ["symbol"] or frame.height == 0 or frame.null_count().item() != 0:
+        raise ValueError("invalid final-test preparation symbol scope")
+    symbols = frame.get_column("symbol").cast(pl.String).to_list()
+    if symbols != sorted(set(symbols)):
+        raise ValueError("final-test preparation symbol scope is not sorted and unique")
+    if any(len(symbol) != 6 or not symbol.isdigit() for symbol in symbols):
+        raise ValueError("invalid final-test preparation symbol scope")
+    if any(market_for_symbol(symbol) not in _SUPPORTED_MARKETS for symbol in symbols):
+        raise ValueError("final-test preparation symbol scope contains unsupported market")
+    digest = _symbols_digest(symbols)
+    if record["symbol_count"] != len(symbols) or record["symbols_sha256"] != digest:
+        raise ValueError("final-test preparation symbol scope identity differs")
+    return len(symbols), digest, symbols
+
+
+def _symbols_from_verified_panel_at(final_fd: int) -> list[str]:
+    """Collect the exact panel scope without reopening the final-test root by name."""
+    with opened_directory_at(final_fd, "daily_panel", label="final-test daily panel") as panel_fd:
+        result = load_verified_panel_symbols_at(
+            panel_fd,
+            start=FINAL_TEST_START,
+            end=FINAL_TEST_END,
+        )
+    if any(market_for_symbol(symbol) not in _SUPPORTED_MARKETS for symbol in result):
+        raise ValueError("final-test panel contains unsupported market symbols")
+    return result
 
 
 def _assert_registered_identity(

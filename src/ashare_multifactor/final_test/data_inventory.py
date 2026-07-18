@@ -4,6 +4,7 @@ from collections.abc import Callable
 from contextlib import ExitStack
 from datetime import date
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -242,6 +243,115 @@ def verify_final_test_data_panel_at(root_fd: int) -> dict[str, object]:
     ):
         raise ValueError("final-test input file inventory count mismatch")
     return manifest
+
+
+def load_verified_panel_symbols_at(
+    root_fd: int,
+    *,
+    start: date,
+    end: date,
+) -> list[str]:
+    """Read the exact published panel scope below one held descriptor."""
+    data_manifest = verify_final_test_data_panel_at(root_fd)
+    stage2_record = _required_record(data_manifest, "stage2_manifest")
+    stage2_bytes = verify_file_identity_at(root_fd, stage2_record, "Stage-2 manifest")
+    try:
+        stage2 = json.loads(stage2_bytes)
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid final-test Stage-2 manifest") from error
+    if not isinstance(stage2, dict):
+        raise ValueError("invalid final-test Stage-2 manifest")
+    partitions = stage2.get("partitions")
+    if not isinstance(partitions, list) or not partitions:
+        raise ValueError("final-test Stage-2 manifest lacks partitions")
+
+    symbols: set[str] = set()
+    expected_directories: set[str] = set()
+    expected_rows = 0
+    actual_minimum: date | None = None
+    actual_maximum: date | None = None
+    for record in partitions:
+        if not isinstance(record, dict):
+            raise ValueError("invalid final-test panel partition")
+        relative = PurePosixPath(str(record.get("relative_path", "")))
+        year = record.get("year")
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or len(relative.parts) != 2
+            or not isinstance(year, int)
+            or isinstance(year, bool)
+            or relative.parent.as_posix() != f"year={year}"
+            or relative.name != "part-000.parquet"
+            or not start.year <= year <= end.year
+            or relative.parent.name in expected_directories
+        ):
+            raise ValueError("invalid final-test panel partition")
+        expected_directories.add(relative.parent.name)
+        with opened_directory_at(
+            root_fd,
+            relative.parent.name,
+            label="final-test panel partition directory",
+        ) as year_fd:
+            if set(os.listdir(year_fd)) != {relative.name}:
+                raise ValueError("final-test panel partition file list differs")
+            payload = read_bytes_at(
+                year_fd,
+                relative.name,
+                label="final-test panel partition",
+            )
+        if (
+            record.get("sha256") != hashlib.sha256(payload).hexdigest()
+            or record.get("size_bytes") != len(payload)
+        ):
+            raise ValueError("final-test panel partition identity differs")
+        try:
+            frame = pl.read_parquet(BytesIO(payload)).select(
+                pl.col("date").cast(pl.Date),
+                pl.col("symbol").cast(pl.String).str.zfill(6),
+            )
+        except pl.exceptions.PolarsError as error:
+            raise ValueError("invalid final-test panel partition") from error
+        if frame.is_empty() or frame.get_column("symbol").null_count():
+            raise ValueError("invalid final-test panel partition")
+        minimum = frame.get_column("date").min()
+        maximum = frame.get_column("date").max()
+        if (
+            not isinstance(minimum, date)
+            or not isinstance(maximum, date)
+            or minimum < start
+            or maximum > end
+            or minimum.year != year
+            or maximum.year != year
+            or record.get("rows") != frame.height
+            or record.get("min_date") != minimum.isoformat()
+            or record.get("max_date") != maximum.isoformat()
+        ):
+            raise ValueError("final-test panel partition metadata differs")
+        expected_rows += frame.height
+        actual_minimum = minimum if actual_minimum is None else min(actual_minimum, minimum)
+        actual_maximum = maximum if actual_maximum is None else max(actual_maximum, maximum)
+        symbols.update(frame.get_column("symbol").to_list())
+
+    actual_entries = set(os.listdir(root_fd))
+    allowed_entries = {
+        "data_manifest.json",
+        "input_files.json",
+        "manifest.json",
+        "quality_issues.json",
+        *expected_directories,
+    }
+    if actual_entries != allowed_entries:
+        raise ValueError("final-test panel file list differs")
+    if (
+        actual_minimum is None
+        or actual_maximum is None
+        or stage2.get("rows") != expected_rows
+        or stage2.get("min_date") != actual_minimum.isoformat()
+        or stage2.get("max_date") != actual_maximum.isoformat()
+    ):
+        raise ValueError("final-test panel manifest metadata differs")
+    return sorted(symbols)
 
 
 def verify_file_identity_at(

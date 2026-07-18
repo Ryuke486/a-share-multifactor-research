@@ -64,19 +64,21 @@ def load_registered_authorization(
     validate_publication_id(attempt_id)
     code_root = _resolve_safe_root(code_root, "code")
     data_root = _resolve_safe_root(data_root, "data")
-    final_root = data_root / "processed/final_test"
-    registry_root = final_root / "attempts"
-    _verify_data_paths(data_root, final_root, registry_root)
-
-    record_path = registry_root / f"{attempt_id}.json"
-    if record_path.is_symlink():
-        raise ValueError("final-test attempt registration uses a symlink")
-    record = (
-        resolve_attempt_state_readonly(registry_root, attempt_id)
-        if root_binding is None
-        else resolve_attempt_state_at(root_binding.attempts_fd, attempt_id)
-    )
-    if root_binding is not None:
+    if root_binding is None:
+        final_root = data_root / "processed/final_test"
+        registry_root = final_root / "attempts"
+        _verify_data_paths(data_root, final_root, registry_root)
+        record_path = registry_root / f"{attempt_id}.json"
+        if record_path.is_symlink():
+            raise ValueError("final-test attempt registration uses a symlink")
+        record = resolve_attempt_state_readonly(registry_root, attempt_id)
+    else:
+        if data_root.absolute() != root_binding.final_root.parent.parent.absolute():
+            raise ValueError("bound final-test data root differs from requested data root")
+        root_binding.assert_bound()
+        final_root = root_binding.final_root
+        registry_root = final_root / "attempts"
+        record = resolve_attempt_state_at(root_binding.attempts_fd, attempt_id)
         root_binding.assert_bound()
     _verify_registration(record, attempt_id)
 
@@ -169,6 +171,8 @@ def load_registered_authorization(
         frozen=frozen,
     )
     _assert_stage8_identity_unchanged(robustness, frozen)
+    if root_binding is not None:
+        root_binding.assert_bound()
     return _authorization_from_record(record)
 
 
@@ -191,7 +195,11 @@ def preflight_resume(
         approval_key=approval_key,
         root_binding=root_binding,
     )
-    final_root = data_root.resolve() / "processed/final_test"
+    final_root = (
+        data_root.resolve() / "processed/final_test"
+        if root_binding is None
+        else root_binding.final_root
+    )
     preparation = verify_preparation(
         final_root,
         attempt_id=attempt_id,
@@ -242,9 +250,15 @@ def verify_resume_coverages(
     *,
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
+    root_binding: FinalRootBinding | None = None,
 ) -> None:
     """Revalidate the exact evidence bytes after execution has been claimed."""
-    symbols = load_bound_symbol_scope(preflight.preparation)
+    if root_binding is None:
+        symbols = load_bound_symbol_scope(preflight.preparation)
+    else:
+        root_binding.assert_bound()
+        symbols = load_bound_symbol_scope_at(root_binding.final_fd, preflight.preparation)
+        root_binding.assert_bound()
     security, corporate = validate_final_execution_coverages(
         symbols=symbols,
         security_event_coverage_path=security_event_coverage_path,

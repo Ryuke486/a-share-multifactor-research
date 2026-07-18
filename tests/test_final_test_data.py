@@ -568,6 +568,99 @@ def test_bound_data_resolver_never_reads_or_locks_replacement_root(
         assert not (final_root / ".data-claim.publication.lock").exists()
 
 
+def test_bound_panel_scope_never_reads_replacement_root(tmp_path: Path) -> None:
+    from ashare_multifactor.final_test.data_inventory import (
+        load_verified_panel_symbols_at,
+    )
+    from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
+    from ashare_multifactor.final_test.recovery_secure_fs import opened_directory_at
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    final_root = config.paths.processed / "final_test"
+    displaced = tmp_path / "bound-final-root-a"
+
+    with FinalRootBinding.open(final_root) as binding:
+        with opened_directory_at(
+            binding.final_fd,
+            "daily_panel",
+            label="bound final-test daily panel",
+        ) as panel_fd:
+            final_root.rename(displaced)
+            shutil.copytree(displaced, final_root)
+            replacement_partition = (
+                final_root / "daily_panel/year=2022/part-000.parquet"
+            )
+            replacement_partition.write_bytes(b"replacement panel must never be read\n")
+            before = {
+                path.relative_to(final_root).as_posix(): path.read_bytes()
+                for path in final_root.rglob("*")
+                if path.is_file() and not path.is_symlink()
+            }
+            try:
+                symbols = load_verified_panel_symbols_at(
+                    panel_fd,
+                    start=FINAL_START,
+                    end=FINAL_END,
+                )
+                after = {
+                    path.relative_to(final_root).as_posix(): path.read_bytes()
+                    for path in final_root.rglob("*")
+                    if path.is_file() and not path.is_symlink()
+                }
+                assert symbols == ["000001"]
+                assert after == before
+            finally:
+                shutil.rmtree(final_root)
+                displaced.rename(final_root)
+
+
+def test_bound_preparation_verification_uses_real_published_panel(
+    tmp_path: Path,
+) -> None:
+    from ashare_multifactor.final_test.data_publication import (
+        resolve_final_test_data_panel,
+    )
+    from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
+    from ashare_multifactor.final_test.preparation import (
+        _publish_preparation,
+        verify_preparation,
+    )
+    from ashare_multifactor.final_test.registry import append_attempt_state
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    final_root = config.paths.processed / "final_test"
+    preparation = _publish_preparation(
+        final_root,
+        authorization=authorization,
+        resolution=resolve_final_test_data_panel(final_root),
+        symbols=["000001"],
+    )
+    registry = final_root / "attempts"
+    append_attempt_state(registry, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_state(
+        registry,
+        attempt_id=authorization.attempt_id,
+        state="awaiting_official_evidence",
+        identities={"prepare_manifest_sha256": preparation.manifest_sha256},
+    )
+
+    with FinalRootBinding.open(final_root) as binding:
+        verified = verify_preparation(
+            final_root,
+            attempt_id=authorization.attempt_id,
+            authorization=authorization,
+            root_binding=binding,
+        )
+
+    assert verified == preparation
+
+
 def test_post_publish_claim_failure_retains_resolvable_publishing_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

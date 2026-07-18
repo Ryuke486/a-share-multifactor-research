@@ -304,8 +304,18 @@ def build_two_phase_fixture(
     monkeypatch.setattr(preparation_module, "resolve_final_test_data_panel", resolve_panel)
     monkeypatch.setattr(
         preparation_module,
+        "resolve_final_test_data_panel_at",
+        lambda _root, _fd: resolve_panel(_root),
+    )
+    monkeypatch.setattr(
+        preparation_module,
         "validate_panel_source",
         lambda _root, _period: SimpleNamespace(files=(partition,)),
+    )
+    monkeypatch.setattr(
+        preparation_module,
+        "_symbols_from_verified_panel_at",
+        lambda _fd: sorted(symbols),
     )
     return TwoPhaseFixture(
         code_root=paths["code"],
