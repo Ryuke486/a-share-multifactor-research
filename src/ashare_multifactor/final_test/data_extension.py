@@ -6,14 +6,14 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import hashlib
 
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import sha256_file
-from ashare_multifactor.config import ResearchConfig
+from ashare_multifactor.config import Period, ResearchConfig
 from ashare_multifactor.data.build import BuildManifest, build_parquet_dataset
 from ashare_multifactor.data.discovery import DailyFilePair, discover_daily_pairs
 from ashare_multifactor.final_test.data_inventory import (
-    build_data_manifest as _build_data_manifest,
     build_input_inventory,
     file_identity as _file_identity,
     load_bound_input_pairs,
@@ -32,6 +32,10 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.panel_binding import (
+    FrozenPanelSnapshot,
+    bind_panel_snapshot,
+)
 from ashare_multifactor.final_test.recovery_secure_fs import (
     assert_directory_entry,
     atomic_rename_no_replace_at,
@@ -39,6 +43,8 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     open_directory_at,
     opened_directory,
     opened_directory_at,
+    read_bytes_at,
+    write_bytes_exclusive_at,
 )
 
 
@@ -204,6 +210,7 @@ def _build_claimed_panel(
         validation=config.test,
     )
     published = False
+    bound_panel: FrozenPanelSnapshot | None = None
     try:
         manifest = build_parquet_dataset(
             build_config,
@@ -214,15 +221,12 @@ def _build_claimed_panel(
             supported_markets=config.supported_markets,
         )
         load_bound_input_pairs(config, inventory, start=start, end=end)
-        _write_json(temporary_target / "input_files.json", inventory)
-        _write_json(
-            temporary_target / "data_manifest.json",
-            _build_data_manifest(temporary_target),
-        )
-        verify_final_test_data_panel(temporary_target)
-        data_manifest_identity = _file_identity(
-            temporary_target / "data_manifest.json",
-            relative_path="daily_panel/data_manifest.json",
+        bound_panel, data_manifest_identity = _bind_built_panel(
+            temporary_target,
+            final_root=target.parent,
+            inventory=inventory,
+            manifest=manifest,
+            period=Period(start, end),
         )
         _validate_target_paths(config)
         if target.exists() or target.is_symlink():
@@ -233,7 +237,13 @@ def _build_claimed_panel(
             status="publishing",
             data_manifest=data_manifest_identity,
         )
-        _publish_built_panel(temporary_target, target)
+        bound_panel.read_frozen_files()
+        _publish_built_panel(
+            temporary_target,
+            target,
+            expected_source_identity=bound_panel.root_identity,
+        )
+        bound_panel.read_frozen_files()
         published = True
         try:
             _update_claim(
@@ -258,9 +268,111 @@ def _build_claimed_panel(
         raise
     except BaseException:
         raise
+    finally:
+        if bound_panel is not None:
+            bound_panel.close()
 
 
-def _publish_built_panel(source: Path, destination: Path) -> None:
+def _bind_built_panel(
+    target: Path,
+    *,
+    final_root: Path,
+    inventory: dict[str, object],
+    manifest: BuildManifest,
+    period: Period,
+) -> tuple[FrozenPanelSnapshot, dict[str, object]]:
+    relative_parent = target.parent.relative_to(final_root)
+    with opened_directory(final_root, label="final-test root") as final_fd:
+        descriptors: list[int] = []
+        current_fd = final_fd
+        try:
+            for part in relative_parent.parts:
+                current_fd = open_directory_at(
+                    current_fd, part, label="final-test data staging parent"
+                )
+                descriptors.append(current_fd)
+            with opened_directory_at(
+                current_fd, target.name, label="final-test built panel"
+            ) as target_fd:
+                stage2_bytes = read_bytes_at(
+                    target_fd, "manifest.json", label="Stage-2 manifest"
+                )
+                if json.loads(stage2_bytes) != manifest.to_dict():
+                    raise ValueError("Stage-2 output identity changed after build")
+                inventory_bytes = _json_bytes(inventory)
+                write_bytes_exclusive_at(target_fd, "input_files.json", inventory_bytes)
+                data_manifest = _data_manifest_from_bytes(
+                    stage2_bytes, inventory_bytes, inventory
+                )
+                data_manifest_bytes = _json_bytes(data_manifest)
+                write_bytes_exclusive_at(
+                    target_fd, "data_manifest.json", data_manifest_bytes
+                )
+            snapshot = bind_panel_snapshot(
+                target,
+                datasets_fd=current_fd,
+                expected_manifest_sha256=hashlib.sha256(
+                    data_manifest_bytes
+                ).hexdigest(),
+                period=period,
+            )
+            return snapshot, {
+                "relative_path": "daily_panel/data_manifest.json",
+                "sha256": hashlib.sha256(data_manifest_bytes).hexdigest(),
+                "size_bytes": len(data_manifest_bytes),
+            }
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
+
+
+def _data_manifest_from_bytes(
+    stage2_bytes: bytes,
+    inventory_bytes: bytes,
+    inventory: dict[str, object],
+) -> dict[str, object]:
+    stage2 = json.loads(stage2_bytes)
+    quality = stage2.get("quality_issues")
+    pairs = inventory.get("pairs")
+    if not isinstance(quality, dict) or not isinstance(pairs, list):
+        raise ValueError("cannot bind invalid Stage-2 or input manifest")
+    file_count = sum(
+        len(pair.get("files", []))
+        for pair in pairs
+        if isinstance(pair, dict) and isinstance(pair.get("files"), list)
+    )
+    return {
+        "schema_version": "1",
+        "stage2_manifest": _bytes_identity(stage2_bytes, "manifest.json"),
+        "input_files": {
+            **_bytes_identity(inventory_bytes, "input_files.json"),
+            "pair_count": len(pairs),
+            "file_count": file_count,
+        },
+        "quality_issues": quality,
+    }
+
+
+def _bytes_identity(payload: bytes, relative_path: str) -> dict[str, object]:
+    return {
+        "relative_path": relative_path,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+    }
+
+
+def _json_bytes(payload: object) -> bytes:
+    return (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+
+def _publish_built_panel(
+    source: Path,
+    destination: Path,
+    *,
+    expected_source_identity: tuple[int, int] | None = None,
+) -> None:
     final_root = destination.parent
     relative_parent = source.parent.relative_to(final_root)
     with opened_directory(
@@ -285,6 +397,11 @@ def _publish_built_panel(source: Path, destination: Path) -> None:
                     current_fd, source.name, label="final-test data staging"
                 ) as source_fd:
                     source_identity = directory_identity(source_fd)
+                    if (
+                        expected_source_identity is not None
+                        and source_identity != expected_source_identity
+                    ):
+                        raise ValueError("final-test data staging identity changed")
                     atomic_rename_no_replace_at(
                         current_fd,
                         source.name,
@@ -352,6 +469,7 @@ def recover_final_test_daily_panel(
             claim_path=claim_path,
             claim=claim,
             authorization=authorization,
+            period=Period(start, end),
         )
         return resolve_final_test_data_panel(final_root)
     if status != "claimed":
@@ -435,11 +553,34 @@ def _recover_publishing_claim(
     claim_path: Path,
     claim: dict[str, object],
     authorization: FinalTestAuthorization,
+    period: Period,
 ) -> None:
     if not target.exists():
         staging_target = _claim_staging_path(final_root, claim) / "validation_evaluation/daily_panel"
-        verify_final_test_data_panel(staging_target)
-        _publish_built_panel(staging_target, target)
+        manifest_record = claim.get("data_manifest")
+        expected_manifest_sha256 = (
+            manifest_record.get("sha256")
+            if isinstance(manifest_record, dict)
+            else None
+        )
+        if not isinstance(expected_manifest_sha256, str):
+            raise ValueError("publishing claim lacks bound data manifest identity")
+        snapshot = _bind_existing_panel(
+            staging_target,
+            final_root=final_root,
+            expected_manifest_sha256=expected_manifest_sha256,
+            period=period,
+        )
+        try:
+            snapshot.read_frozen_files()
+            _publish_built_panel(
+                staging_target,
+                target,
+                expected_source_identity=snapshot.root_identity,
+            )
+            snapshot.read_frozen_files()
+        finally:
+            snapshot.close()
     resolution = resolve_final_test_data_panel(final_root)
     if not resolution.requires_recovery:
         raise ValueError("publishing final-test data claim recovery state is inconsistent")
@@ -449,6 +590,34 @@ def _recover_publishing_claim(
         status="published",
         data_manifest=claim.get("data_manifest") if isinstance(claim.get("data_manifest"), dict) else None,
     )
+
+
+def _bind_existing_panel(
+    target: Path,
+    *,
+    final_root: Path,
+    expected_manifest_sha256: str,
+    period: Period,
+) -> FrozenPanelSnapshot:
+    relative_parent = target.parent.relative_to(final_root)
+    with opened_directory(final_root, label="final-test root") as final_fd:
+        descriptors: list[int] = []
+        current_fd = final_fd
+        try:
+            for part in relative_parent.parts:
+                current_fd = open_directory_at(
+                    current_fd, part, label="final-test data staging parent"
+                )
+                descriptors.append(current_fd)
+            return bind_panel_snapshot(
+                target,
+                datasets_fd=current_fd,
+                expected_manifest_sha256=expected_manifest_sha256,
+                period=period,
+            )
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
 
 
 def _verify_authorization(

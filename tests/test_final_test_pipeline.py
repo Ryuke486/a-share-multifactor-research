@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import inspect
 import json
 import hashlib
 from io import BytesIO
+import os
 from pathlib import Path
 import shutil
 from types import SimpleNamespace
@@ -17,6 +19,9 @@ from test_final_test_resume import PreparedAttempt
 
 from ashare_multifactor.audit.publication import publish_release, resolve_current
 from ashare_multifactor.audit.records import file_record, sha256_file
+from ashare_multifactor.audit.secure_tree import read_frozen_tree_at
+from ashare_multifactor.config import Period
+from ashare_multifactor.data.manifest import validate_panel_source
 from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.backtest import FinalTestBacktestResult
 from ashare_multifactor.final_test.action_source_contract import (
@@ -339,7 +344,13 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
             path = destination.joinpath(*relative.split("/"))
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)
-        (datasets / "final_daily_panel").mkdir(exist_ok=True)
+        panel_destination = datasets / "final_daily_panel"
+        panel_destination.mkdir(exist_ok=True)
+        panel_snapshot = kwargs["panel_snapshot"]
+        for relative, payload in panel_snapshot.read_frozen_files().items():
+            path = panel_destination.joinpath(*relative.split("/"))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
 
     for name, value in {
         "build_final_execution_inputs": build_execution_inputs,
@@ -1091,6 +1102,60 @@ def test_resume_recovers_published_current_after_publication_interruption(
     assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "published"
 
 
+def test_current_recovery_rejects_release_tree_replaced_after_complete_verification(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+
+    def publish_then_interrupt(*args: object, **kwargs: object):
+        publish(*args, **kwargs)
+        raise RuntimeError("interrupted after CURRENT")
+
+    monkeypatch.setattr(pipeline_module, "publish_release", publish_then_interrupt)
+    with pytest.raises(RuntimeError, match="after CURRENT"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    release_root = final_root / "releases/final-release"
+    verify = pipeline_module._verify_complete_release_identity
+
+    def verify_then_replace(*args: object, **kwargs: object) -> None:
+        verify(*args, **kwargs)
+        displaced = tmp_path / "verified-release"
+        release_root.rename(displaced)
+        shutil.copytree(displaced, release_root)
+
+    monkeypatch.setattr(
+        pipeline_module, "_verify_complete_release_identity", verify_then_replace
+    )
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+
+    with pytest.raises(ValueError, match="release.*identity"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    assert not (
+        final_root / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json"
+    ).exists()
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -1443,6 +1508,63 @@ def test_prepared_staging_recovers_without_recomputing_research_results(
     assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "published"
 
 
+def test_prepared_recovery_rejects_attempt_runs_replaced_before_freeze(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+    monkeypatch.setattr(
+        pipeline_module,
+        "publish_release",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            KeyboardInterrupt("hard crash after prepared record")
+        ),
+    )
+    with pytest.raises(KeyboardInterrupt, match="after prepared record"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    attempt_runs = final_root / "attempt_runs"
+    freeze = pipeline_module._freeze_prepared_package
+    replaced = False
+
+    def replace_parent_then_freeze(*args: object, **kwargs: object):
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            displaced = tmp_path / "verified-attempt-runs"
+            attempt_runs.rename(displaced)
+            shutil.copytree(displaced, attempt_runs)
+        return freeze(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pipeline_module, "_freeze_prepared_package", replace_parent_then_freeze
+    )
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+
+    with pytest.raises(ValueError, match="attempt-runs.*identity"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    assert not (final_root / "CURRENT.json").exists()
+
+
 def test_prepared_staging_identity_drift_fails_closed_without_recomputation(
     prepared_attempt: PreparedAttempt,
     monkeypatch: pytest.MonkeyPatch,
@@ -1652,8 +1774,8 @@ def test_date_gate_failure_cannot_leave_publishable_attempt(
 ) -> None:
     _patch_steps(monkeypatch, publishable=True)
     monkeypatch.setattr(
-        "ashare_multifactor.final_test.pipeline._assert_release_date_bounds",
-        lambda _root: (_ for _ in ()).throw(
+        "ashare_multifactor.final_test.pipeline._assert_frozen_release_date_bounds",
+        lambda _files: (_ for _ in ()).throw(
             ValueError("artifact outside final-test period")
         ),
     )
@@ -2762,13 +2884,18 @@ def test_attempt_staging_rejects_child_directory_replacement(
     child: str,
 ) -> None:
     _patch_steps(monkeypatch, publishable=True)
-    check_bounds = pipeline_module._assert_release_date_bounds
+    check_bounds = pipeline_module._assert_frozen_release_date_bounds
     replaced = False
 
-    def check_then_replace(root: Path) -> None:
+    def check_then_replace(files: Mapping[str, bytes]) -> None:
         nonlocal replaced
-        check_bounds(root)
+        check_bounds(files)
         if not replaced:
+            root = (
+                prepared_attempt.data_root
+                / "processed/final_test/attempt_runs"
+                / prepared_attempt.attempt_id
+            )
             original = root / child
             displaced = root / f"{child}.displaced"
             original.rename(displaced)
@@ -2777,7 +2904,7 @@ def test_attempt_staging_rejects_child_directory_replacement(
 
     monkeypatch.setattr(
         pipeline_module,
-        "_assert_release_date_bounds",
+        "_assert_frozen_release_date_bounds",
         check_then_replace,
     )
 
@@ -2799,6 +2926,87 @@ def test_attempt_staging_rejects_child_directory_replacement(
     ).exists()
 
 
+def test_attempt_staging_rejects_canonical_final_root_replacement(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    semantic_gate = pipeline_module._assert_frozen_release_date_bounds
+    replaced = False
+
+    def gate_then_replace(files: Mapping[str, bytes]) -> None:
+        nonlocal replaced
+        semantic_gate(files)
+        if not replaced:
+            final_root = prepared_attempt.data_root / "processed/final_test"
+            displaced = tmp_path / "verified-final-root"
+            final_root.rename(displaced)
+            shutil.copytree(displaced, final_root)
+            replaced = True
+
+    monkeypatch.setattr(
+        pipeline_module, "_assert_frozen_release_date_bounds", gate_then_replace
+    )
+
+    with pytest.raises(ValueError, match="final-test root.*identity"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+
+def test_frozen_release_semantics_reject_self_consistent_post_manifest_date_rewrite(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    write_manifest = pipeline_module._write_attempt_manifest
+
+    def write_then_rewrite(*args: object, **kwargs: object) -> None:
+        write_manifest(*args, **kwargs)
+        attempt_root = (
+            prepared_attempt.data_root
+            / "processed/final_test/attempt_runs"
+            / prepared_attempt.attempt_id
+        )
+        target = attempt_root / "datasets/target_weights.parquet"
+        frame = pl.read_parquet(target)
+        replacement = pl.concat(
+            (
+                frame,
+                frame.head(1).with_columns(pl.lit(date(2026, 1, 2)).alias("date")),
+            ),
+            how="vertical_relaxed",
+        )
+        replacement.write_parquet(target)
+        manifest_path = attempt_root / "attempt_manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        for record in manifest["files"]:
+            if record["path"] == "datasets/target_weights.parquet":
+                record["sha256"] = hashlib.sha256(target.read_bytes()).hexdigest()
+                record["size_bytes"] = target.stat().st_size
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    monkeypatch.setattr(pipeline_module, "_write_attempt_manifest", write_then_rewrite)
+
+    with pytest.raises(ValueError, match="outside final-test period"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+
 def test_signals_backtest_and_release_share_attempt_bound_panel_snapshot(
     prepared_attempt: PreparedAttempt,
     monkeypatch: pytest.MonkeyPatch,
@@ -2814,11 +3022,10 @@ def test_signals_backtest_and_release_share_attempt_bound_panel_snapshot(
         if path.is_file() and path.name != "data_manifest.json"
     )
     original = canonical_file.read_bytes()
-    observed_panel_roots: list[Path] = []
+    observed_snapshots: list[object] = []
 
     def signals_then_replace(*args: object, **kwargs: object) -> FinalTestSignals:
-        panel_root = Path(str(kwargs["panel_root"]))
-        observed_panel_roots.append(panel_root)
+        observed_snapshots.append(kwargs["panel_snapshot"])
         result = build_signals(*args, **kwargs)
         canonical_file.write_bytes(b"replacement after signals snapshot")
         return result
@@ -2826,7 +3033,7 @@ def test_signals_backtest_and_release_share_attempt_bound_panel_snapshot(
     def backtest_from_snapshot(
         *args: object, **kwargs: object
     ) -> FinalTestBacktestResult:
-        observed_panel_roots.append(Path(str(kwargs["panel_root"])))
+        observed_snapshots.append(kwargs["panel_snapshot"])
         return run_backtest(*args, **kwargs)
 
     monkeypatch.setattr(
@@ -2847,11 +3054,116 @@ def test_signals_backtest_and_release_share_attempt_bound_panel_snapshot(
     )
 
     assert result.release is not None
-    assert observed_panel_roots[0] == observed_panel_roots[1]
+    assert observed_snapshots[0] is observed_snapshots[1]
     relative = canonical_file.relative_to(canonical_panel)
     assert (
         result.release.datasets / "final_daily_panel" / relative
     ).read_bytes() == original
+
+
+@pytest.mark.parametrize("replacement_scope", ["file", "subtree", "in_place"])
+def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
+    tmp_path: Path,
+    replacement_scope: str,
+) -> None:
+    canonical_panel = tmp_path / "daily_panel"
+    partition = canonical_panel / "year=2022/part-000.parquet"
+    partition.parent.mkdir(parents=True)
+    pl.DataFrame(
+        {"date": [date(2022, 1, 4)], "symbol": ["000001"], "close": [10.0]}
+    ).write_parquet(partition)
+    quality = canonical_panel / "quality_issues.json"
+    quality.write_text("[]\n", encoding="utf-8")
+    manifest = {
+        "schema_version": "1.0.0",
+        "file_pairs": 1,
+        "rows": 1,
+        "min_date": "2022-01-04",
+        "max_date": "2022-01-04",
+        "years": [2022],
+        "partitions": [
+            {
+                "relative_path": "year=2022/part-000.parquet",
+                "year": 2022,
+                "rows": 1,
+                "min_date": "2022-01-04",
+                "max_date": "2022-01-04",
+                "size_bytes": partition.stat().st_size,
+                "sha256": hashlib.sha256(partition.read_bytes()).hexdigest(),
+            }
+        ],
+        "quality_issues": {
+            "relative_path": "quality_issues.json",
+            "records": 0,
+            "quarantined_rows": 0,
+            "size_bytes": quality.stat().st_size,
+            "sha256": hashlib.sha256(quality.read_bytes()).hexdigest(),
+        },
+    }
+    (canonical_panel / "manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    (canonical_panel / "data_manifest.json").write_text("{}\n", encoding="utf-8")
+    datasets = tmp_path / "datasets"
+    datasets.mkdir()
+    datasets_fd = os.open(datasets, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    snapshot: object | None = None
+    try:
+        snapshot = staging_module.snapshot_attempt_panel(
+            canonical_panel,
+            expected_manifest_sha256=sha256_file(
+                canonical_panel / "data_manifest.json"
+            ),
+            datasets_fd=datasets_fd,
+            staged_panel_root=datasets / "final_daily_panel",
+            period=Period(date(2022, 1, 1), date(2025, 12, 31)),
+        )
+        staged_root = datasets / "final_daily_panel"
+        if isinstance(snapshot, Path):
+            source = validate_panel_source(
+                snapshot,
+                Period(date(2022, 1, 1), date(2025, 12, 31)),
+            )
+        else:
+            source = snapshot.source  # type: ignore[attr-defined]
+        original = pl.scan_parquet(source.files).collect()
+        relative = Path(str(manifest["partitions"][0]["relative_path"]))
+        original_bytes = (canonical_panel / relative).read_bytes()
+        assert not staged_root.exists()
+        replacement = pl.concat((original, original.head(1)))
+        if replacement_scope == "subtree":
+            displaced = tmp_path / "displaced-panel"
+            canonical_panel.rename(displaced)
+            shutil.copytree(displaced, canonical_panel)
+        if replacement_scope == "in_place":
+            canonical_path = canonical_panel / relative
+            changed = bytearray(canonical_path.read_bytes())
+            changed[len(changed) // 2] ^= 1
+            with canonical_path.open("r+b") as stream:
+                stream.write(changed)
+        else:
+            replacement_path = tmp_path / f"replacement-{replacement_scope}.parquet"
+            replacement.write_parquet(replacement_path)
+            os.replace(replacement_path, canonical_panel / relative)
+
+        observed = pl.scan_parquet(source.files).collect()
+        if isinstance(snapshot, Path):
+            descriptor = os.open(
+                staged_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            try:
+                frozen = read_frozen_tree_at(descriptor, label="test panel snapshot")
+            finally:
+                os.close(descriptor)
+        else:
+            frozen = snapshot.read_frozen_files()  # type: ignore[attr-defined]
+
+        assert observed.equals(original)
+        assert frozen[relative.as_posix()] == original_bytes
+    finally:
+        if snapshot is not None and not isinstance(snapshot, Path):
+            snapshot.close()  # type: ignore[attr-defined]
+        os.close(datasets_fd)
 
 
 def test_failed_attempt_data_reuse_requires_same_seal_git_and_raw_inventory() -> None:

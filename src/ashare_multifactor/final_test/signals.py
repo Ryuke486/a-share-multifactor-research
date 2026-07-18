@@ -7,7 +7,6 @@ from pathlib import Path
 
 import polars as pl
 
-from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.combination.definitions import CANDIDATE_FACTORS
 from ashare_multifactor.combination.panel import build_rolling_composite_scores
 from ashare_multifactor.combination.rolling_ic import rolling_ic_weights
@@ -31,6 +30,7 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.panel_binding import FrozenPanelSnapshot
 from ashare_multifactor.final_test.signal_inputs import (
     resolve_final_test_signal_inputs,
 )
@@ -56,8 +56,7 @@ def build_final_test_signals(
     *,
     code_root: Path,
     final_root: Path,
-    panel_root: Path | None = None,
-    panel_manifest_sha256: str | None = None,
+    panel_snapshot: FrozenPanelSnapshot | None = None,
 ) -> FinalTestSignals:
     """Extend the single sealed Stage-8 candidate through the final-test period."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -82,8 +81,7 @@ def build_final_test_signals(
         final_root,
         authorization,
         config.test,
-        panel_root=panel_root,
-        panel_manifest_sha256=panel_manifest_sha256,
+        panel_snapshot=panel_snapshot,
     )
     inputs = resolve_final_test_signal_inputs(
         config,
@@ -180,17 +178,13 @@ def _resolve_authorized_data(
     authorization: FinalTestAuthorization,
     period: Period,
     *,
-    panel_root: Path | None = None,
-    panel_manifest_sha256: str | None = None,
+    panel_snapshot: FrozenPanelSnapshot | None = None,
 ):
-    if panel_root is not None:
-        if (
-            panel_manifest_sha256 is None
-            or sha256_file(panel_root / "data_manifest.json")
-            != panel_manifest_sha256
-        ):
-            raise ValueError("attempt-bound final-test data identity differs")
-        return validate_panel_source(panel_root, period)
+    if panel_snapshot is not None:
+        panel_snapshot.assert_bound()
+        if panel_snapshot.source is None:
+            raise ValueError("attempt-bound final-test data manifest is missing")
+        return panel_snapshot.source
     resolution = resolve_final_test_data_panel(final_root)
     if resolution.requires_recovery or resolution.claim_status != "published":
         raise ValueError("final-test data publication requires recovery before signals")

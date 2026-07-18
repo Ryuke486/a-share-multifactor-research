@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Mapping
+from typing import Iterator, Mapping
 from uuid import uuid4
 
-from ashare_multifactor.audit.records import sha256_file, verify_file_record
 from ashare_multifactor.audit.secure_tree import (
     atomic_rename_no_replace_at,
     read_frozen_tree_at,
@@ -25,6 +25,49 @@ class PublishedRelease:
     manifest: Path
     lineage: Path
     manifest_sha256: str
+    directory_identity: tuple[int, int] | None = None
+
+
+@dataclass
+class HeldPublishedRelease:
+    release: PublishedRelease
+    files: dict[str, bytes]
+    manifest: dict[str, object]
+    root_parent_fd: int
+    root_fd: int
+    releases_fd: int
+    release_fd: int
+    current_fd: int
+    root_identity: tuple[int, int]
+    releases_identity: tuple[int, int]
+    release_identity: tuple[int, int]
+    current_identity: tuple[int, int]
+
+    def assert_unchanged(self) -> None:
+        _assert_entry_identity(
+            self.root_parent_fd,
+            self.release.root.parent.parent.name,
+            self.root_identity,
+            label="publication root",
+        )
+        _assert_entry_identity(
+            self.root_fd,
+            "releases",
+            self.releases_identity,
+            label="release root",
+        )
+        _assert_entry_identity(
+            self.releases_fd,
+            self.release.run_id,
+            self.release_identity,
+            label="published release",
+        )
+        _assert_file_entry_identity(
+            self.root_fd,
+            "CURRENT.json",
+            self.current_identity,
+            label="CURRENT pointer",
+        )
 
 
 def publish_release(
@@ -247,11 +290,17 @@ def _materialize_current_at(
         0o600,
         dir_fd=root_fd,
     )
+    expected = _json_payload_bytes(payload)
+    installed_identity: tuple[int, int] | None = None
     try:
         with os.fdopen(descriptor, "wb", closefd=False) as stream:
-            stream.write(_json_payload_bytes(payload))
+            stream.write(expected)
             stream.flush()
             os.fsync(descriptor)
+        temporary_identity = _descriptor_identity(descriptor)
+        _assert_file_entry_identity(
+            root_fd, temporary, temporary_identity, label="CURRENT temporary"
+        )
         if replace:
             os.replace(
                 temporary,
@@ -267,6 +316,21 @@ def _materialize_current_at(
                 dst_dir_fd=root_fd,
                 follow_symlinks=False,
             )
+        current_fd = os.open(
+            "CURRENT.json",
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            dir_fd=root_fd,
+        )
+        try:
+            installed_identity = _descriptor_identity(current_fd)
+            with os.fdopen(current_fd, "rb", closefd=False) as stream:
+                installed = stream.read()
+        finally:
+            os.close(current_fd)
+        if installed_identity != temporary_identity or installed != expected:
+            _unlink_if_identity(root_fd, "CURRENT.json", installed_identity)
+            raise ValueError("CURRENT pointer identity or bytes changed")
+        os.fsync(root_fd)
     finally:
         os.close(descriptor)
         try:
@@ -292,44 +356,106 @@ def _assert_entry_identity(
         raise ValueError(f"{label} identity changed")
 
 
+def _assert_file_entry_identity(
+    parent_fd: int,
+    name: str,
+    expected: tuple[int, int],
+    *,
+    label: str,
+) -> None:
+    metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if (metadata.st_dev, metadata.st_ino) != expected:
+        raise ValueError(f"{label} identity changed")
+
+
+def _unlink_if_identity(
+    parent_fd: int, name: str, expected: tuple[int, int] | None
+) -> None:
+    if expected is None:
+        return
+    try:
+        metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if (metadata.st_dev, metadata.st_ino) == expected:
+        os.unlink(name, dir_fd=parent_fd)
+
+
 def resolve_current(root: Path) -> PublishedRelease:
     pointer = json.loads((root / "CURRENT.json").read_text(encoding="utf-8"))
-    published = _published(root, pointer["run_id"], pointer["manifest_sha256"])
-    if sha256_file(published.manifest) != published.manifest_sha256:
+    published = resolve_release(root, pointer["run_id"])
+    if published.manifest_sha256 != pointer["manifest_sha256"]:
         raise ValueError("manifest digest mismatch")
-    manifest = json.loads(published.manifest.read_text(encoding="utf-8"))
-    for item in manifest["files"]:
-        verify_file_record(item, root=published.root)
     return published
+
+
+@contextmanager
+def opened_verified_current(root: Path) -> Iterator[HeldPublishedRelease]:
+    root_parent_fd = os.open(root.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"))
+    root_fd = os.open(root.name, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=root_parent_fd)
+    releases_fd = os.open("releases", os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=root_fd)
+    current_fd = os.open("CURRENT.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW"), dir_fd=root_fd)
+    release_fd: int | None = None
+    try:
+        root_identity = _descriptor_identity(root_fd)
+        releases_identity = _descriptor_identity(releases_fd)
+        current_identity = _descriptor_identity(current_fd)
+        with os.fdopen(current_fd, "rb", closefd=False) as stream:
+            pointer = json.loads(stream.read())
+        if not isinstance(pointer, dict) or set(pointer) != {"run_id", "manifest_sha256"}:
+            raise ValueError("CURRENT pointer identity differs")
+        run_id = str(pointer["run_id"])
+        release_fd = os.open(run_id, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=releases_fd)
+        release_identity = _descriptor_identity(release_fd)
+        manifest_hash, files, manifest = _verify_release_at(
+            release_fd,
+            run_id=run_id,
+            expected_manifest_sha256=str(pointer["manifest_sha256"]),
+        )
+        held = HeldPublishedRelease(
+            release=_published(root, run_id, manifest_hash, directory_identity=release_identity),
+            files=files,
+            manifest=manifest,
+            root_parent_fd=root_parent_fd,
+            root_fd=root_fd,
+            releases_fd=releases_fd,
+            release_fd=release_fd,
+            current_fd=current_fd,
+            root_identity=root_identity,
+            releases_identity=releases_identity,
+            release_identity=release_identity,
+            current_identity=current_identity,
+        )
+        held.assert_unchanged()
+        yield held
+        held.assert_unchanged()
+    finally:
+        if release_fd is not None:
+            os.close(release_fd)
+        os.close(current_fd)
+        os.close(releases_fd)
+        os.close(root_fd)
+        os.close(root_parent_fd)
 
 
 def resolve_release(root: Path, run_id: str) -> PublishedRelease:
     """Resolve and fully verify one release without consulting CURRENT."""
-    release = root / "releases" / run_id
-    if release.is_symlink() or not release.is_dir():
-        raise ValueError("release is missing or uses a symlink")
-    manifest = release / "manifest.json"
-    manifest_hash = sha256_file(manifest)
-    published = _published(root, run_id, manifest_hash)
+    root_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"))
+    releases_fd = os.open("releases", os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=root_fd)
+    release_fd = os.open(run_id, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=releases_fd)
     try:
-        payload = json.loads(manifest.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
-        raise ValueError("invalid release manifest") from error
-    if not isinstance(payload, dict) or payload.get("run_id") != run_id:
-        raise ValueError("release manifest identity differs")
-    records = payload.get("files")
-    if not isinstance(records, list):
-        raise ValueError("release manifest files are missing")
-    for item in records:
-        verify_file_record(item, root=release)
-    return published
+        identity = _descriptor_identity(release_fd)
+        manifest_hash, _, _ = _verify_release_at(release_fd, run_id=run_id)
+        _assert_entry_identity(releases_fd, run_id, identity, label="release")
+        return _published(root, run_id, manifest_hash, directory_identity=identity)
+    finally:
+        os.close(release_fd)
+        os.close(releases_fd)
+        os.close(root_fd)
 
 
 def restore_current(root: Path, release: PublishedRelease) -> None:
     """Atomically create CURRENT for one already verified orphan release."""
-    verified = resolve_release(root, release.run_id)
-    if verified.manifest_sha256 != release.manifest_sha256:
-        raise ValueError("orphan release identity changed before CURRENT recovery")
     root_parent_fd = os.open(
         root.parent,
         os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
@@ -344,19 +470,29 @@ def restore_current(root: Path, release: PublishedRelease) -> None:
         os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
         dir_fd=root_fd,
     )
+    release_fd = os.open(
+        release.run_id,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=releases_fd,
+    )
     try:
         root_identity = _descriptor_identity(root_fd)
         releases_identity = _descriptor_identity(releases_fd)
-        release_metadata = os.stat(
-            release.run_id,
-            dir_fd=releases_fd,
-            follow_symlinks=False,
+        release_identity = _descriptor_identity(release_fd)
+        if (
+            release.directory_identity is None
+            or release_identity != release.directory_identity
+        ):
+            raise ValueError("orphan release identity changed before CURRENT recovery")
+        manifest_hash, _, _ = _verify_release_at(
+            release_fd,
+            run_id=release.run_id,
+            expected_manifest_sha256=release.manifest_sha256,
         )
-        release_identity = (release_metadata.st_dev, release_metadata.st_ino)
         _write_current_at(
             root_fd,
             {
-                "manifest_sha256": release.manifest_sha256,
+                "manifest_sha256": manifest_hash,
                 "run_id": release.run_id,
             },
         )
@@ -379,12 +515,60 @@ def restore_current(root: Path, release: PublishedRelease) -> None:
             label="orphan release",
         )
     finally:
+        os.close(release_fd)
         os.close(releases_fd)
         os.close(root_fd)
         os.close(root_parent_fd)
 
 
-def _published(root: Path, run_id: str, manifest_hash: str) -> PublishedRelease:
+def _verify_release_at(
+    release_fd: int,
+    *,
+    run_id: str,
+    expected_manifest_sha256: str | None = None,
+) -> tuple[str, dict[str, bytes], dict[str, object]]:
+    complete = read_frozen_tree_at(release_fd, label="published release")
+    try:
+        manifest_bytes = complete.pop("manifest.json")
+        manifest = json.loads(manifest_bytes)
+    except (KeyError, json.JSONDecodeError) as error:
+        raise ValueError("invalid release manifest") from error
+    manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+    if expected_manifest_sha256 is not None and manifest_hash != expected_manifest_sha256:
+        raise ValueError("orphan release identity changed before CURRENT recovery")
+    if not isinstance(manifest, dict) or manifest.get("run_id") != run_id:
+        raise ValueError("release manifest identity mismatch")
+    records = manifest.get("files")
+    if not isinstance(records, list):
+        raise ValueError("release manifest identity mismatch")
+    expected_records = {
+        str(record["path"]): record for record in _release_records(complete)
+    }
+    actual_records = {
+        str(record.get("path")): record
+        for record in records
+        if isinstance(record, dict)
+    }
+    if set(actual_records) != set(expected_records) or len(records) != len(actual_records):
+        raise ValueError("release manifest identity mismatch")
+    for path, expected in expected_records.items():
+        actual = actual_records[path]
+        if actual.get("size_bytes") != expected["size_bytes"]:
+            raise ValueError("published release file size mismatch")
+        if actual.get("sha256") != expected["sha256"]:
+            raise ValueError("published release file digest mismatch")
+        if actual.get("role") != expected["role"]:
+            raise ValueError("release manifest identity mismatch")
+    return manifest_hash, complete, manifest
+
+
+def _published(
+    root: Path,
+    run_id: str,
+    manifest_hash: str,
+    *,
+    directory_identity: tuple[int, int] | None = None,
+) -> PublishedRelease:
     release = root / "releases" / run_id
     return PublishedRelease(
         run_id=run_id,
@@ -394,6 +578,7 @@ def _published(root: Path, run_id: str, manifest_hash: str) -> PublishedRelease:
         manifest=release / "manifest.json",
         lineage=release / "lineage.json",
         manifest_sha256=manifest_hash,
+        directory_identity=directory_identity,
     )
 
 

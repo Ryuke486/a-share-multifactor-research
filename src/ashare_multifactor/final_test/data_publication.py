@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -58,6 +60,9 @@ def claim_build(
             final_identity = directory_identity(final_fd)
             try:
                 write_bytes_exclusive_at(final_fd, temporary_name, claim_bytes)
+                temporary_metadata = os.stat(
+                    temporary_name, dir_fd=final_fd, follow_symlinks=False
+                )
                 try:
                     atomic_rename_no_replace_at(
                         final_fd,
@@ -67,6 +72,19 @@ def claim_build(
                     )
                 except FileExistsError as error:
                     raise ValueError("final-test data build is already claimed") from error
+                installed_metadata = os.stat(
+                    claim_path.name, dir_fd=final_fd, follow_symlinks=False
+                )
+                installed_bytes = read_bytes_at(
+                    final_fd, claim_path.name, label="final-test data claim"
+                )
+                if (
+                    (installed_metadata.st_dev, installed_metadata.st_ino)
+                    != (temporary_metadata.st_dev, temporary_metadata.st_ino)
+                    or installed_bytes != claim_bytes
+                ):
+                    _unlink_if_identity(final_fd, claim_path.name, installed_metadata)
+                    raise ValueError("final-test data claim identity or bytes changed")
             finally:
                 try:
                     os.unlink(temporary_name, dir_fd=final_fd)
@@ -98,14 +116,13 @@ def update_claim(
         ) as final_fd:
             final_identity = directory_identity(final_fd)
             lock_name = f".{path.name}.lock"
-            write_bytes_exclusive_at(final_fd, lock_name, b"locked\n")
+            current_bytes = read_bytes_at(
+                final_fd, path.name, label="final-test data claim"
+            )
+            current_metadata = os.stat(
+                path.name, dir_fd=final_fd, follow_symlinks=False
+            )
             try:
-                current_bytes = read_bytes_at(
-                    final_fd, path.name, label="final-test data claim"
-                )
-                current_metadata = os.stat(
-                    path.name, dir_fd=final_fd, follow_symlinks=False
-                )
                 payload = _updated_claim_payload(
                     current_bytes,
                     authorization,
@@ -113,19 +130,60 @@ def update_claim(
                     error=error,
                     data_manifest=data_manifest,
                 )
-                temporary_name = f".{path.name}.{uuid4().hex}.tmp"
-                write_bytes_exclusive_at(
+            except ValueError:
+                if _claim_transaction_exists(final_fd, lock_name):
+                    _, completed = _recover_claim_transaction(
+                        final_fd,
+                        path.name,
+                        lock_name,
+                        authorization,
+                        current_bytes=current_bytes,
+                        expected_bytes=None,
+                    )
+                    if completed:
+                        return
+                raise
+            expected_bytes = _claim_bytes(payload)
+            temporary_name = f".{path.name}.{uuid4().hex}.tmp"
+            transaction = {
+                "schema_version": "1",
+                "attempt_id": authorization.attempt_id,
+                "approval_id": authorization.approval_id,
+                "old_sha256": hashlib.sha256(current_bytes).hexdigest(),
+                "new_sha256": hashlib.sha256(expected_bytes).hexdigest(),
+                "new_bytes_base64": base64.b64encode(expected_bytes).decode("ascii"),
+                "temporary_name": temporary_name,
+            }
+            transaction_bytes = _claim_bytes(transaction)
+            recovered = False
+            try:
+                write_bytes_exclusive_at(final_fd, lock_name, transaction_bytes)
+                os.fsync(final_fd)
+            except FileExistsError:
+                temporary_name, recovered = _recover_claim_transaction(
                     final_fd,
-                    temporary_name,
-                    (
-                        json.dumps(
-                            payload,
-                            ensure_ascii=False,
-                            indent=2,
-                            sort_keys=True,
-                        )
-                        + "\n"
-                    ).encode("utf-8"),
+                    path.name,
+                    lock_name,
+                    authorization,
+                    current_bytes=current_bytes,
+                    expected_bytes=expected_bytes,
+                )
+                if recovered:
+                    assert_directory_entry(
+                        parent_fd,
+                        path.parent.name,
+                        expected=final_identity,
+                        label="final-test root",
+                    )
+                    return
+            try:
+                try:
+                    os.unlink(temporary_name, dir_fd=final_fd)
+                except FileNotFoundError:
+                    pass
+                write_bytes_exclusive_at(final_fd, temporary_name, expected_bytes)
+                temporary_metadata = os.stat(
+                    temporary_name, dir_fd=final_fd, follow_symlinks=False
                 )
                 current_again = os.stat(
                     path.name, dir_fd=final_fd, follow_symlinks=False
@@ -133,7 +191,9 @@ def update_claim(
                 if (current_again.st_dev, current_again.st_ino) != (
                     current_metadata.st_dev,
                     current_metadata.st_ino,
-                ):
+                ) or read_bytes_at(
+                    final_fd, path.name, label="final-test data claim"
+                ) != current_bytes:
                     raise ValueError("final-test data claim identity changed")
                 os.replace(
                     temporary_name,
@@ -141,17 +201,115 @@ def update_claim(
                     src_dir_fd=final_fd,
                     dst_dir_fd=final_fd,
                 )
+                installed_metadata = os.stat(
+                    path.name, dir_fd=final_fd, follow_symlinks=False
+                )
+                installed_bytes = read_bytes_at(
+                    final_fd, path.name, label="final-test data claim"
+                )
+                if (
+                    (installed_metadata.st_dev, installed_metadata.st_ino)
+                    != (temporary_metadata.st_dev, temporary_metadata.st_ino)
+                    or installed_bytes != expected_bytes
+                ):
+                    _unlink_if_identity(final_fd, path.name, installed_metadata)
+                    write_bytes_exclusive_at(final_fd, path.name, current_bytes)
+                    raise ValueError("final-test data claim identity or bytes changed")
                 assert_directory_entry(
                     parent_fd,
                     path.parent.name,
                     expected=final_identity,
                     label="final-test root",
                 )
-            finally:
+                os.fsync(final_fd)
+            except Exception:
+                try:
+                    os.unlink(temporary_name, dir_fd=final_fd)
+                except FileNotFoundError:
+                    pass
                 try:
                     os.unlink(lock_name, dir_fd=final_fd)
                 except FileNotFoundError:
                     pass
+                raise
+            else:
+                try:
+                    os.unlink(temporary_name, dir_fd=final_fd)
+                except FileNotFoundError:
+                    pass
+                os.unlink(lock_name, dir_fd=final_fd)
+                os.fsync(final_fd)
+
+
+def _recover_claim_transaction(
+    final_fd: int,
+    claim_name: str,
+    lock_name: str,
+    authorization: FinalTestAuthorization,
+    *,
+    current_bytes: bytes,
+    expected_bytes: bytes | None,
+) -> tuple[str, bool]:
+    lock_bytes = read_bytes_at(final_fd, lock_name, label="claim transaction")
+    try:
+        transaction = json.loads(lock_bytes)
+        encoded = transaction["new_bytes_base64"]
+        recorded_new = base64.b64decode(encoded, validate=True)
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError) as error:
+        raise ValueError("invalid final-test data claim transaction") from error
+    temporary_name = transaction.get("temporary_name")
+    if (
+        not isinstance(transaction, dict)
+        or transaction.get("schema_version") != "1"
+        or transaction.get("attempt_id") != authorization.attempt_id
+        or transaction.get("approval_id") != authorization.approval_id
+        or not isinstance(temporary_name, str)
+        or not temporary_name.startswith(f".{claim_name}.")
+        or not temporary_name.endswith(".tmp")
+        or "/" in temporary_name
+        or transaction.get("new_sha256")
+        != hashlib.sha256(recorded_new).hexdigest()
+    ):
+        raise ValueError("final-test data claim transaction identity differs")
+    try:
+        _assert_claim_authorization_identity(json.loads(recorded_new), authorization)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise ValueError("final-test data claim transaction identity differs") from error
+    current_hash = hashlib.sha256(current_bytes).hexdigest()
+    if current_hash == transaction.get("new_sha256") and current_bytes == recorded_new:
+        try:
+            os.unlink(temporary_name, dir_fd=final_fd)
+        except FileNotFoundError:
+            pass
+        os.unlink(lock_name, dir_fd=final_fd)
+        os.fsync(final_fd)
+        return temporary_name, True
+    if expected_bytes is None:
+        if current_hash != transaction.get("old_sha256"):
+            raise ValueError("final-test data claim transaction cannot be taken over")
+        return temporary_name, False
+    expected_hash = hashlib.sha256(expected_bytes).hexdigest()
+    if (
+        current_hash != transaction.get("old_sha256")
+        or expected_hash != transaction.get("new_sha256")
+        or expected_bytes != recorded_new
+    ):
+        raise ValueError("final-test data claim transaction cannot be taken over")
+    return temporary_name, False
+
+
+def _claim_transaction_exists(final_fd: int, lock_name: str) -> bool:
+    try:
+        os.stat(lock_name, dir_fd=final_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _claim_bytes(payload: dict[str, object]) -> bytes:
+    return (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
 
 
 def _updated_claim_payload(
@@ -164,6 +322,7 @@ def _updated_claim_payload(
 ) -> dict[str, object]:
     current = json.loads(current_bytes)
     current_status = current.get("status") if isinstance(current, dict) else None
+    _assert_claim_authorization_identity(current, authorization)
     allowed = {
         "claimed": {"publishing", "failed"},
         "publishing": {"published", "failed"},
@@ -193,6 +352,37 @@ def _updated_claim_payload(
         payload["error_type"] = type(error).__name__
         payload["error"] = str(error)
     return payload
+
+
+def _assert_claim_authorization_identity(
+    current: object, authorization: FinalTestAuthorization
+) -> None:
+    if not isinstance(current, dict):
+        raise ValueError("final-test data claim authorization identity differs")
+    expected = _claim_payload(authorization, status=str(current.get("status")))
+    if any(
+        current.get(key) != value for key, value in expected.items()
+    ):
+        raise ValueError("final-test data claim authorization identity differs")
+    allowed = {
+        *expected,
+        "data_manifest",
+        "input_inventory",
+        "staging_relative_path",
+        "error_type",
+        "error",
+    }
+    if not set(current).issubset(allowed):
+        raise ValueError("final-test data claim canonical identity differs")
+
+
+def _unlink_if_identity(parent_fd: int, name: str, metadata: os.stat_result) -> None:
+    try:
+        current = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return
+    if (current.st_dev, current.st_ino) == (metadata.st_dev, metadata.st_ino):
+        os.unlink(name, dir_fd=parent_fd)
 
 
 def resolve_final_test_data_panel(final_root: Path) -> FinalTestDataResolution:

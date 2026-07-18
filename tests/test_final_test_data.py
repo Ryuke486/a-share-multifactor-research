@@ -3,6 +3,7 @@ from datetime import date
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import stat
 import subprocess
 
@@ -802,6 +803,87 @@ def test_post_rename_publishing_claim_is_completed_without_rediscovery(
     assert calls == []
 
 
+def test_publishing_recovery_rejects_staging_replaced_after_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    original_rename = data_extension.atomic_rename_no_replace_at
+
+    def interrupt_panel_rename(
+        source_fd: int,
+        source: str,
+        destination_fd: int,
+        destination: str,
+    ) -> None:
+        if destination == "daily_panel":
+            raise KeyboardInterrupt("hard crash before panel rename")
+        original_rename(source_fd, source, destination_fd, destination)
+
+    monkeypatch.setattr(
+        data_extension, "atomic_rename_no_replace_at", interrupt_panel_rename
+    )
+    with pytest.raises(KeyboardInterrupt):
+        _build(config, authorization, code_root)
+
+    original_publish = data_extension._publish_built_panel
+
+    def replace_then_publish(source: Path, destination: Path, **kwargs: object) -> None:
+        displaced = tmp_path / "displaced-recovery-panel"
+        source.rename(displaced)
+        shutil.copytree(displaced, source)
+        original_publish(source, destination, **kwargs)
+
+    monkeypatch.setattr(data_extension, "_publish_built_panel", replace_then_publish)
+
+    with pytest.raises(ValueError, match="staging identity changed"):
+        data_extension.recover_final_test_daily_panel(
+            config,
+            authorization,
+            FINAL_START,
+            FINAL_END,
+            code_root=code_root,
+        )
+
+    assert not (config.paths.processed / "final_test/daily_panel").exists()
+
+
+def test_data_build_rejects_staging_panel_replaced_after_stage2_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    build_stage2 = data_extension.build_parquet_dataset
+
+    def build_then_replace(*args: object, **kwargs: object):
+        result = build_stage2(*args, **kwargs)
+        target = Path(str(kwargs["output_root"]))
+        displaced = tmp_path / "displaced-stage2-panel"
+        target.rename(displaced)
+        shutil.copytree(displaced, target)
+        manifest_path = target / "manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["replacement_after_stage2"] = True
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(data_extension, "build_parquet_dataset", build_then_replace)
+
+    with pytest.raises(ValueError, match="Stage-2 output identity changed"):
+        _build(config, authorization, code_root)
+
+    final_root = config.paths.processed / "final_test"
+    assert not (final_root / "daily_panel").exists()
+
+
 def test_atomic_identity_json_write_fsyncs_file_replace_and_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -913,3 +995,155 @@ def test_claim_publication_is_atomic_no_replace_under_competition(
     assert calls == ["atomic-no-replace"]
     assert claim_path.read_bytes() == competitor
     assert list(final_root.glob(".data-build-claim.*.tmp")) == []
+
+
+def test_initial_claim_rejects_temporary_file_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test import data_publication
+
+    config = _config(tmp_path)
+    _, authorization = _authorized_context(tmp_path, config)
+    final_root = tmp_path / "claim-root"
+    original_publish = data_publication.atomic_rename_no_replace_at
+    forged = b'{"status":"forged"}\n'
+
+    def substitute_then_publish(
+        source_fd: int,
+        source: str,
+        destination_fd: int,
+        destination: str,
+    ) -> None:
+        data_publication.os.unlink(source, dir_fd=source_fd)
+        descriptor = data_publication.os.open(
+            source,
+            data_publication.os.O_WRONLY
+            | data_publication.os.O_CREAT
+            | data_publication.os.O_EXCL,
+            0o600,
+            dir_fd=source_fd,
+        )
+        with data_publication.os.fdopen(descriptor, "wb") as stream:
+            stream.write(forged)
+        original_publish(source_fd, source, destination_fd, destination)
+
+    monkeypatch.setattr(
+        data_publication, "atomic_rename_no_replace_at", substitute_then_publish
+    )
+
+    with pytest.raises(ValueError, match="claim.*identity|claim.*bytes"):
+        data_publication.claim_build(final_root, authorization)
+
+    assert not (final_root / "data-build-claim.json").exists()
+
+
+def test_claim_transition_rejects_temporary_file_substitution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test import data_publication
+
+    config = _config(tmp_path)
+    _, authorization = _authorized_context(tmp_path, config)
+    final_root = tmp_path / "claim-root"
+    claim_path = data_publication.claim_build(final_root, authorization)
+    original = claim_path.read_bytes()
+    original_replace = data_publication.os.replace
+
+    def substitute(source: str, destination: str, **kwargs: object) -> None:
+        source_fd = int(kwargs["src_dir_fd"])
+        data_publication.os.unlink(source, dir_fd=source_fd)
+        descriptor = data_publication.os.open(
+            source,
+            data_publication.os.O_WRONLY
+            | data_publication.os.O_CREAT
+            | data_publication.os.O_EXCL,
+            0o600,
+            dir_fd=source_fd,
+        )
+        with data_publication.os.fdopen(descriptor, "wb") as stream:
+            stream.write(b'{"status":"forged"}\n')
+        original_replace(source, destination, **kwargs)
+
+    monkeypatch.setattr(data_publication.os, "replace", substitute)
+
+    with pytest.raises(ValueError, match="claim.*identity|claim.*bytes"):
+        data_publication.update_claim(
+            claim_path, authorization, status="failed", error=ValueError("stop")
+        )
+
+    assert claim_path.read_bytes() == original
+
+
+def test_claim_transition_rejects_old_claim_authorization_drift(tmp_path: Path) -> None:
+    from ashare_multifactor.final_test import data_publication
+
+    config = _config(tmp_path)
+    _, authorization = _authorized_context(tmp_path, config)
+    final_root = tmp_path / "claim-root"
+    claim_path = data_publication.claim_build(final_root, authorization)
+    claim = json.loads(claim_path.read_text())
+    claim["approval_id"] = "different-approval"
+    claim_path.write_text(json.dumps(claim), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="claim authorization identity"):
+        data_publication.update_claim(
+            claim_path, authorization, status="failed", error=ValueError("stop")
+        )
+
+
+def test_claim_transition_resumes_exact_journal_after_process_death(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test import data_publication
+
+    config = _config(tmp_path)
+    _, authorization = _authorized_context(tmp_path, config)
+    final_root = tmp_path / "claim-root"
+    claim_path = data_publication.claim_build(final_root, authorization)
+    original_replace = data_publication.os.replace
+
+    def process_death(*args: object, **kwargs: object) -> None:
+        raise KeyboardInterrupt("process died before claim install")
+
+    monkeypatch.setattr(data_publication.os, "replace", process_death)
+    with pytest.raises(KeyboardInterrupt, match="process died"):
+        data_publication.update_claim(
+            claim_path, authorization, status="failed", error=ValueError("stop")
+        )
+
+    assert (final_root / ".data-build-claim.json.lock").is_file()
+    monkeypatch.setattr(data_publication.os, "replace", original_replace)
+    data_publication.update_claim(
+        claim_path, authorization, status="failed", error=ValueError("stop")
+    )
+
+    assert json.loads(claim_path.read_text())["status"] == "failed"
+    assert not (final_root / ".data-build-claim.json.lock").exists()
+
+
+def test_claim_transition_journal_rejects_different_takeover(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test import data_publication
+
+    config = _config(tmp_path)
+    _, authorization = _authorized_context(tmp_path, config)
+    final_root = tmp_path / "claim-root"
+    claim_path = data_publication.claim_build(final_root, authorization)
+
+    monkeypatch.setattr(
+        data_publication.os,
+        "replace",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            KeyboardInterrupt("process died before claim install")
+        ),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        data_publication.update_claim(
+            claim_path, authorization, status="failed", error=ValueError("first")
+        )
+
+    with pytest.raises(ValueError, match="cannot be taken over"):
+        data_publication.update_claim(
+            claim_path, authorization, status="failed", error=ValueError("different")
+        )

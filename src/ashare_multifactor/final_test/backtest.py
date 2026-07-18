@@ -32,6 +32,7 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.panel_binding import FrozenPanelSnapshot
 from ashare_multifactor.final_test.signals import (
     MAIN_CANDIDATE,
     FinalTestSignals,
@@ -79,8 +80,7 @@ def run_final_test_backtest(
     *,
     code_root: Path,
     final_root: Path,
-    panel_root: Path | None = None,
-    panel_manifest_sha256: str | None = None,
+    panel_snapshot: FrozenPanelSnapshot | None = None,
 ) -> FinalTestBacktestResult:
     """Fail closed until the sealed fee and execution-input contracts are complete."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -117,8 +117,7 @@ def run_final_test_backtest(
         final_root,
         authorization,
         config.test,
-        panel_root=panel_root,
-        panel_manifest_sha256=panel_manifest_sha256,
+        panel_snapshot=panel_snapshot,
     )
     try:
         inputs = _resolve_verified_inputs(

@@ -353,6 +353,82 @@ def test_orphan_recovery_does_not_overwrite_concurrent_pointer(
     assert (root / "CURRENT.json").read_bytes() == competitor
 
 
+def test_orphan_recovery_rejects_release_replaced_after_resolution(
+    tmp_path: Path,
+) -> None:
+    datasets, artifacts = _staged(tmp_path)
+    root = tmp_path / "published"
+    with pytest.raises(RuntimeError, match="before pointer switch"):
+        publish_release(
+            root,
+            run_id="orphan",
+            staged_datasets=datasets,
+            staged_artifacts=artifacts,
+            lineage={"identity": "orphan"},
+            current_must_be_absent=True,
+            fail_before_switch=True,
+        )
+    orphan = resolve_release(root, "orphan")
+    release_root = root / "releases/orphan"
+    displaced = tmp_path / "displaced-orphan"
+    release_root.rename(displaced)
+    shutil.copytree(displaced, release_root)
+
+    with pytest.raises(ValueError, match="orphan release identity changed"):
+        restore_current(root, orphan)
+
+    assert not (root / "CURRENT.json").exists()
+
+
+@pytest.mark.parametrize("current_must_be_absent", [True, False])
+def test_current_pointer_rejects_temporary_file_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    current_must_be_absent: bool,
+) -> None:
+    datasets, artifacts = _staged(tmp_path)
+    root = tmp_path / "published"
+    original_link = publication_module.os.link
+    original_replace = publication_module.os.replace
+    forged = b'{"manifest_sha256":"forged","run_id":"forged"}\n'
+
+    def substitute(source: str, destination: str, **kwargs: object) -> None:
+        source_fd = int(kwargs["src_dir_fd"])
+        publication_module.os.unlink(source, dir_fd=source_fd)
+        descriptor = publication_module.os.open(
+            source,
+            publication_module.os.O_WRONLY
+            | publication_module.os.O_CREAT
+            | publication_module.os.O_EXCL,
+            0o600,
+            dir_fd=source_fd,
+        )
+        with publication_module.os.fdopen(descriptor, "wb") as stream:
+            stream.write(forged)
+        operation = original_link if current_must_be_absent else original_replace
+        operation(source, destination, **kwargs)
+
+    monkeypatch.setattr(
+        publication_module.os,
+        "link" if current_must_be_absent else "replace",
+        substitute,
+    )
+
+    with pytest.raises(ValueError, match="CURRENT.*identity|CURRENT.*bytes"):
+        publish_release(
+            root,
+            run_id="one-shot",
+            staged_datasets=datasets,
+            staged_artifacts=artifacts,
+            lineage={"identity": "one-shot"},
+            current_must_be_absent=current_must_be_absent,
+        )
+
+    assert not (root / "CURRENT.json").exists() or (
+        root / "CURRENT.json"
+    ).read_bytes() != forged
+
+
 def test_code_identity_records_dirty_diff_and_source_hashes(tmp_path: Path) -> None:
     source = tmp_path / "src" / "package" / "module.py"
     source.parent.mkdir(parents=True)

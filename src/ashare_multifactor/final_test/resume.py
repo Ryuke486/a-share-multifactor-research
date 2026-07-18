@@ -70,7 +70,10 @@ def load_registered_authorization(
     if record["git_commit"] != current_commit or record["git_tree"] != current_tree:
         raise ValueError("registered final-test Git identity changed")
 
-    robustness = resolve_current(data_root / "processed/robustness")
+    try:
+        robustness = resolve_current(data_root / "processed/robustness")
+    except ValueError as error:
+        raise ValueError("registered Stage-8 identity changed") from error
     sealed_path = robustness.artifacts / "sealed_test_protocol.json"
     if sealed_path.is_symlink():
         raise ValueError("Stage-8 sealed protocol uses a symlink")

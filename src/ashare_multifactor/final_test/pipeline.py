@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from importlib.metadata import version
 import hashlib
 import hmac
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -16,12 +17,13 @@ import polars as pl
 
 from ashare_multifactor.audit.publication import (
     PublishedRelease,
+    opened_verified_current,
     publish_release,
     resolve_current,
     resolve_release,
     restore_current,
 )
-from ashare_multifactor.audit.records import file_record, sha256_file
+from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.audit.secure_tree import (
     read_frozen_tree_at,
 )
@@ -53,7 +55,10 @@ from ashare_multifactor.final_test.interrupted_recovery import (
     has_recoverable_execution_archive,
     recover_interrupted_execution,
 )
-from ashare_multifactor.final_test.recovery_secure_fs import opened_directory
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    opened_directory,
+    read_bytes_at,
+)
 from ashare_multifactor.final_test.release_input_staging import (
     copy_release_inputs as _copy_release_inputs,
 )
@@ -94,6 +99,9 @@ from ashare_multifactor.final_test.secure_attempt_staging import (
     ensure_attempt_root as _secure_ensure_attempt_root,
     entry_exists_at as _entry_exists_at,
     freeze_prepared_package as _freeze_prepared_package,
+    json_bytes as _json_bytes,
+    open_existing_attempt_directories as _open_existing_attempt_directories,
+    replace_attempt_manifest as _replace_attempt_manifest,
     release_files_identity as _release_files_identity,
     snapshot_attempt_panel as _snapshot_attempt_panel,
     verify_attempt_manifest_records as _verify_attempt_manifest_records,
@@ -367,6 +375,8 @@ def _execute_authorized_final_test(
     artifacts = attempt_root / "artifacts"
     _assert_attempt_directory(attempt_root, attempt_directories)
     started_at = datetime.now(timezone.utc).isoformat()
+    panel_snapshot = None
+    bound_panel_files = None
     try:
         config = _load_frozen_config(code_root, data_root)
         if bound_inputs is None:
@@ -406,22 +416,21 @@ def _execute_authorized_final_test(
             expected_manifest_sha256=panel_resolution.data_manifest_sha256,
             datasets_fd=attempt_directories.datasets_fd,
             staged_panel_root=datasets / "final_daily_panel",
+            period=config.test,
         )
         _assert_attempt_directory(attempt_root, attempt_directories)
         signals = build_final_test_signals(
             authorization,
             code_root=code_root,
             final_root=final_root,
-            panel_root=panel_snapshot,
-            panel_manifest_sha256=panel_resolution.data_manifest_sha256,
+            panel_snapshot=panel_snapshot,
         )
         backtest = run_final_test_backtest(
             authorization,
             signals,
             code_root=code_root,
             final_root=final_root,
-            panel_root=panel_snapshot,
-            panel_manifest_sha256=panel_resolution.data_manifest_sha256,
+            panel_snapshot=panel_snapshot,
         )
         _write_attempt_core(
             attempt_directories.datasets_fd,
@@ -432,11 +441,24 @@ def _execute_authorized_final_test(
         _assert_attempt_directory(attempt_root, attempt_directories)
         if not backtest.publishable:
             reason = "; ".join(backtest.gate_failures) or "publishable=false"
+            _copy_release_inputs(
+                panel_root=panel_snapshot.root,
+                panel_snapshot=panel_snapshot,
+                execution_inputs=bound_inputs,
+                panel_manifest_sha256=panel_resolution.data_manifest_sha256,
+                panel_already_staged=True,
+                datasets=datasets,
+                artifacts=artifacts,
+                datasets_fd=attempt_directories.datasets_fd,
+                artifacts_fd=attempt_directories.artifacts_fd,
+            )
+            bound_panel_files = panel_snapshot.read_frozen_files()
             _write_attempt_manifest(
                 attempt_directories.attempt_fd,
                 authorization=authorization,
                 status="failed",
                 reason=reason,
+                bound_panel_files=bound_panel_files,
             )
             append_attempt_outcome(
                 registry_root,
@@ -473,7 +495,8 @@ def _execute_authorized_final_test(
         _assert_attempt_directory(attempt_root, attempt_directories)
         completed_at = datetime.now(timezone.utc).isoformat()
         _copy_release_inputs(
-            panel_root=panel_snapshot,
+            panel_root=panel_snapshot.root,
+            panel_snapshot=panel_snapshot,
             execution_inputs=bound_inputs,
             panel_manifest_sha256=panel_resolution.data_manifest_sha256,
             panel_already_staged=True,
@@ -529,19 +552,21 @@ def _execute_authorized_final_test(
         )
         _assert_attempt_directory(attempt_root, attempt_directories)
         _assert_attempt_directory(attempt_root, attempt_directories)
-        _assert_release_date_bounds(attempt_root)
+        bound_panel_files = panel_snapshot.read_frozen_files()
         _assert_attempt_directory(attempt_root, attempt_directories)
         _write_attempt_manifest(
             attempt_directories.attempt_fd,
             authorization=authorization,
-            status="publishable",
-            reason="all frozen final-test publication gates passed",
+            status="validating",
+            reason="frozen final-test publication gates are pending",
+            bound_panel_files=bound_panel_files,
         )
         _assert_attempt_directory(attempt_root, attempt_directories)
         prepared_package = _freeze_prepared_package(
             attempt_root,
             lineage=lineage,
             bound_input_files=bound_inputs.files,
+            bound_panel_files=bound_panel_files,
             attempt_fd=attempt_directories.attempt_fd,
             datasets_fd=attempt_directories.datasets_fd,
             artifacts_fd=attempt_directories.artifacts_fd,
@@ -553,6 +578,28 @@ def _execute_authorized_final_test(
         ):
             raise ValueError("prepared final-test staging identity differs")
         _verify_attempt_manifest_records(prepared_package)
+        _assert_frozen_release_date_bounds(prepared_package.release_files)
+        _assert_attempt_directory(attempt_root, attempt_directories)
+        publishable_manifest = {
+            **prepared_package.attempt_manifest,
+            **_attempt_manifest_metadata(
+                authorization,
+                status="publishable",
+                reason="all frozen final-test publication gates passed",
+            ),
+        }
+        publishable_manifest_bytes = _json_bytes(publishable_manifest)
+        _replace_attempt_manifest(
+            attempt_directories.attempt_fd,
+            expected_bytes=prepared_package.attempt_manifest_bytes,
+            replacement_bytes=publishable_manifest_bytes,
+        )
+        prepared_package = replace(
+            prepared_package,
+            attempt_manifest=publishable_manifest,
+            attempt_manifest_bytes=publishable_manifest_bytes,
+        )
+        _assert_attempt_directory(attempt_root, attempt_directories)
         publication_identity = _prepared_staging_identity(
             prepared_package,
             preflight=preflight,
@@ -595,17 +642,26 @@ def _execute_authorized_final_test(
             (),
         )
     except BaseException as error:
-        if not _entry_exists_at(
+        if _entry_exists_at(
             attempt_directories.attempt_fd, "attempt_manifest.json"
         ):
+            _replace_validating_manifest_with_failure(
+                attempt_directories.attempt_fd,
+                authorization=authorization,
+                error=error,
+            )
+        else:
             _write_attempt_manifest(
                 attempt_directories.attempt_fd,
                 authorization=authorization,
                 status="failed",
                 reason=f"{type(error).__name__}: {error}",
+                bound_panel_files=bound_panel_files,
             )
         raise
     finally:
+        if panel_snapshot is not None:
+            panel_snapshot.close()
         attempt_directories.close()
 
 
@@ -902,29 +958,39 @@ def _recover_or_reject_current(
     preflight: ResumePreflight,
     run_id: str,
 ) -> FinalTestPipelineResult:
-    release = resolve_current(final_root)
-    if release.run_id != run_id:
-        raise ValueError("prepared final-test publication run identity differs")
-    _verify_complete_release_identity(
-        final_root,
-        registry_root=registry_root,
-        preflight=preflight,
-        run_id=run_id,
-        release=release,
-    )
-    current = {"run_id": release.run_id, "manifest_sha256": release.manifest_sha256}
-    attempt_id = preflight.authorization.attempt_id
-    outcome = registry_root / f"{attempt_id}.outcome.json"
-    if outcome.exists():
-        raise ValueError("authoritative final-test run already succeeded")
-    recover_prepared_publication(registry_root, attempt_id=attempt_id, current=current)
-    return FinalTestPipelineResult(
-        attempt_id,
-        True,
-        final_root / "attempt_runs" / attempt_id,
-        release,
-        (),
-    )
+    with opened_verified_current(final_root) as held:
+        release = held.release
+        if release.run_id != run_id:
+            raise ValueError("prepared final-test publication run identity differs")
+        _verify_complete_release_identity(
+            final_root,
+            registry_root=registry_root,
+            preflight=preflight,
+            run_id=run_id,
+            release=release,
+            held_release_files=held.files,
+            held_manifest=held.manifest,
+        )
+        held.assert_unchanged()
+        current = {
+            "run_id": release.run_id,
+            "manifest_sha256": release.manifest_sha256,
+        }
+        attempt_id = preflight.authorization.attempt_id
+        outcome = registry_root / f"{attempt_id}.outcome.json"
+        if outcome.exists():
+            raise ValueError("authoritative final-test run already succeeded")
+        recover_prepared_publication(
+            registry_root, attempt_id=attempt_id, current=current
+        )
+        held.assert_unchanged()
+        return FinalTestPipelineResult(
+            attempt_id,
+            True,
+            final_root / "attempt_runs" / attempt_id,
+            release,
+            (),
+        )
 
 
 def _recover_orphan_release(
@@ -1024,6 +1090,8 @@ def _verify_complete_release_identity(
     preflight: ResumePreflight,
     run_id: str,
     release: PublishedRelease,
+    held_release_files: Mapping[str, bytes] | None = None,
+    held_manifest: Mapping[str, object] | None = None,
 ) -> None:
     attempt_id = preflight.authorization.attempt_id
     attempt_root = final_root / "attempt_runs" / attempt_id
@@ -1036,15 +1104,21 @@ def _verify_complete_release_identity(
         )
     )
     try:
-        manifest = json.loads(release.manifest.read_text(encoding="utf-8"))
-        lineage = json.loads(release.lineage.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
+        if held_release_files is None or held_manifest is None:
+            manifest = json.loads(release.manifest.read_text(encoding="utf-8"))
+            lineage_bytes = release.lineage.read_bytes()
+            release_files = _read_published_release_files(release.root)
+        else:
+            manifest = dict(held_manifest)
+            release_files = dict(held_release_files)
+            lineage_bytes = release_files["lineage.json"]
+        lineage = json.loads(lineage_bytes)
+    except (FileNotFoundError, KeyError, json.JSONDecodeError) as error:
         raise ValueError("final-test release identity is incomplete") from error
     expected_metadata = _release_manifest_metadata(
         preflight,
         execution_identity=execution_identity,
     )
-    release_files = _read_published_release_files(release.root)
     release_staging_identity = _release_files_identity(release_files)
     expected_staging_identity = {
         key: publication_identity[key]
@@ -1058,7 +1132,7 @@ def _verify_complete_release_identity(
         or release_staging_identity != expected_staging_identity
         or release_files != dict(prepared_package.release_files)
         or lineage != lineage_preview
-        or sha256_file(release.lineage)
+        or hashlib.sha256(lineage_bytes).hexdigest()
         != publication_identity["lineage_preview_sha256"]
     ):
         raise ValueError("final-test release identity differs")
@@ -1077,13 +1151,34 @@ def _verify_prepared_staging(
     _FrozenPreparedPackage,
 ]:
     attempt_id = preflight.authorization.attempt_id
-    package = _freeze_prepared_package(
-        attempt_root,
-        lineage=None,
-        bound_input_files=resolve_bound_execution_inputs(
-            attempt_root.parent.parent, preflight.authorization
-        ).files,
+    final_root = attempt_root.parent.parent
+    opened_root, directories = _open_existing_attempt_directories(
+        final_root, attempt_id=attempt_id
     )
+    try:
+        datasets = read_frozen_tree_at(
+            directories.datasets_fd, label="prepared datasets staging"
+        )
+        panel_prefix = "final_daily_panel/"
+        bound_panel_files = {
+            path.removeprefix(panel_prefix): payload
+            for path, payload in datasets.items()
+            if path.startswith(panel_prefix)
+        }
+        package = _freeze_prepared_package(
+            opened_root,
+            lineage=None,
+            bound_input_files=resolve_bound_execution_inputs(
+                final_root, preflight.authorization
+            ).files,
+            bound_panel_files=bound_panel_files,
+            attempt_fd=directories.attempt_fd,
+            datasets_fd=directories.datasets_fd,
+            artifacts_fd=directories.artifacts_fd,
+        )
+        _assert_attempt_directory(opened_root, directories)
+    finally:
+        directories.close()
     execution_identity = dict(package.execution_identity)
     lineage = dict(package.lineage)
     attempt_manifest = dict(package.attempt_manifest)
@@ -1385,6 +1480,61 @@ def _assert_release_date_bounds(root: Path) -> None:
                 )
 
 
+def _assert_frozen_release_date_bounds(files: Mapping[str, bytes]) -> None:
+    """Apply the release semantic gate to the exact bytes selected for publication."""
+    for relative, payload in sorted(files.items()):
+        if not relative.endswith(".parquet"):
+            continue
+        schema = pl.read_parquet_schema(BytesIO(payload))
+        date_columns = [
+            name
+            for name, dtype in schema.items()
+            if dtype == pl.Date or isinstance(dtype, pl.Datetime)
+        ]
+        if not date_columns:
+            _assert_frozen_undated_release_relation(relative, payload, files)
+            continue
+        frame = pl.read_parquet(BytesIO(payload), columns=date_columns)
+        for column in date_columns:
+            if frame.filter(
+                pl.col(column).is_not_null()
+                & ~pl.col(column).cast(pl.Date).is_between(
+                    FINAL_TEST_START, FINAL_TEST_END
+                )
+            ).height:
+                raise ValueError(
+                    f"{relative}: date column {column} contains rows outside final-test period"
+                )
+
+
+def _assert_frozen_undated_release_relation(
+    relative: str, payload: bytes, files: Mapping[str, bytes]
+) -> None:
+    name = Path(relative).name
+    schema = pl.read_parquet_schema(BytesIO(payload))
+    if name == "final_test_metrics.parquet":
+        if "period" not in schema:
+            raise ValueError(f"{relative}: undated metric table lacks period identity")
+        return
+    if name == "period_comparison.parquet":
+        if "test" not in schema:
+            raise ValueError(f"{relative}: undated comparison lacks final-test metric relation")
+        return
+    if name in {"orders.parquet", "scenario_orders.parquet"}:
+        event_name = name.replace("orders", "order_events")
+        event_relative = str(Path(relative).with_name(event_name))
+        event_payload = files.get(event_relative)
+        if event_payload is None:
+            raise ValueError(f"{relative}: undated terminal table lacks event history")
+        frame = pl.read_parquet(BytesIO(payload))
+        keys = ["order_id"]
+        if "scenario" in frame.columns:
+            keys.insert(0, "scenario")
+        events = pl.read_parquet(BytesIO(event_payload), columns=keys)
+        if not frame.select(keys).join(events.unique(), on=keys, how="anti").is_empty():
+            raise ValueError(f"{relative}: terminal rows lack dated event relation")
+
+
 def _assert_undated_release_relation(path: Path, *, root: Path) -> None:
     """Require an explicit bounded-table relation for datasets without date columns."""
     relative = path.relative_to(root)
@@ -1420,21 +1570,64 @@ def _write_attempt_manifest(
     authorization: FinalTestAuthorization,
     status: str,
     reason: str,
+    bound_panel_files: Mapping[str, bytes] | None = None,
 ) -> None:
     _secure_write_attempt_manifest(
         attempt_fd,
-        metadata={
-            "attempt_id": authorization.attempt_id,
-            "status": status,
-            "reason": reason,
-            "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
-            "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
-            "git_commit": authorization.git_commit,
-            "git_tree": authorization.git_tree,
-            "robustness_release": authorization.robustness_release,
-            "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
-            "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
-        },
+        metadata=_attempt_manifest_metadata(
+            authorization, status=status, reason=reason
+        ),
+        bound_panel_files=bound_panel_files,
+    )
+
+
+def _attempt_manifest_metadata(
+    authorization: FinalTestAuthorization,
+    *,
+    status: str,
+    reason: str,
+) -> dict[str, object]:
+    return {
+        "attempt_id": authorization.attempt_id,
+        "status": status,
+        "reason": reason,
+        "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
+    }
+
+
+def _replace_validating_manifest_with_failure(
+    attempt_fd: int,
+    *,
+    authorization: FinalTestAuthorization,
+    error: BaseException,
+) -> None:
+    current_bytes = read_bytes_at(
+        attempt_fd, "attempt_manifest.json", label="attempt manifest failure transition"
+    )
+    try:
+        current = json.loads(current_bytes)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(current, dict) or current.get("status") != "validating":
+        return
+    failed = {
+        **current,
+        **_attempt_manifest_metadata(
+            authorization,
+            status="failed",
+            reason=f"{type(error).__name__}: {error}",
+        ),
+    }
+    _replace_attempt_manifest(
+        attempt_fd,
+        expected_bytes=current_bytes,
+        replacement_bytes=_json_bytes(failed),
     )
 
 
