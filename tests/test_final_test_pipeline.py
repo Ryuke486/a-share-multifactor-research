@@ -5,6 +5,7 @@ from datetime import date
 import inspect
 import json
 import hashlib
+from io import BytesIO
 from pathlib import Path
 import shutil
 from types import SimpleNamespace
@@ -166,19 +167,19 @@ def test_materialized_coverage_uses_one_frozen_descriptor_snapshot(
     )
     relative = source_file.relative_to(snapshot.root)
     original = source_file.read_bytes()
-    write_bytes = coverage_module._write_resumable_snapshot_bytes
+    write_tree = coverage_module.write_frozen_tree_at
     replaced = False
 
-    def replace_after_freeze(path: Path, payload: bytes) -> None:
+    def replace_after_freeze(*args: object, **kwargs: object) -> None:
         nonlocal replaced
         if not replaced:
             replaced = True
             source_file.write_bytes(b"replacement after validation")
-        write_bytes(path, payload)
+        write_tree(*args, **kwargs)
 
     monkeypatch.setattr(
         coverage_module,
-        "_write_resumable_snapshot_bytes",
+        "write_frozen_tree_at",
         replace_after_freeze,
     )
     destination = (
@@ -195,7 +196,54 @@ def test_materialized_coverage_uses_one_frozen_descriptor_snapshot(
     assert (destination / relative).read_bytes() == original
 
 
+def test_materialized_coverage_rejects_destination_parent_replacement(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight = preflight_resume(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+    )
+    snapshot = _execution_coverage_snapshot(prepared_attempt, preflight)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    destination_parent = final_root / "materialization-parent"
+    destination_parent.mkdir()
+    displaced = final_root / "materialization-parent.displaced"
+    write_tree = coverage_module.write_frozen_tree_at
+
+    def replace_parent(*args: object, **kwargs: object) -> None:
+        destination_parent.rename(displaced)
+        destination_parent.mkdir()
+        write_tree(*args, **kwargs)
+
+    monkeypatch.setattr(coverage_module, "write_frozen_tree_at", replace_parent)
+
+    with pytest.raises(ValueError, match="destination parent identity changed"):
+        coverage_module.materialize_bound_coverage_snapshot(
+            final_root,
+            attempt_id=prepared_attempt.attempt_id,
+            destination=destination_parent / "coverage_snapshot",
+            expected_manifest_sha256=snapshot.manifest_sha256,
+        )
+
+    assert (displaced / "coverage_snapshot/snapshot_manifest.json").is_file()
+    assert not (destination_parent / "coverage_snapshot").exists()
+
+
 def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
+    def frozen_parquets(**_kwargs: object) -> dict[str, bytes]:
+        buffer = BytesIO()
+        pl.DataFrame({"placeholder": [1]}).write_parquet(buffer)
+        payload = buffer.getvalue()
+        return {
+            "corporate_actions.parquet": payload,
+            "security_events.parquet": payload,
+        }
+
     def build_execution_inputs(
         authorization: FinalTestAuthorization,
         *_args: object,
@@ -211,8 +259,10 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
         manifest.parent.mkdir(parents=True)
         actions = manifest.parent / "corporate_actions.parquet"
         events = manifest.parent / "security_events.parquet"
-        pl.DataFrame({"placeholder": [1]}).write_parquet(actions)
-        pl.DataFrame({"placeholder": [1]}).write_parquet(events)
+        expected = kwargs["expected_parquet_bytes"]
+        assert isinstance(expected, dict)
+        actions.write_bytes(expected["corporate_actions.parquet"])
+        events.write_bytes(expected["security_events.parquet"])
         snapshot = manifest.parent / "coverage_snapshot"
         shutil.copytree(
             final_root
@@ -278,13 +328,26 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
     def report(*_args: object, **_kwargs: object) -> str:
         return "# sealed final-test report\n"
 
+    def copy_inputs(**kwargs: object) -> None:
+        execution_inputs = kwargs["execution_inputs"]
+        artifacts = Path(str(kwargs["artifacts"]))
+        datasets = Path(str(kwargs["datasets"]))
+        destination = artifacts / "execution_inputs"
+        destination.mkdir()
+        for relative, payload in execution_inputs.files.items():
+            path = destination.joinpath(*relative.split("/"))
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+        (datasets / "final_daily_panel").mkdir()
+
     for name, value in {
         "build_final_execution_inputs": build_execution_inputs,
+        "freeze_final_execution_parquets": frozen_parquets,
         "build_final_test_signals": build_signals,
         "run_final_test_backtest": backtest,
         "build_final_metrics": metrics,
         "build_final_report": report,
-        "_copy_release_inputs": lambda **_kwargs: None,
+        "_copy_release_inputs": copy_inputs,
         "resolve_final_test_data_panel": lambda final_root: SimpleNamespace(
             root=final_root / "daily_panel"
         ),
@@ -415,6 +478,121 @@ def test_resume_completes_binding_after_crash_before_manifest_hash_append(
 
     assert result.release is not None
 
+
+def test_resume_rejects_self_consistent_primary_files_before_first_hash_bind(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    bind_manifest = pipeline_module.bind_execution_input_manifest_hash
+    crashed = False
+
+    def crash_before_bind(*_args: object, **_kwargs: object) -> str:
+        nonlocal crashed
+        if not crashed:
+            crashed = True
+            raise KeyboardInterrupt("crash before first input hash bind")
+        return bind_manifest(*_args, **_kwargs)
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "bind_execution_input_manifest_hash",
+        crash_before_bind,
+    )
+    with pytest.raises(KeyboardInterrupt, match="first input hash bind"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    input_root = (
+        prepared_attempt.data_root
+        / "processed/final_test/attempt_inputs"
+        / prepared_attempt.attempt_id
+    )
+    actions = input_root / "corporate_actions.parquet"
+    events = input_root / "security_events.parquet"
+    pl.DataFrame({"placeholder": [999]}).write_parquet(actions)
+    pl.DataFrame({"placeholder": [999]}).write_parquet(events)
+    manifest_path = input_root / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"] = [
+        file_record(path, root=input_root, role=path.stem).to_dict()
+        for path in (actions, events)
+    ]
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "bind_execution_input_manifest_hash",
+        bind_manifest,
+    )
+
+    with pytest.raises(ValueError, match="deterministic execution output"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+
+def test_first_execution_rejects_replacement_after_atomic_input_publish(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    build_inputs = pipeline_module.build_final_execution_inputs
+
+    def publish_then_replace(*args: object, **kwargs: object) -> dict[str, object]:
+        manifest = build_inputs(*args, **kwargs)
+        authorization = args[0]
+        assert isinstance(authorization, FinalTestAuthorization)
+        input_root = (
+            Path(str(kwargs["final_root"]))
+            / "attempt_inputs"
+            / authorization.attempt_id
+        )
+        actions = input_root / "corporate_actions.parquet"
+        events = input_root / "security_events.parquet"
+        pl.DataFrame({"placeholder": [999]}).write_parquet(actions)
+        pl.DataFrame({"placeholder": [999]}).write_parquet(events)
+        manifest["files"] = [
+            file_record(path, root=input_root, role=path.stem).to_dict()
+            for path in (actions, events)
+        ]
+        (input_root / "manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return manifest
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "build_final_execution_inputs",
+        publish_then_replace,
+    )
+
+    with pytest.raises(ValueError, match="deterministic execution output"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
 
 def test_resume_records_failed_outcome_when_coverage_drifts_after_claim(
     prepared_attempt: PreparedAttempt,

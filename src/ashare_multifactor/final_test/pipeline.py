@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import json
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import platform
 import shutil
 from uuid import uuid4
@@ -23,6 +23,11 @@ from ashare_multifactor.audit.publication import (
     restore_current,
 )
 from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
+from ashare_multifactor.audit.secure_tree import (
+    frozen_records,
+    verify_frozen_tree_at,
+    write_frozen_tree_at,
+)
 from ashare_multifactor.final_test.backtest import (
     FinalTestBacktestResult,
     run_final_test_backtest,
@@ -33,7 +38,10 @@ from ashare_multifactor.final_test.data_extension import (
     build_final_test_daily_panel,
 )
 from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
-from ashare_multifactor.final_test.execution_sources import build_final_execution_inputs
+from ashare_multifactor.final_test.execution_sources import (
+    build_final_execution_inputs,
+    freeze_final_execution_parquets,
+)
 from ashare_multifactor.final_test.execution_binding import (
     BoundExecutionInputs,
     resolve_bound_execution_inputs,
@@ -49,7 +57,11 @@ from ashare_multifactor.final_test.interrupted_recovery import (
     recover_interrupted_execution,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
+    assert_directory_entry,
     atomic_rename_no_replace,
+    directory_identity,
+    opened_directory,
+    opened_directory_at,
 )
 from ashare_multifactor.final_test.resume import (
     ResumePreflight,
@@ -62,12 +74,14 @@ from ashare_multifactor.final_test.registry import (
     assert_no_authoritative_success,
     bind_execution_identity,
     bind_execution_input_manifest_hash,
+    bind_execution_output_intent,
     claim_attempt_execution,
     recover_prepared_publication,
     resolve_optional_prepared_publication,
     resolve_prepared_publication,
     resolve_attempt_state_readonly,
     resolve_optional_execution_binding,
+    resolve_execution_output_intent,
     validate_publication_id,
 )
 from ashare_multifactor.final_test.release_outputs import (
@@ -302,11 +316,33 @@ def _execute_authorized_final_test(
     )
     if execution_identity != expected_execution_identity:
         raise ValueError("final-test execution registry binding differs")
+    expected_parquet_bytes = freeze_final_execution_parquets(
+        symbols=list(coverage_snapshot.symbols),
+        security_event_coverage_path=coverage_snapshot.security_event_coverage_path,
+        corporate_action_coverage_root=coverage_snapshot.corporate_action_coverage_root,
+        execution_identity=execution_identity,
+    )
+    bind_execution_output_intent(
+        registry_root,
+        identity=execution_identity,
+        outputs={
+            name: {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+            for name, payload in sorted(expected_parquet_bytes.items())
+        },
+    )
+    expected_primary_outputs = resolve_execution_output_intent(
+        registry_root,
+        identity=execution_identity,
+    )
     attempt_root = final_root / "attempt_runs" / authorization.attempt_id
     bound_inputs = _bind_or_resolve_existing_execution_inputs(
         final_root,
         authorization=authorization,
         execution_identity=execution_identity,
+        expected_primary_outputs=expected_primary_outputs,
     )
     if not _is_resumable_attempt_shell(attempt_root, execution_identity):
         recover_interrupted_execution(
@@ -338,11 +374,13 @@ def _execute_authorized_final_test(
                 ),
                 symbols=list(coverage_snapshot.symbols),
                 execution_identity=execution_identity,
+                expected_parquet_bytes=expected_parquet_bytes,
             )
             candidate = validate_execution_input_candidate(
                 final_root,
                 authorization,
                 execution_identity=execution_identity,
+                expected_primary_outputs=expected_primary_outputs,
             )
             bind_execution_input_manifest_hash(
                 registry_root,
@@ -447,6 +485,7 @@ def _execute_authorized_final_test(
             attempt_root,
             preflight=preflight,
             execution_identity=execution_identity,
+            bound_inputs=bound_inputs,
         )
         append_prepared_publication(
             registry_root,
@@ -465,6 +504,7 @@ def _execute_authorized_final_test(
                 preflight,
                 execution_identity=execution_identity,
             ),
+            frozen_artifact_trees={"execution_inputs": bound_inputs.files},
         )
         append_attempt_outcome(
             registry_root,
@@ -874,6 +914,9 @@ def _recover_prepared_staging(
         preflight=preflight,
         run_id=run_id,
     )
+    bound_inputs = resolve_bound_execution_inputs(
+        final_root, preflight.authorization
+    )
     release = publish_release(
         final_root,
         run_id=run_id,
@@ -884,6 +927,7 @@ def _recover_prepared_staging(
             preflight,
             execution_identity=execution_identity,
         ),
+        frozen_artifact_trees={"execution_inputs": bound_inputs.files},
     )
     append_attempt_outcome(
         registry_root,
@@ -924,7 +968,13 @@ def _verify_complete_release_identity(
         preflight,
         execution_identity=execution_identity,
     )
-    release_staging_identity = _staging_files_identity(release.root)
+    bound_inputs = resolve_bound_execution_inputs(
+        final_root, preflight.authorization
+    )
+    release_staging_identity = _staging_files_identity(
+        release.root,
+        bound_inputs=bound_inputs,
+    )
     expected_staging_identity = {
         key: publication_identity[key]
         for key in ("staging_files_sha256", "staging_file_count")
@@ -969,6 +1019,9 @@ def _verify_prepared_staging(
         attempt_root,
         preflight=preflight,
         execution_identity=execution_identity,
+        bound_inputs=resolve_bound_execution_inputs(
+            attempt_root.parent.parent, preflight.authorization
+        ),
     )
     try:
         resolve_prepared_publication(
@@ -1020,6 +1073,7 @@ def _prepared_staging_identity(
     *,
     preflight: ResumePreflight,
     execution_identity: Mapping[str, object],
+    bound_inputs: BoundExecutionInputs,
 ) -> dict[str, object]:
     expected = _expected_execution_identity(
         preflight,
@@ -1030,7 +1084,7 @@ def _prepared_staging_identity(
     )
     if dict(execution_identity) != expected:
         raise ValueError("prepared final-test staging identity differs")
-    staging = _staging_files_identity(attempt_root)
+    staging = _staging_files_identity(attempt_root, bound_inputs=bound_inputs)
     return {
         "attempt_manifest_sha256": sha256_file(attempt_root / "attempt_manifest.json"),
         "lineage_preview_sha256": sha256_file(
@@ -1051,9 +1105,31 @@ def _prepared_staging_identity(
     }
 
 
-def _staging_files_identity(attempt_root: Path) -> dict[str, object]:
+def _staging_files_identity(
+    attempt_root: Path,
+    *,
+    bound_inputs: BoundExecutionInputs,
+) -> dict[str, object]:
     directories = (attempt_root / "datasets", attempt_root / "artifacts")
-    items = sorted(path for directory in directories for path in directory.rglob("*"))
+    frozen_root = attempt_root / "artifacts/execution_inputs"
+    with opened_directory(
+        attempt_root, label="prepared staging root"
+    ) as attempt_fd:
+        with opened_directory_at(
+            attempt_fd, "artifacts", label="prepared artifacts staging"
+        ) as artifacts_fd:
+            verify_frozen_tree_at(
+                artifacts_fd,
+                "execution_inputs",
+                bound_inputs.files,
+                label="prepared frozen execution inputs",
+            )
+    items = sorted(
+        path
+        for directory in directories
+        for path in directory.rglob("*")
+        if path != frozen_root and frozen_root not in path.parents
+    )
     files = [path for path in items if path.is_file()]
     if (
         attempt_root.is_symlink()
@@ -1066,6 +1142,14 @@ def _staging_files_identity(attempt_root: Path) -> dict[str, object]:
         file_record(path, root=attempt_root, role="prepared_staging").to_dict()
         for path in files
     ]
+    records.extend(
+        frozen_records(
+            bound_inputs.files,
+            prefix="artifacts/execution_inputs",
+            role="prepared_staging",
+        )
+    )
+    records.sort(key=lambda record: str(record["path"]))
     canonical = json.dumps(
         records,
         ensure_ascii=False,
@@ -1138,44 +1222,31 @@ def _copy_release_inputs(
 ) -> None:
     _assert_safe_release_tree(panel_root, record_files=False)
     execution_destination = artifacts / "execution_inputs"
-    try:
-        execution_destination.mkdir()
-        for relative, payload in sorted(execution_inputs.files.items()):
-            safe_relative = PurePosixPath(relative)
-            if safe_relative.is_absolute() or ".." in safe_relative.parts:
-                raise ValueError("final-test release execution input path is unsafe")
-            destination = execution_destination.joinpath(*relative.split("/"))
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_bytes(payload)
-        copied = validate_execution_input_candidate_bytes(
-            execution_destination,
-            execution_inputs=execution_inputs,
-        )
-        if copied != execution_inputs.manifest_sha256:
-            raise ValueError("final-test release execution input digest changed")
-        shutil.copytree(panel_root, datasets / "final_daily_panel")
-    except BaseException:
-        shutil.rmtree(execution_destination, ignore_errors=True)
-        raise
-
-
-def validate_execution_input_candidate_bytes(
-    root: Path,
-    *,
-    execution_inputs: BoundExecutionInputs,
-) -> str:
-    """Verify that a release copy exactly matches the frozen in-memory snapshot."""
-    items = list(root.rglob("*")) if root.is_dir() else []
-    if root.is_symlink() or any(path.is_symlink() for path in items):
-        raise ValueError("final-test release execution input uses a symlink")
-    actual = {
-        path.relative_to(root).as_posix(): path.read_bytes()
-        for path in items
-        if path.is_file()
-    }
-    if actual != dict(execution_inputs.files):
-        raise ValueError("final-test release execution input inventory changed")
-    return hashlib.sha256(actual["manifest.json"]).hexdigest()
+    if execution_destination.exists() or execution_destination.is_symlink():
+        raise FileExistsError("staged execution inputs must be absent")
+    if not execution_inputs.files:
+        raise ValueError("frozen execution inputs are empty")
+    with opened_directory(
+        artifacts.parent, label="attempt staging root"
+    ) as attempt_fd:
+        with opened_directory_at(
+            attempt_fd, artifacts.name, label="attempt artifacts staging"
+        ) as artifacts_fd:
+            artifacts_identity = directory_identity(artifacts_fd)
+            write_frozen_tree_at(
+                artifacts_fd,
+                "execution_inputs",
+                execution_inputs.files,
+                resumable=False,
+                label="staged frozen execution inputs",
+            )
+            assert_directory_entry(
+                attempt_fd,
+                artifacts.name,
+                expected=artifacts_identity,
+                label="attempt artifacts staging",
+            )
+    shutil.copytree(panel_root, datasets / "final_daily_panel")
 
 
 def _bind_or_resolve_existing_execution_inputs(
@@ -1183,6 +1254,7 @@ def _bind_or_resolve_existing_execution_inputs(
     *,
     authorization: FinalTestAuthorization,
     execution_identity: Mapping[str, object],
+    expected_primary_outputs: Mapping[str, Mapping[str, object]],
 ) -> BoundExecutionInputs | None:
     input_root = final_root / "attempt_inputs" / authorization.attempt_id
     if input_root.is_symlink():
@@ -1193,6 +1265,7 @@ def _bind_or_resolve_existing_execution_inputs(
         final_root,
         authorization,
         execution_identity=execution_identity,
+        expected_primary_outputs=expected_primary_outputs,
     )
     bind_execution_input_manifest_hash(
         final_root / "attempts",

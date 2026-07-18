@@ -7,6 +7,7 @@ import shutil
 from types import SimpleNamespace
 
 import pytest
+import polars as pl
 
 from test_final_test_pipeline import _patch_steps
 from test_final_test_resume import PreparedAttempt
@@ -14,7 +15,10 @@ from test_final_test_resume import PreparedAttempt
 from ashare_multifactor.final_test import execution_sources as sources_module
 from ashare_multifactor.final_test import interrupted_recovery as recovery_module
 from ashare_multifactor.final_test import pipeline as pipeline_module
-from ashare_multifactor.audit.records import sha256_file
+from ashare_multifactor.audit.records import file_record, sha256_file
+from ashare_multifactor.final_test.action_source_contract import (
+    build_execution_input_manifest,
+)
 from ashare_multifactor.final_test.coverage_snapshot import (
     snapshot_execution_coverages,
 )
@@ -24,6 +28,7 @@ from ashare_multifactor.final_test.registry import (
     begin_execution_recovery,
     bind_execution_identity,
     bind_execution_input_manifest_hash,
+    bind_execution_output_intent,
     complete_execution_recovery,
     resolve_attempt_state,
 )
@@ -93,7 +98,7 @@ def test_recovery_rejects_replaced_attempt_input_manifest_bound_in_registry(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="inputs.*registry binding"):
+    with pytest.raises(ValueError, match="input.*registry binding"):
         recovery_module.recover_interrupted_execution(
             final_root,
             preflight=preflight,
@@ -140,6 +145,21 @@ def test_real_execution_inputs_are_archived_and_retained_after_crash(
         corporate_action_coverage_root=snapshot.corporate_action_coverage_root,
         symbols=list(snapshot.symbols),
         execution_identity=execution_identity,
+    )
+    primary_paths = {
+        name: final_root / "attempt_inputs" / prepared_attempt.attempt_id / name
+        for name in ("corporate_actions.parquet", "security_events.parquet")
+    }
+    bind_execution_output_intent(
+        final_root / "attempts",
+        identity=execution_identity,
+        outputs={
+            name: {
+                "sha256": sha256_file(path),
+                "size_bytes": path.stat().st_size,
+            }
+            for name, path in primary_paths.items()
+        },
     )
     bind_execution_input_manifest_hash(
         final_root / "attempts",
@@ -201,6 +221,46 @@ def test_execution_input_staging_resumes_only_an_exact_prefix(tmp_path: Path) ->
     path.write_bytes(b"different")
     with pytest.raises(ValueError, match="staging bytes differ"):
         sources_module._write_resumable_bytes(path, b"exact-payload")
+
+
+def test_recovery_archives_frozen_inputs_after_live_path_replacement(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    preflight, snapshot, final_root, _attempt_root, _intent = _claimed_interruption(
+        prepared_attempt,
+        with_all_sources=True,
+    )
+    live_action = (
+        final_root
+        / "attempt_inputs"
+        / prepared_attempt.attempt_id
+        / "corporate_actions.parquet"
+    )
+    original = live_action.read_bytes()
+    write_tree = recovery_module.write_frozen_tree_at
+    replaced = False
+
+    def replace_after_freeze(*args: object, **kwargs: object) -> None:
+        nonlocal replaced
+        if not replaced:
+            replaced = True
+            live_action.write_bytes(b"replacement after recovery validation")
+        write_tree(*args, **kwargs)
+
+    monkeypatch.setattr(recovery_module, "write_frozen_tree_at", replace_after_freeze)
+
+    archive = recovery_module.recover_interrupted_execution(
+        final_root,
+        preflight=preflight,
+        coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+    )
+
+    assert archive is not None
+    assert (
+        archive / "attempt_inputs/corporate_actions.parquet"
+    ).read_bytes() == original
+    assert live_action.read_bytes() == b"replacement after recovery validation"
 
 
 @pytest.mark.parametrize(
@@ -783,18 +843,53 @@ def _claimed_interruption(
         (source_root / "source.bin").write_bytes(b"source bytes must roll back")
         input_root = final_root / "attempt_inputs" / prepared_attempt.attempt_id
         input_root.mkdir(parents=True)
+        actions = input_root / "corporate_actions.parquet"
+        events = input_root / "security_events.parquet"
+        pl.DataFrame({"version": [1]}).write_parquet(actions)
+        pl.DataFrame({"version": [1]}).write_parquet(events)
+        shutil.copytree(snapshot.root, input_root / "coverage_snapshot")
+        identity = json.loads(
+            (attempt_root / "execution_identity.json").read_text(encoding="utf-8")
+        )
+        manifest = build_execution_input_manifest(
+            input_root / "manifest.json",
+            authorization=preflight.authorization,
+            files={
+                "corporate_actions.parquet": actions,
+                "security_events.parquet": events,
+            },
+            execution_identity=identity,
+        )
+        manifest["coverage_snapshot_files"] = [
+            file_record(
+                path,
+                root=input_root,
+                role="official_coverage_snapshot",
+            ).to_dict()
+            for path in sorted(
+                item
+                for item in (input_root / "coverage_snapshot").rglob("*")
+                if item.is_file()
+            )
+        ]
         (input_root / "manifest.json").write_text(
-            json.dumps({"execution_id": "interrupted-execution"}),
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        (input_root / "input.bin").write_bytes(b"attempt input must roll back")
+        bind_execution_output_intent(
+            final_root / "attempts",
+            identity=identity,
+            outputs={
+                path.name: {
+                    "sha256": sha256_file(path),
+                    "size_bytes": path.stat().st_size,
+                }
+                for path in (actions, events)
+            },
+        )
         bind_execution_input_manifest_hash(
             final_root / "attempts",
-            identity=json.loads(
-                (attempt_root / "execution_identity.json").read_text(
-                    encoding="utf-8"
-                )
-            ),
+            identity=identity,
             manifest_sha256=sha256_file(input_root / "manifest.json"),
         )
     intent = begin_execution_recovery(

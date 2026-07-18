@@ -332,6 +332,59 @@ def bind_execution_input_manifest_hash(
         return manifest_sha256
 
 
+def bind_execution_output_intent(
+    registry_root: Path,
+    *,
+    identity: Mapping[str, object],
+    outputs: Mapping[str, Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    """Append deterministic primary output hashes before input publication."""
+    validated = validate_execution_identity(identity)
+    canonical = _validate_execution_output_intent(outputs)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    with _attempt_transition_lock(registry_root, attempt_id):
+        if _resolve_execution_binding_unlocked(registry_root, attempt_id) != validated:
+            raise ValueError("execution-output intent differs from execution identity")
+        path = _execution_output_intent_path(registry_root, validated)
+        if path.is_symlink():
+            raise ValueError("execution-output intent uses a symlink")
+        payload = {**validated, "outputs": canonical}
+        if path.exists():
+            existing = _read_execution_output_intent(path)
+            if existing != payload:
+                raise ValueError("execution-output intent differs from existing record")
+        else:
+            try:
+                _write_exclusive(path, _json_bytes(payload))
+            except FileExistsError:
+                existing = _read_execution_output_intent(path)
+                if existing != payload:
+                    raise ValueError(
+                        "execution-output intent differs from existing record"
+                    ) from None
+    return canonical
+
+
+def resolve_execution_output_intent(
+    registry_root: Path,
+    *,
+    identity: Mapping[str, object],
+) -> dict[str, dict[str, object]]:
+    """Resolve primary hashes independently committed before their publication."""
+    validated = validate_execution_identity(identity)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    with _attempt_read_lock(registry_root, attempt_id):
+        if _resolve_execution_binding_unlocked(registry_root, attempt_id) != validated:
+            raise ValueError("execution-output intent differs from execution identity")
+        path = _execution_output_intent_path(registry_root, validated)
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("execution-output intent is missing")
+        payload = _read_execution_output_intent(path)
+        if any(payload.get(key) != value for key, value in validated.items()):
+            raise ValueError("execution-output intent differs from execution identity")
+        return dict(payload["outputs"])
+
+
 def resolve_execution_input_manifest_hash(
     registry_root: Path,
     *,
@@ -393,6 +446,55 @@ def _execution_input_binding_path(
         registry_root
         / f"{identity['attempt_id']}.execution-input.{identity['execution_id']}.json"
     )
+
+
+def _execution_output_intent_path(
+    registry_root: Path,
+    identity: Mapping[str, str],
+) -> Path:
+    return (
+        registry_root
+        / f"{identity['attempt_id']}.execution-output.{identity['execution_id']}.json"
+    )
+
+
+def _validate_execution_output_intent(
+    outputs: Mapping[str, Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    required = {"corporate_actions.parquet", "security_events.parquet"}
+    if set(outputs) != required:
+        raise ValueError("execution-output intent file set differs")
+    canonical: dict[str, dict[str, object]] = {}
+    for name in sorted(required):
+        record = outputs[name]
+        sha256 = record.get("sha256")
+        size = record.get("size_bytes")
+        if (
+            not isinstance(sha256, str)
+            or _SHA256.fullmatch(sha256) is None
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+            or set(record) != {"sha256", "size_bytes"}
+        ):
+            raise ValueError("execution-output intent record is invalid")
+        canonical[name] = {"sha256": sha256, "size_bytes": size}
+    return canonical
+
+
+def _read_execution_output_intent(path: Path) -> dict[str, object]:
+    payload = _read_registry_json(path)
+    try:
+        identity = validate_execution_identity(
+            {key: payload.get(key) for key in EXECUTION_IDENTITY_FIELDS}
+        )
+        outputs = _validate_execution_output_intent(payload.get("outputs", {}))
+    except (TypeError, ValueError) as error:
+        raise ValueError("execution-output intent is invalid") from error
+    expected_keys = {*EXECUTION_IDENTITY_FIELDS, "outputs"}
+    if set(payload) != expected_keys:
+        raise ValueError("execution-output intent is invalid")
+    return {**identity, "outputs": outputs}
 
 
 def _read_execution_input_binding(path: Path) -> dict[str, object]:

@@ -12,11 +12,17 @@ import shutil
 from uuid import uuid4
 
 from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
+from ashare_multifactor.audit.secure_tree import frozen_records, write_frozen_tree_at
 from ashare_multifactor.final_test.execution_sources import (
     validate_final_execution_coverages,
 )
 from ashare_multifactor.final_test.execution_binding import _read_stable_tree
-from ashare_multifactor.final_test.recovery_secure_fs import opened_directory
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    assert_directory_entry,
+    directory_identity,
+    opened_directory,
+    opened_directory_at,
+)
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.official_query_index import (
     copy_validated_official_query_coverage,
@@ -162,47 +168,34 @@ def materialize_bound_coverage_snapshot(
         frozen,
         expected_manifest_sha256=expected_manifest_sha256,
     )
-    destination.mkdir(exist_ok=True)
-    for relative, payload in sorted(frozen.items()):
-        target = destination.joinpath(*relative.split("/"))
-        target.parent.mkdir(parents=True, exist_ok=True)
-        _write_resumable_snapshot_bytes(target, payload)
     with opened_directory(
-        destination, label="materialized coverage snapshot"
-    ) as destination_fd:
-        copied = _read_stable_tree(destination_fd)
-    if copied != frozen:
-        raise ValueError("coverage snapshot changed during materialization")
-    return [
-        file_record(
-            path,
-            root=destination.parent,
-            role="official_coverage_snapshot",
-        ).to_dict()
-        for path in sorted(item for item in destination.rglob("*") if item.is_file())
-    ]
-
-
-def _write_resumable_snapshot_bytes(path: Path, payload: bytes) -> None:
-    if path.is_symlink():
-        raise ValueError("coverage snapshot destination uses a symlink")
-    if path.exists():
-        if not path.is_file():
-            raise ValueError("coverage snapshot destination is not a file")
-        existing = path.read_bytes()
-        if not payload.startswith(existing):
-            raise ValueError("coverage snapshot partial bytes differ")
-        if existing == payload:
-            return
-        mode = "ab"
-        remainder = payload[len(existing) :]
-    else:
-        mode = "xb"
-        remainder = payload
-    with path.open(mode) as stream:
-        stream.write(remainder)
-        stream.flush()
-        os.fsync(stream.fileno())
+        destination.parent.parent,
+        label="coverage snapshot destination anchor",
+    ) as anchor_fd:
+        with opened_directory_at(
+            anchor_fd,
+            destination.parent.name,
+            label="coverage snapshot destination parent",
+        ) as parent_fd:
+            parent_identity = directory_identity(parent_fd)
+            write_frozen_tree_at(
+                parent_fd,
+                destination.name,
+                frozen,
+                resumable=True,
+                label="materialized coverage snapshot",
+            )
+            assert_directory_entry(
+                anchor_fd,
+                destination.parent.name,
+                expected=parent_identity,
+                label="coverage snapshot destination parent",
+            )
+    return frozen_records(
+        frozen,
+        prefix=destination.name,
+        role="official_coverage_snapshot",
+    )
 
 
 def _verify_snapshot_bytes(

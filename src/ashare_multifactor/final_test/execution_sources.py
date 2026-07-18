@@ -66,6 +66,36 @@ def validate_final_execution_coverages(
     )
 
 
+def freeze_final_execution_parquets(
+    *,
+    symbols: list[str],
+    security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
+    execution_identity: Mapping[str, object],
+) -> dict[str, bytes]:
+    """Derive deterministic primary bytes only from identity-bound coverages."""
+    security, corporate = validate_final_execution_coverages(
+        symbols=symbols,
+        security_event_coverage_path=security_event_coverage_path,
+        corporate_action_coverage_root=corporate_action_coverage_root,
+    )
+    _assert_coverage_identity(
+        security,
+        corporate,
+        expected_security_event_coverage_sha256=str(
+            execution_identity["security_event_coverage_sha256"]
+        ),
+        expected_corporate_action_coverage_sha256=str(
+            execution_identity["corporate_action_coverage_sha256"]
+        ),
+    )
+    actions, events = _execution_frames(security, corporate)
+    return {
+        "corporate_actions.parquet": _parquet_bytes(actions),
+        "security_events.parquet": _parquet_bytes(events),
+    }
+
+
 def build_final_execution_inputs(
     authorization: FinalTestAuthorization,
     *,
@@ -76,6 +106,7 @@ def build_final_execution_inputs(
     corporate_action_coverage_root: Path,
     symbols: list[str],
     execution_identity: Mapping[str, object],
+    expected_parquet_bytes: Mapping[str, bytes] | None = None,
 ) -> dict[str, object]:
     """Generate, then bind, the frozen action/event inputs to this attempt."""
     del data_root
@@ -155,6 +186,14 @@ def build_final_execution_inputs(
         expected_corporate_coverage=corporate_coverage,
     )
     actions, events = _execution_frames(security_coverage, corporate_coverage)
+    generated_parquets = {
+        "corporate_actions.parquet": _parquet_bytes(actions),
+        "security_events.parquet": _parquet_bytes(events),
+    }
+    if expected_parquet_bytes is not None and generated_parquets != dict(
+        expected_parquet_bytes
+    ):
+        raise ValueError("deterministic execution output differs from bound intent")
     if execution_root.exists() or execution_root.is_symlink():
         raise FileExistsError("final execution inputs are already bound")
     execution_root.parent.mkdir(parents=True, exist_ok=True)
@@ -169,13 +208,8 @@ def build_final_execution_inputs(
             "corporate_actions.parquet": staging / "corporate_actions.parquet",
             "security_events.parquet": staging / "security_events.parquet",
         }
-        for frame, path in (
-            (actions, files["corporate_actions.parquet"]),
-            (events, files["security_events.parquet"]),
-        ):
-            buffer = BytesIO()
-            frame.write_parquet(buffer)
-            _write_resumable_bytes(path, buffer.getvalue())
+        for name, path in sorted(files.items()):
+            _write_resumable_bytes(path, generated_parquets[name])
         from ashare_multifactor.final_test.coverage_snapshot import (
             materialize_bound_coverage_snapshot,
         )
@@ -261,6 +295,12 @@ def _write_resumable_bytes(path: Path, payload: bytes) -> None:
         stream.write(remainder)
         stream.flush()
         os.fsync(stream.fileno())
+
+
+def _parquet_bytes(frame: pl.DataFrame) -> bytes:
+    buffer = BytesIO()
+    frame.write_parquet(buffer)
+    return buffer.getvalue()
 
 
 def generate_final_execution_sources(

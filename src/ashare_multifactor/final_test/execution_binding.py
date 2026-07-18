@@ -27,6 +27,7 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
 from ashare_multifactor.final_test.registry import (
     resolve_execution_binding,
     resolve_execution_input_manifest_hash,
+    resolve_execution_output_intent,
 )
 
 
@@ -56,11 +57,15 @@ def resolve_bound_execution_inputs(
     expected_hash = resolve_execution_input_manifest_hash(
         final_root / "attempts", identity=identity
     )
+    expected_outputs = resolve_execution_output_intent(
+        final_root / "attempts", identity=identity
+    )
     return validate_execution_input_candidate(
         final_root,
         authorization,
         execution_identity=identity,
         expected_manifest_sha256=expected_hash,
+        expected_primary_outputs=expected_outputs,
     )
 
 
@@ -69,6 +74,7 @@ def validate_execution_input_candidate(
     authorization: FinalTestAuthorization,
     *,
     execution_identity: Mapping[str, object],
+    expected_primary_outputs: Mapping[str, Mapping[str, object]],
     expected_manifest_sha256: str | None = None,
 ) -> BoundExecutionInputs:
     """Validate complete canonical inputs, including before the hash append."""
@@ -117,6 +123,7 @@ def validate_execution_input_candidate(
         authorization=authorization,
         identity=identity,
         tree=tree,
+        expected_primary_outputs=expected_primary_outputs,
     )
     return BoundExecutionInputs(
         manifest=MappingProxyType(payload),
@@ -225,6 +232,7 @@ def _verify_manifest_payload(
     authorization: FinalTestAuthorization,
     identity: Mapping[str, object],
     tree: Mapping[str, bytes],
+    expected_primary_outputs: Mapping[str, Mapping[str, object]],
 ) -> None:
     expected = {
         "attempt_id": authorization.attempt_id,
@@ -239,6 +247,16 @@ def _verify_manifest_payload(
     primary = _records_by_path(payload.get("files"), label="file")
     if set(primary) != {"corporate_actions.parquet", "security_events.parquet"}:
         raise ValueError("execution-input manifest file set is incomplete")
+    if set(expected_primary_outputs) != set(primary):
+        raise ValueError("deterministic execution output intent is incomplete")
+    for path, expected_output in expected_primary_outputs.items():
+        data = tree[path]
+        if (
+            expected_output.get("size_bytes") != len(data)
+            or expected_output.get("sha256")
+            != hashlib.sha256(data).hexdigest()
+        ):
+            raise ValueError("deterministic execution output differs from bound intent")
     coverage = _records_by_path(
         payload.get("coverage_snapshot_files"),
         label="coverage snapshot inventory",

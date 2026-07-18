@@ -14,9 +14,11 @@ from ashare_multifactor.final_test.registry import (
     append_attempt_state,
     bind_execution_identity,
     bind_execution_input_manifest_hash,
+    bind_execution_output_intent,
     register_attempt,
     resolve_execution_binding,
     resolve_execution_input_manifest_hash,
+    resolve_execution_output_intent,
     resolve_attempt_state,
 )
 from ashare_multifactor.final_test import registry as registry_module
@@ -83,6 +85,16 @@ def test_execution_binding_is_append_only_and_matches_executing_state(
 
     assert bind_execution_identity(registry, identity=identity) == identity
     assert resolve_execution_binding(registry, attempt_id="attempt-001") == identity
+    outputs = {
+        "corporate_actions.parquet": {"sha256": "1" * 64, "size_bytes": 10},
+        "security_events.parquet": {"sha256": "2" * 64, "size_bytes": 20},
+    }
+    assert bind_execution_output_intent(
+        registry, identity=identity, outputs=outputs
+    ) == outputs
+    assert resolve_execution_output_intent(
+        registry, identity=identity
+    ) == outputs
     manifest_sha256 = "f" * 64
     assert bind_execution_input_manifest_hash(
         registry,
@@ -102,6 +114,19 @@ def test_execution_binding_is_append_only_and_matches_executing_state(
             registry,
             identity=identity,
             manifest_sha256="0" * 64,
+        )
+    changed_outputs = {
+        **outputs,
+        "corporate_actions.parquet": {
+            "sha256": "3" * 64,
+            "size_bytes": 10,
+        },
+    }
+    with pytest.raises(ValueError, match="intent"):
+        bind_execution_output_intent(
+            registry,
+            identity=identity,
+            outputs=changed_outputs,
         )
     assert resolve_execution_binding(registry, attempt_id="attempt-001") == identity
 

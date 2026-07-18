@@ -21,6 +21,7 @@ from ashare_multifactor.final_test.registry import (
     append_attempt_state,
     bind_execution_identity,
     bind_execution_input_manifest_hash,
+    bind_execution_output_intent,
     register_attempt,
 )
 from ashare_multifactor.final_test.signals import FinalTestSignals
@@ -359,6 +360,17 @@ def test_self_consistent_input_replacement_is_rejected_by_registry_binding(
             "security_events.parquet": events,
         },
         execution_identity=identity,
+    )
+    bind_execution_output_intent(
+        registry,
+        identity=identity,
+        outputs={
+            path.name: {
+                "sha256": sha256_file(path),
+                "size_bytes": path.stat().st_size,
+            }
+            for path in (actions, events)
+        },
     )
     bind_execution_input_manifest_hash(
         registry,

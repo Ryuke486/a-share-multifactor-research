@@ -7,7 +7,6 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
-import stat
 from typing import Iterator, Mapping
 
 from ashare_multifactor.final_test.registry import (
@@ -18,6 +17,11 @@ from ashare_multifactor.final_test.registry import (
     resolve_execution_binding,
     resolve_execution_input_manifest_hash,
     validate_publication_id,
+)
+from ashare_multifactor.audit.secure_tree import write_frozen_tree_at
+from ashare_multifactor.final_test.execution_binding import (
+    BoundExecutionInputs,
+    resolve_bound_execution_inputs,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
     assert_directory_entry as _assert_directory_entry,
@@ -127,6 +131,13 @@ def recover_interrupted_execution(
             if presence["attempt_inputs"]
             else None
         )
+        bound_inputs = (
+            resolve_bound_execution_inputs(
+                final_root, preflight.authorization
+            )
+            if presence["attempt_inputs"]
+            else None
+        )
         with _open_source_anchors_at(
             final_fd,
             final_identity=final_identity,
@@ -209,6 +220,7 @@ def recover_interrupted_execution(
                                 source_anchors[label],
                                 destination_name=label,
                                 archive_fd=recovery.archive_fd,
+                                bound_inputs=bound_inputs,
                             )
                             _assert_recovery_anchors(recovery)
                             _assert_source_anchors(source_anchors)
@@ -453,74 +465,19 @@ def _copy_source_directory_no_replace(
     *,
     destination_name: str,
     archive_fd: int,
+    bound_inputs: BoundExecutionInputs | None,
 ) -> None:
     """Archive immutable inputs by FD while retaining their canonical binding."""
-    with _opened_directory_at(
-        source.parent_fd,
-        source.source_name,
-        label="source execution input directory",
-    ) as source_fd:
-        source_identity = _directory_identity(source_fd)
-        _assert_directory_entry(
-            source.parent_fd,
-            source.source_name,
-            expected=source_identity,
-            label="source execution input directory",
-        )
-        try:
-            os.mkdir(destination_name, mode=0o700, dir_fd=archive_fd)
-        except FileExistsError:
-            pass
-        with _opened_directory_at(
-            archive_fd,
-            destination_name,
-            label="archived execution input directory",
-        ) as destination_fd:
-            _copy_tree_at(source_fd, destination_fd)
-        _assert_directory_entry(
-            source.parent_fd,
-            source.source_name,
-            expected=source_identity,
-            label="source execution input directory",
-        )
-
-
-def _copy_tree_at(source_fd: int, destination_fd: int) -> None:
-    source_names = tuple(sorted(os.listdir(source_fd)))
-    for name in source_names:
-        metadata = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
-        if stat.S_ISLNK(metadata.st_mode):
-            raise ValueError("execution input archive source uses a symlink")
-        if stat.S_ISDIR(metadata.st_mode):
-            try:
-                os.mkdir(name, mode=0o700, dir_fd=destination_fd)
-            except FileExistsError:
-                pass
-            with _opened_directory_at(
-                source_fd, name, label="execution input source child"
-            ) as source_child:
-                with _opened_directory_at(
-                    destination_fd, name, label="execution input archive child"
-                ) as destination_child:
-                    _copy_tree_at(source_child, destination_child)
-            continue
-        if not stat.S_ISREG(metadata.st_mode):
-            raise ValueError("execution input archive source is not regular")
-        payload = _read_bytes_at(
-            source_fd, name, label="execution input archive source file"
-        )
-        try:
-            _write_bytes_exclusive_at(destination_fd, name, payload)
-        except FileExistsError:
-            existing = _read_bytes_at(
-                destination_fd, name, label="archived execution input file"
-            )
-            if existing != payload:
-                raise ValueError("archived execution input bytes differ") from None
-    if tuple(sorted(os.listdir(source_fd))) != source_names:
-        raise ValueError("execution input archive source changed during copy")
-    if tuple(sorted(os.listdir(destination_fd))) != source_names:
-        raise ValueError("archived execution input inventory differs")
+    del source
+    if bound_inputs is None:
+        raise ValueError("bound execution inputs are missing during recovery")
+    write_frozen_tree_at(
+        archive_fd,
+        destination_name,
+        bound_inputs.files,
+        resumable=True,
+        label="archived execution inputs",
+    )
 
 
 @contextmanager
