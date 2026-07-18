@@ -139,8 +139,11 @@ def test_attempt_state_rejects_append_after_terminal_outcome(tmp_path: Path) -> 
     )
 
     assert resolve_attempt_state(registry, "attempt-001")["state"] == "failed"
-    with pytest.raises(ValueError, match="state transition"):
+    with pytest.raises(ValueError, match="terminal"):
         append_attempt_state(registry, attempt_id="attempt-001", state="preparing")
+
+    with pytest.raises(ValueError, match="terminal"):
+        append_attempt_state(registry, attempt_id="attempt-001", state="registered")
 
 
 def test_attempt_state_rejects_incomplete_identity_hashes(tmp_path: Path) -> None:

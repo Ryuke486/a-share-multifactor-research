@@ -1,12 +1,24 @@
+from contextlib import contextmanager
 from pathlib import Path
 import hashlib
 import json
 from datetime import date
 import os
+import shutil
 
 import ashare_multifactor.final_test as final_test
 import pytest
 
+from ashare_multifactor.config import Period
+from ashare_multifactor.data.manifest import validate_panel_source
+from ashare_multifactor.final_test.data_publication import (
+    resolve_final_test_data_panel,
+)
+from ashare_multifactor.final_test.gate import FINAL_TEST_END, FINAL_TEST_START
+from ashare_multifactor.final_test.preparation import (
+    _publish_preparation,
+    _symbols_from_verified_panel,
+)
 from ashare_multifactor.final_test.registry import (
     append_attempt_outcome,
     append_attempt_state,
@@ -145,9 +157,363 @@ def test_failed_attempt_archive_preserves_complete_evidence_and_frees_active_roo
     assert manifest["status"] == "archived_failed_non_authoritative_attempt"
     assert manifest["reason"] == "unsupported market symbols"
     assert {
-        record["path"].removeprefix("final_test/"): record["sha256"]
-        for record in manifest["files"]
+        record["path"].removeprefix("final_test/"): record["sha256"] for record in manifest["files"]
     } == original
+
+
+def test_failed_attempt_archive_preserves_verified_two_phase_preparation(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    resolution = resolve_final_test_data_panel(root)
+    source = validate_panel_source(
+        resolution.root,
+        Period(FINAL_TEST_START, FINAL_TEST_END),
+    )
+    preparation = _publish_preparation(
+        root,
+        authorization=authorization,
+        resolution=resolution,
+        symbols=_symbols_from_verified_panel(source),
+    )
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_state(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        state="awaiting_official_evidence",
+        identities={"prepare_manifest_sha256": preparation.manifest_sha256},
+    )
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="approved source-contract revision",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    preparation_manifest = preparation.manifest_path.read_bytes()
+
+    archived = final_test.archive_failed_attempt(
+        processed,
+        attempt_id=authorization.attempt_id,
+    )
+
+    assert not root.exists()
+    assert (archived / "preparations" / authorization.attempt_id).is_dir()
+    assert (
+        archived / "preparations" / authorization.attempt_id / "prepare_manifest.json"
+    ).read_bytes() == preparation_manifest
+
+
+def test_failed_attempt_archive_rejects_unbound_preparation_directory(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    attempts = root / "attempts"
+    (root / "preparations" / authorization.attempt_id).mkdir(parents=True)
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="interrupted before preparation publication",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+
+    with pytest.raises(ValueError, match="unbound.*preparation"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert root.is_dir()
+
+
+def test_failed_attempt_archive_rejects_token_snapshot_identity_drift(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="interrupted before preparation publication",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    (attempts / f"{authorization.attempt_id}.token").write_bytes(b"tampered")
+
+    with pytest.raises(ValueError, match="token.*identity"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert root.is_dir()
+
+
+def test_failed_attempt_archive_rejects_registration_schema_drift(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="interrupted before preparation publication",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    registration = attempts / f"{authorization.attempt_id}.json"
+    payload = json.loads(registration.read_text())
+    payload["unexpected"] = True
+    registration.write_text(json.dumps(payload) + "\n")
+
+    with pytest.raises(ValueError, match="registration"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert root.is_dir()
+
+
+def test_failed_attempt_archive_rejects_source_swap_during_validation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    resolution = resolve_final_test_data_panel(root)
+    source = validate_panel_source(
+        resolution.root,
+        Period(FINAL_TEST_START, FINAL_TEST_END),
+    )
+    preparation = _publish_preparation(
+        root,
+        authorization=authorization,
+        resolution=resolution,
+        symbols=_symbols_from_verified_panel(source),
+    )
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_state(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        state="awaiting_official_evidence",
+        identities={"prepare_manifest_sha256": preparation.manifest_sha256},
+    )
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="approved source-contract revision",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    (root / "mixed-unvalidated.json").write_text("unverified", encoding="utf-8")
+    verified = tmp_path / "verified-copy"
+    shutil.copytree(root, verified)
+    (verified / "mixed-unvalidated.json").unlink()
+    displaced = tmp_path / "displaced-original"
+    from ashare_multifactor.final_test import incident_archive
+
+    original_validate = incident_archive._validate_complete_evidence
+
+    def validate_replacement(*args: object, **kwargs: object) -> None:
+        root.rename(displaced)
+        verified.rename(root)
+        try:
+            original_validate(*args, **kwargs)
+        finally:
+            root.rename(verified)
+            displaced.rename(root)
+
+    monkeypatch.setattr(
+        incident_archive,
+        "_validate_complete_evidence",
+        validate_replacement,
+    )
+
+    with pytest.raises(ValueError, match="mixed|evidence changed"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert root.is_dir()
+    assert not (processed / "final_test_incidents" / authorization.attempt_id).exists()
+
+
+def test_failed_attempt_archive_rejects_archive_parent_replacement_after_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="interrupted before preparation publication",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    from ashare_multifactor.final_test import incident_archive
+
+    original_rename = incident_archive.atomic_rename_no_replace_at
+    archive_parent = processed / "final_test_incidents"
+    displaced = processed / "displaced-archive-parent"
+
+    def replace_parent_after_source_rename(
+        source_fd: int,
+        source_name: str,
+        destination_fd: int,
+        destination_name: str,
+    ) -> None:
+        original_rename(source_fd, source_name, destination_fd, destination_name)
+        if destination_name == authorization.attempt_id:
+            archive_parent.rename(displaced)
+            archive_parent.mkdir()
+            shutil.copytree(
+                displaced / authorization.attempt_id, archive_parent / authorization.attempt_id
+            )
+
+    monkeypatch.setattr(
+        incident_archive,
+        "atomic_rename_no_replace_at",
+        replace_parent_after_source_rename,
+    )
+
+    with pytest.raises(ValueError, match="archive.*identity"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert displaced.is_dir()
+    assert (displaced / authorization.attempt_id).is_dir()
+
+
+def test_failed_attempt_archive_rejects_archive_parent_swap_after_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="interrupted before preparation publication",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    from ashare_multifactor.final_test import incident_archive
+
+    original_verify = incident_archive._verify_archive_at
+    archive_parent = processed / "final_test_incidents"
+    displaced = processed / "displaced-archive-parent"
+
+    def replace_parent_after_verification(*args: object, **kwargs: object) -> None:
+        original_verify(*args, **kwargs)
+        archive_parent.rename(displaced)
+        archive_parent.mkdir()
+        shutil.copytree(
+            displaced / authorization.attempt_id,
+            archive_parent / authorization.attempt_id,
+        )
+
+    monkeypatch.setattr(
+        incident_archive,
+        "_verify_archive_at",
+        replace_parent_after_verification,
+    )
+
+    with pytest.raises(ValueError, match="archive.*identity"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert displaced.is_dir()
+    assert (displaced / authorization.attempt_id).is_dir()
+
+
+def test_failed_attempt_archive_rejects_source_swap_after_attempt_locks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="interrupted before preparation publication",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    replacement = tmp_path / "replacement-final-test"
+    displaced = tmp_path / "displaced-final-test"
+    shutil.copytree(root, replacement)
+    from ashare_multifactor.final_test import incident_archive
+
+    original_lock = incident_archive._locked_existing_attempt_at
+
+    @contextmanager
+    def replace_after_locks(
+        attempts_fd: int,
+        *,
+        attempt_id: str,
+    ) -> object:
+        with original_lock(attempts_fd, attempt_id=attempt_id):
+            root.rename(displaced)
+            replacement.rename(root)
+            yield
+
+    monkeypatch.setattr(
+        incident_archive,
+        "_locked_existing_attempt_at",
+        replace_after_locks,
+    )
+
+    with pytest.raises(ValueError, match="source.*identity"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert displaced.is_dir()
+    assert root.is_dir()
+    assert not (processed / "final_test_incidents" / authorization.attempt_id).exists()
 
 
 def test_failed_attempt_archive_refuses_source_directory_replacement(
@@ -192,9 +558,7 @@ def test_failed_attempt_archive_refuses_source_directory_replacement(
 
     assert displaced.is_dir()
     assert root.is_dir()
-    assert not (
-        processed / "final_test_incidents" / authorization.attempt_id
-    ).exists()
+    assert not (processed / "final_test_incidents" / authorization.attempt_id).exists()
 
 
 def test_failed_attempt_archive_recovers_after_source_rename(
@@ -219,20 +583,22 @@ def test_failed_attempt_archive_recovers_after_source_rename(
     (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
     from ashare_multifactor.final_test import incident_archive
 
-    original_assert = incident_archive.assert_directory_entry
-    calls = 0
+    original_rename = incident_archive.atomic_rename_no_replace_at
 
-    def interrupt_after_rename(*args: object, **kwargs: object) -> None:
-        nonlocal calls
-        original_assert(*args, **kwargs)
-        calls += 1
-        if calls == 3:
+    def interrupt_after_source_rename(
+        source_fd: int,
+        source_name: str,
+        destination_fd: int,
+        destination_name: str,
+    ) -> None:
+        original_rename(source_fd, source_name, destination_fd, destination_name)
+        if destination_name == authorization.attempt_id:
             raise KeyboardInterrupt("injected crash after source rename")
 
     monkeypatch.setattr(
         incident_archive,
-        "assert_directory_entry",
-        interrupt_after_rename,
+        "atomic_rename_no_replace_at",
+        interrupt_after_source_rename,
     )
     with pytest.raises(KeyboardInterrupt, match="after source rename"):
         final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
@@ -242,13 +608,16 @@ def test_failed_attempt_archive_recovers_after_source_rename(
     assert destination.is_dir()
     monkeypatch.setattr(
         incident_archive,
-        "assert_directory_entry",
-        original_assert,
+        "atomic_rename_no_replace_at",
+        original_rename,
     )
-    assert final_test.archive_failed_attempt(
-        processed,
-        attempt_id=authorization.attempt_id,
-    ) == destination
+    assert (
+        final_test.archive_failed_attempt(
+            processed,
+            attempt_id=authorization.attempt_id,
+        )
+        == destination
+    )
 
 
 def test_failed_attempt_archive_rejects_mixed_authoritative_root(
@@ -276,9 +645,7 @@ def test_failed_attempt_archive_rejects_mixed_authoritative_root(
         final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
 
     assert root.is_dir()
-    assert not (
-        processed / "final_test_incidents" / authorization.attempt_id
-    ).exists()
+    assert not (processed / "final_test_incidents" / authorization.attempt_id).exists()
 
 
 def test_failed_attempt_archive_recovers_orphan_manifest_temp(
@@ -342,6 +709,66 @@ def test_failed_attempt_archive_rejects_claim_attempt_identity_drift(
     assert root.is_dir()
 
 
+def test_failed_attempt_archive_rejects_claim_attempt_id_drift(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="unsupported market symbols",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    claim_path = root / "data-build-claim.json"
+    claim = json.loads(claim_path.read_text())
+    claim["attempt_id"] = "different-attempt"
+    claim_path.write_text(json.dumps(claim) + "\n")
+
+    with pytest.raises(ValueError, match="data claim.*published attempt"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert root.is_dir()
+
+
+def test_failed_attempt_archive_rejects_nonpublished_data_claim(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    processed = config.paths.processed
+    root = processed / "final_test"
+    attempts = root / "attempts"
+    append_attempt_state(attempts, attempt_id=authorization.attempt_id, state="preparing")
+    append_attempt_outcome(
+        attempts,
+        attempt_id=authorization.attempt_id,
+        status="failed",
+        authoritative=False,
+        reason="unsupported market symbols",
+    )
+    (attempts / f"{authorization.attempt_id}.preparation.lock").touch()
+    claim_path = root / "data-build-claim.json"
+    claim = json.loads(claim_path.read_text())
+    claim["status"] = "publishing"
+    claim_path.write_text(json.dumps(claim) + "\n")
+
+    with pytest.raises(ValueError, match="data claim.*published attempt"):
+        final_test.archive_failed_attempt(processed, attempt_id=authorization.attempt_id)
+
+    assert root.is_dir()
+
+
 def test_failed_attempt_archive_rejects_inventory_panel_identity_drift(
     tmp_path: Path,
 ) -> None:
@@ -367,9 +794,7 @@ def test_failed_attempt_archive_rejects_inventory_panel_identity_drift(
     inventory_path.write_text(json.dumps(inventory) + "\n")
     claim_path = root / "data-build-claim.json"
     claim = json.loads(claim_path.read_text())
-    claim["input_inventory"]["sha256"] = hashlib.sha256(
-        inventory_path.read_bytes()
-    ).hexdigest()
+    claim["input_inventory"]["sha256"] = hashlib.sha256(inventory_path.read_bytes()).hexdigest()
     claim["input_inventory"]["size_bytes"] = inventory_path.stat().st_size
     claim_path.write_text(json.dumps(claim) + "\n")
 

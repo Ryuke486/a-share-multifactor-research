@@ -16,7 +16,7 @@ from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.data.build import build_parquet_dataset
 from ashare_multifactor.final_test.data_extension import build_final_test_daily_panel
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
-from ashare_multifactor.final_test.registry import register_attempt
+from ashare_multifactor.final_test.registry import register_attempt, save_token_snapshot
 
 
 FINAL_START = date(2022, 1, 1)
@@ -72,17 +72,26 @@ def _authorized_context(tmp_path: Path, config) -> tuple[Path, FinalTestAuthoriz
         run_id="stage8-release",
         seal=seal,
     )
+    token_bytes = b'{"fixture":"opening-token"}\n'
+    token_sha256 = hashlib.sha256(token_bytes).hexdigest()
+    registry_root = config.paths.processed / "final_test/attempts"
     record = register_attempt(
-        config.paths.processed / "final_test/attempts",
+        registry_root,
         attempt_id="attempt-001",
         git_commit=commit,
         git_tree=tree,
-        token_sha256="d" * 64,
+        token_sha256=token_sha256,
         sealed_protocol_sha256=seal,
         robustness_release="stage8-release",
         approval_id="approved-stage9",
         robustness_manifest_sha256=str(getattr(robustness, "manifest_sha256")),
         robustness_lineage_sha256=sha256_file(Path(getattr(robustness, "lineage"))),
+    )
+    save_token_snapshot(
+        registry_root,
+        attempt_id="attempt-001",
+        token_bytes=token_bytes,
+        expected_sha256=token_sha256,
     )
     authorization = FinalTestAuthorization(
         attempt_id="attempt-001",

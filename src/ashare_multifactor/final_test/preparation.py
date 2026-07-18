@@ -234,7 +234,7 @@ def verify_preparation(
     final_root = final_root.resolve()
     if authorization.attempt_id != attempt_id:
         raise ValueError("preparation attempt differs from authorization")
-    if expected_state not in {"awaiting_official_evidence", "executing"}:
+    if expected_state not in {"awaiting_official_evidence", "executing", "failed"}:
         raise ValueError("invalid final-test preparation expected state")
     state = resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
     if state["state"] != expected_state:

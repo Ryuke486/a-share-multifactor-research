@@ -177,6 +177,8 @@ def _append_attempt_state_unlocked(
     identities: dict[str, str],
 ) -> AttemptStateEvent:
     current = _resolve_attempt_state_unlocked(registry_root, attempt_id)
+    if current["state"] in {"failed", "published"}:
+        raise ValueError("terminal final-test state cannot transition")
     expected = _STATE_SEQUENCE.get(str(current["state"]), -1) + 1
     if _STATE_SEQUENCE.get(state) != expected:
         raise ValueError("invalid final-test state transition")
