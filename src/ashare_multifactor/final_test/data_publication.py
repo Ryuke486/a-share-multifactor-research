@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import base64
 import hashlib
 import json
 import os
 from pathlib import Path
+from typing import Iterator
 from uuid import uuid4
 
 from ashare_multifactor.final_test.data_inventory import (
@@ -17,7 +19,8 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     assert_directory_entry,
     atomic_rename_no_replace_at,
     directory_identity,
-    opened_directory,
+    open_directory_at,
+    open_directory_path,
     opened_directory_at,
     read_bytes_at,
     write_bytes_exclusive_at,
@@ -32,11 +35,86 @@ class FinalTestDataResolution:
     data_manifest_sha256: str
 
 
+@dataclass
+class _PublicationRoot:
+    data_parent_fd: int
+    data_fd: int
+    processed_fd: int
+    final_fd: int
+    data_name: str
+    processed_name: str
+    final_name: str
+    data_identity: tuple[int, int]
+    processed_identity: tuple[int, int]
+    final_identity: tuple[int, int]
+
+    def assert_bound(self) -> None:
+        assert_directory_entry(
+            self.data_parent_fd,
+            self.data_name,
+            expected=self.data_identity,
+            label="final-test data root",
+        )
+        assert_directory_entry(
+            self.data_fd,
+            self.processed_name,
+            expected=self.processed_identity,
+            label="final-test processed root",
+        )
+        assert_directory_entry(
+            self.processed_fd,
+            self.final_name,
+            expected=self.final_identity,
+            label="final-test root",
+        )
+
+
+@contextmanager
+def _opened_publication_root(final_root: Path) -> Iterator[_PublicationRoot]:
+    data_root = final_root.parent.parent
+    data_parent_fd = open_directory_path(
+        data_root.parent, label="final-test data-root parent"
+    )
+    data_fd: int | None = None
+    processed_fd: int | None = None
+    final_fd: int | None = None
+    try:
+        data_fd = open_directory_at(
+            data_parent_fd, data_root.name, label="final-test data root"
+        )
+        processed_fd = open_directory_at(
+            data_fd, final_root.parent.name, label="final-test processed root"
+        )
+        final_fd = open_directory_at(
+            processed_fd, final_root.name, label="final-test root"
+        )
+        directories = _PublicationRoot(
+            data_parent_fd=data_parent_fd,
+            data_fd=data_fd,
+            processed_fd=processed_fd,
+            final_fd=final_fd,
+            data_name=data_root.name,
+            processed_name=final_root.parent.name,
+            final_name=final_root.name,
+            data_identity=directory_identity(data_fd),
+            processed_identity=directory_identity(processed_fd),
+            final_identity=directory_identity(final_fd),
+        )
+        directories.assert_bound()
+        yield directories
+        directories.assert_bound()
+    finally:
+        for descriptor in (final_fd, processed_fd, data_fd, data_parent_fd):
+            if descriptor is not None:
+                os.close(descriptor)
+
+
 def claim_build(
     final_root: Path,
     authorization: FinalTestAuthorization,
     *,
     input_inventory: dict[str, object] | None = None,
+    bound_inventory_bytes: bytes | None = None,
     staging_relative_path: str | None = None,
 ) -> Path:
     final_root.mkdir(parents=True, exist_ok=True)
@@ -51,53 +129,81 @@ def claim_build(
     claim_bytes = (
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
-    with opened_directory(
-        final_root.parent, label="final-test processed parent"
-    ) as parent_fd:
-        with opened_directory_at(
-            parent_fd, final_root.name, label="final-test root"
-        ) as final_fd:
-            final_identity = directory_identity(final_fd)
-            try:
-                write_bytes_exclusive_at(final_fd, temporary_name, claim_bytes)
-                temporary_metadata = os.stat(
-                    temporary_name, dir_fd=final_fd, follow_symlinks=False
-                )
-                try:
-                    atomic_rename_no_replace_at(
-                        final_fd,
-                        temporary_name,
-                        final_fd,
-                        claim_path.name,
-                    )
-                except FileExistsError as error:
-                    raise ValueError("final-test data build is already claimed") from error
-                installed_metadata = os.stat(
-                    claim_path.name, dir_fd=final_fd, follow_symlinks=False
-                )
-                installed_bytes = read_bytes_at(
-                    final_fd, claim_path.name, label="final-test data claim"
-                )
-                if (
-                    (installed_metadata.st_dev, installed_metadata.st_ino)
-                    != (temporary_metadata.st_dev, temporary_metadata.st_ino)
-                    or installed_bytes != claim_bytes
-                ):
-                    _unlink_if_identity(final_fd, claim_path.name, installed_metadata)
-                    raise ValueError("final-test data claim identity or bytes changed")
-            finally:
-                try:
-                    os.unlink(temporary_name, dir_fd=final_fd)
-                except FileNotFoundError:
-                    pass
-            assert_directory_entry(
-                parent_fd,
-                final_root.name,
-                expected=final_identity,
-                label="final-test root",
+    with _opened_publication_root(final_root) as directories:
+        final_fd = directories.final_fd
+        if bound_inventory_bytes is not None:
+            _assert_bound_inventory_at(
+                final_fd, input_inventory, bound_inventory_bytes
             )
-            os.fsync(final_fd)
+        try:
+            write_bytes_exclusive_at(final_fd, temporary_name, claim_bytes)
+            temporary_metadata = os.stat(
+                temporary_name, dir_fd=final_fd, follow_symlinks=False
+            )
+            try:
+                atomic_rename_no_replace_at(
+                    final_fd,
+                    temporary_name,
+                    final_fd,
+                    claim_path.name,
+                )
+            except FileExistsError as error:
+                raise ValueError("final-test data build is already claimed") from error
+            installed_metadata = os.stat(
+                claim_path.name, dir_fd=final_fd, follow_symlinks=False
+            )
+            installed_bytes = read_bytes_at(
+                final_fd, claim_path.name, label="final-test data claim"
+            )
+            if (
+                (installed_metadata.st_dev, installed_metadata.st_ino)
+                != (temporary_metadata.st_dev, temporary_metadata.st_ino)
+                or installed_bytes != claim_bytes
+            ):
+                _unlink_if_identity(final_fd, claim_path.name, installed_metadata)
+                raise ValueError("final-test data claim identity or bytes changed")
+        finally:
+            try:
+                os.unlink(temporary_name, dir_fd=final_fd)
+            except FileNotFoundError:
+                pass
+        if bound_inventory_bytes is not None:
+            _assert_bound_inventory_at(
+                final_fd, input_inventory, bound_inventory_bytes
+            )
+        directories.assert_bound()
+        os.fsync(final_fd)
     return claim_path
+
+
+def _assert_bound_inventory_at(
+    final_fd: int,
+    record: dict[str, object] | None,
+    expected_bytes: bytes,
+) -> None:
+    if not isinstance(record, dict):
+        raise ValueError("final-test claim lacks bound input inventory")
+    relative = record.get("relative_path")
+    parts = Path(str(relative)).parts
+    if (
+        not isinstance(relative, str)
+        or len(parts) != 2
+        or parts[0] != "data-build-inputs"
+        or Path(relative).is_absolute()
+    ):
+        raise ValueError("final-test bound input inventory path is invalid")
+    with opened_directory_at(
+        final_fd, parts[0], label="final-test bound input inventory root"
+    ) as inventory_fd:
+        actual = read_bytes_at(
+            inventory_fd, parts[1], label="final-test bound input inventory"
+        )
+    if (
+        actual != expected_bytes
+        or record.get("sha256") != hashlib.sha256(expected_bytes).hexdigest()
+        or record.get("size_bytes") != len(expected_bytes)
+    ):
+        raise ValueError("final-test bound input inventory bytes differ")
 
 
 def update_claim(
@@ -108,137 +214,138 @@ def update_claim(
     error: BaseException | None = None,
     data_manifest: dict[str, object] | None = None,
 ) -> None:
-    with opened_directory(
-        path.parent.parent, label="final-test processed parent"
-    ) as parent_fd:
-        with opened_directory_at(
-            parent_fd, path.parent.name, label="final-test root"
-        ) as final_fd:
-            final_identity = directory_identity(final_fd)
-            lock_name = f".{path.name}.lock"
-            current_bytes = read_bytes_at(
-                final_fd, path.name, label="final-test data claim"
+    with _opened_publication_root(path.parent) as directories:
+        update_claim_at(
+            directories.final_fd,
+            path.name,
+            authorization,
+            status=status,
+            error=error,
+            data_manifest=data_manifest,
+        )
+        directories.assert_bound()
+
+
+def update_claim_at(
+    final_fd: int,
+    claim_name: str,
+    authorization: FinalTestAuthorization,
+    *,
+    status: str,
+    error: BaseException | None = None,
+    data_manifest: dict[str, object] | None = None,
+) -> None:
+    lock_name = f".{claim_name}.lock"
+    current_bytes = read_bytes_at(
+        final_fd, claim_name, label="final-test data claim"
+    )
+    current_metadata = os.stat(
+        claim_name, dir_fd=final_fd, follow_symlinks=False
+    )
+    try:
+        payload = _updated_claim_payload(
+            current_bytes,
+            authorization,
+            status=status,
+            error=error,
+            data_manifest=data_manifest,
+        )
+    except ValueError:
+        if _claim_transaction_exists(final_fd, lock_name):
+            _, completed = _recover_claim_transaction(
+                final_fd,
+                claim_name,
+                lock_name,
+                authorization,
+                current_bytes=current_bytes,
+                expected_bytes=None,
             )
-            current_metadata = os.stat(
-                path.name, dir_fd=final_fd, follow_symlinks=False
-            )
-            try:
-                payload = _updated_claim_payload(
-                    current_bytes,
-                    authorization,
-                    status=status,
-                    error=error,
-                    data_manifest=data_manifest,
-                )
-            except ValueError:
-                if _claim_transaction_exists(final_fd, lock_name):
-                    _, completed = _recover_claim_transaction(
-                        final_fd,
-                        path.name,
-                        lock_name,
-                        authorization,
-                        current_bytes=current_bytes,
-                        expected_bytes=None,
-                    )
-                    if completed:
-                        return
-                raise
-            expected_bytes = _claim_bytes(payload)
-            temporary_name = f".{path.name}.{uuid4().hex}.tmp"
-            transaction = {
-                "schema_version": "1",
-                "attempt_id": authorization.attempt_id,
-                "approval_id": authorization.approval_id,
-                "old_sha256": hashlib.sha256(current_bytes).hexdigest(),
-                "new_sha256": hashlib.sha256(expected_bytes).hexdigest(),
-                "new_bytes_base64": base64.b64encode(expected_bytes).decode("ascii"),
-                "temporary_name": temporary_name,
-            }
-            transaction_bytes = _claim_bytes(transaction)
-            recovered = False
-            try:
-                write_bytes_exclusive_at(final_fd, lock_name, transaction_bytes)
-                os.fsync(final_fd)
-            except FileExistsError:
-                temporary_name, recovered = _recover_claim_transaction(
-                    final_fd,
-                    path.name,
-                    lock_name,
-                    authorization,
-                    current_bytes=current_bytes,
-                    expected_bytes=expected_bytes,
-                )
-                if recovered:
-                    assert_directory_entry(
-                        parent_fd,
-                        path.parent.name,
-                        expected=final_identity,
-                        label="final-test root",
-                    )
-                    return
-            try:
-                try:
-                    os.unlink(temporary_name, dir_fd=final_fd)
-                except FileNotFoundError:
-                    pass
-                write_bytes_exclusive_at(final_fd, temporary_name, expected_bytes)
-                temporary_metadata = os.stat(
-                    temporary_name, dir_fd=final_fd, follow_symlinks=False
-                )
-                current_again = os.stat(
-                    path.name, dir_fd=final_fd, follow_symlinks=False
-                )
-                if (current_again.st_dev, current_again.st_ino) != (
-                    current_metadata.st_dev,
-                    current_metadata.st_ino,
-                ) or read_bytes_at(
-                    final_fd, path.name, label="final-test data claim"
-                ) != current_bytes:
-                    raise ValueError("final-test data claim identity changed")
-                os.replace(
-                    temporary_name,
-                    path.name,
-                    src_dir_fd=final_fd,
-                    dst_dir_fd=final_fd,
-                )
-                installed_metadata = os.stat(
-                    path.name, dir_fd=final_fd, follow_symlinks=False
-                )
-                installed_bytes = read_bytes_at(
-                    final_fd, path.name, label="final-test data claim"
-                )
-                if (
-                    (installed_metadata.st_dev, installed_metadata.st_ino)
-                    != (temporary_metadata.st_dev, temporary_metadata.st_ino)
-                    or installed_bytes != expected_bytes
-                ):
-                    _unlink_if_identity(final_fd, path.name, installed_metadata)
-                    write_bytes_exclusive_at(final_fd, path.name, current_bytes)
-                    raise ValueError("final-test data claim identity or bytes changed")
-                assert_directory_entry(
-                    parent_fd,
-                    path.parent.name,
-                    expected=final_identity,
-                    label="final-test root",
-                )
-                os.fsync(final_fd)
-            except Exception:
-                try:
-                    os.unlink(temporary_name, dir_fd=final_fd)
-                except FileNotFoundError:
-                    pass
-                try:
-                    os.unlink(lock_name, dir_fd=final_fd)
-                except FileNotFoundError:
-                    pass
-                raise
-            else:
-                try:
-                    os.unlink(temporary_name, dir_fd=final_fd)
-                except FileNotFoundError:
-                    pass
-                os.unlink(lock_name, dir_fd=final_fd)
-                os.fsync(final_fd)
+            if completed:
+                return
+        raise
+    expected_bytes = _claim_bytes(payload)
+    temporary_name = f".{claim_name}.{uuid4().hex}.tmp"
+    transaction = {
+        "schema_version": "1",
+        "attempt_id": authorization.attempt_id,
+        "approval_id": authorization.approval_id,
+        "old_sha256": hashlib.sha256(current_bytes).hexdigest(),
+        "new_sha256": hashlib.sha256(expected_bytes).hexdigest(),
+        "new_bytes_base64": base64.b64encode(expected_bytes).decode("ascii"),
+        "temporary_name": temporary_name,
+    }
+    transaction_bytes = _claim_bytes(transaction)
+    try:
+        write_bytes_exclusive_at(final_fd, lock_name, transaction_bytes)
+        os.fsync(final_fd)
+    except FileExistsError:
+        temporary_name, recovered = _recover_claim_transaction(
+            final_fd,
+            claim_name,
+            lock_name,
+            authorization,
+            current_bytes=current_bytes,
+            expected_bytes=expected_bytes,
+        )
+        if recovered:
+            return
+    try:
+        try:
+            os.unlink(temporary_name, dir_fd=final_fd)
+        except FileNotFoundError:
+            pass
+        write_bytes_exclusive_at(final_fd, temporary_name, expected_bytes)
+        temporary_metadata = os.stat(
+            temporary_name, dir_fd=final_fd, follow_symlinks=False
+        )
+        current_again = os.stat(
+            claim_name, dir_fd=final_fd, follow_symlinks=False
+        )
+        if (current_again.st_dev, current_again.st_ino) != (
+            current_metadata.st_dev,
+            current_metadata.st_ino,
+        ) or read_bytes_at(
+            final_fd, claim_name, label="final-test data claim"
+        ) != current_bytes:
+            raise ValueError("final-test data claim identity changed")
+        os.replace(
+            temporary_name,
+            claim_name,
+            src_dir_fd=final_fd,
+            dst_dir_fd=final_fd,
+        )
+        installed_metadata = os.stat(
+            claim_name, dir_fd=final_fd, follow_symlinks=False
+        )
+        installed_bytes = read_bytes_at(
+            final_fd, claim_name, label="final-test data claim"
+        )
+        if (
+            (installed_metadata.st_dev, installed_metadata.st_ino)
+            != (temporary_metadata.st_dev, temporary_metadata.st_ino)
+            or installed_bytes != expected_bytes
+        ):
+            _unlink_if_identity(final_fd, claim_name, installed_metadata)
+            write_bytes_exclusive_at(final_fd, claim_name, current_bytes)
+            raise ValueError("final-test data claim identity or bytes changed")
+        os.fsync(final_fd)
+    except Exception:
+        try:
+            os.unlink(temporary_name, dir_fd=final_fd)
+        except FileNotFoundError:
+            pass
+        try:
+            os.unlink(lock_name, dir_fd=final_fd)
+        except FileNotFoundError:
+            pass
+        raise
+    else:
+        try:
+            os.unlink(temporary_name, dir_fd=final_fd)
+        except FileNotFoundError:
+            pass
+        os.unlink(lock_name, dir_fd=final_fd)
+        os.fsync(final_fd)
 
 
 def _recover_claim_transaction(

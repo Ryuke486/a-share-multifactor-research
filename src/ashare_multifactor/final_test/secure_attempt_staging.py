@@ -402,6 +402,7 @@ def snapshot_attempt_panel(
     )
     try:
         snapshot.detach_from_namespace()
+        snapshot.freeze_anonymous()
         return snapshot
     except BaseException:
         snapshot.close()

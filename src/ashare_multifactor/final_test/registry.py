@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 from typing import Any, Mapping
 from uuid import uuid4
 
@@ -79,6 +80,24 @@ def _attempt_transition_lock(registry_root: Path, attempt_id: str):
     """Serialize state transitions while retaining exclusive event writes."""
     with _attempt_lock(registry_root, attempt_id, fcntl.LOCK_EX):
         yield
+
+
+@contextmanager
+def _attempt_transition_lock_at(registry_fd: int, attempt_id: str):
+    descriptor = os.open(
+        f"{attempt_id}.lock",
+        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW"),
+        0o600,
+        dir_fd=registry_fd,
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
 
 
 @contextmanager
@@ -575,6 +594,50 @@ def _resolve_attempt_state_unlocked(
     return resolved
 
 
+def _resolve_attempt_state_unlocked_at(
+    registry_fd: int, attempt_id: str
+) -> dict[str, Any]:
+    record = _read_registry_json_at(registry_fd, f"{attempt_id}.json")
+    if (
+        record.get("attempt_id") != attempt_id
+        or record.get("status") != "registered"
+        or record.get("authoritative") is not False
+    ):
+        raise ValueError("invalid final-test attempt registration")
+    events = _load_state_events_at(registry_fd, attempt_id)
+    state = "registered"
+    identities: dict[str, str] = {}
+    for expected_sequence, event in enumerate(events, start=1):
+        expected_state = _STATE_BY_SEQUENCE.get(expected_sequence)
+        if (
+            expected_state is None
+            or event["sequence"] != expected_sequence
+            or event["state"] != expected_state
+        ):
+            raise ValueError("invalid final-test state event")
+        _validate_state_identity_inheritance(
+            expected_state, identities, event["identities"]
+        )
+        state = expected_state
+        identities = event["identities"]
+    outcome_name = f"{attempt_id}.outcome.json"
+    if _entry_exists_at(registry_fd, outcome_name):
+        outcome = _read_registry_json_at(registry_fd, outcome_name)
+        _validate_terminal_outcome(outcome, attempt_id)
+        if outcome["status"] == "succeeded" and state != "executing":
+            raise ValueError("succeeded outcome requires executing state")
+        state = "published" if outcome["status"] == "succeeded" else "failed"
+    resolved = dict(record)
+    resolved.update(
+        {
+            "state": state,
+            "sequence": _STATE_SEQUENCE.get(state, len(events)),
+            "identities": identities,
+        }
+    )
+    return resolved
+
+
 def _load_state_events(registry_root: Path, attempt_id: str) -> list[AttemptStateEvent]:
     events_by_sequence: dict[int, AttemptStateEvent] = {}
     prefix = f"{attempt_id}.state."
@@ -589,6 +652,35 @@ def _load_state_events(registry_root: Path, attempt_id: str) -> list[AttemptStat
         paths_by_sequence[sequence] = (path, match)
     for sequence, (path, match) in sorted(paths_by_sequence.items()):
         event = _read_registry_json(path)
+        if (
+            event.get("attempt_id") != attempt_id
+            or event.get("sequence") != sequence
+            or event.get("state") != match["state"]
+            or not isinstance(event.get("recorded_at"), str)
+            or not event["recorded_at"]
+            or not isinstance(event.get("identities"), dict)
+        ):
+            raise ValueError("invalid final-test state event")
+        event["identities"] = _validate_state_identities(
+            str(event["state"]), event["identities"]
+        )
+        events_by_sequence[sequence] = event
+    return [events_by_sequence[sequence] for sequence in sorted(events_by_sequence)]
+
+
+def _load_state_events_at(
+    registry_fd: int, attempt_id: str
+) -> list[AttemptStateEvent]:
+    events_by_sequence: dict[int, AttemptStateEvent] = {}
+    prefix = f"{attempt_id}.state."
+    for name in sorted(entry for entry in os.listdir(registry_fd) if entry.startswith(prefix)):
+        match = _STATE_FILENAME.fullmatch(name)
+        if match is None or match["attempt_id"] != attempt_id:
+            raise ValueError("invalid final-test state event filename")
+        sequence = int(match["sequence"])
+        if sequence in events_by_sequence:
+            raise ValueError("duplicate state sequence")
+        event = _read_registry_json_at(registry_fd, name)
         if (
             event.get("attempt_id") != attempt_id
             or event.get("sequence") != sequence
@@ -671,6 +763,37 @@ def _read_registry_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _entry_exists_at(directory_fd: int, name: str) -> bool:
+    try:
+        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"invalid final-test registry record: {name}")
+    return True
+
+
+def _read_registry_json_at(directory_fd: int, name: str) -> dict[str, Any]:
+    try:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            dir_fd=directory_fd,
+        )
+    except (FileNotFoundError, OSError) as error:
+        raise ValueError(f"invalid final-test registry record: {name}") from error
+    try:
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            value = json.load(stream)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"invalid final-test registry record: {name}") from error
+    finally:
+        os.close(descriptor)
+    if not isinstance(value, dict):
+        raise ValueError(f"invalid final-test registry record: {name}")
+    return value
+
+
 def _json_bytes(payload: dict[str, Any]) -> bytes:
     return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
@@ -730,6 +853,56 @@ def append_attempt_outcome(
         try:
             _write_exclusive(
                 destination,
+                _json_bytes(payload),
+            )
+        except FileExistsError as exc:
+            raise ValueError("final-test attempt outcome is already recorded") from exc
+        return payload
+
+
+def append_attempt_outcome_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    status: str,
+    authoritative: bool,
+    reason: str,
+    release_run_id: str | None = None,
+    release_manifest_sha256: str | None = None,
+) -> dict[str, Any]:
+    """Append a terminal outcome through one caller-held registry descriptor."""
+    validate_publication_id(attempt_id)
+    with _attempt_transition_lock_at(registry_fd, attempt_id):
+        if status not in {"failed", "succeeded"}:
+            raise ValueError("invalid final-test attempt outcome")
+        if authoritative != (status == "succeeded"):
+            raise ValueError("only a succeeded final-test outcome can be authoritative")
+        if not reason.strip():
+            raise ValueError("final-test attempt outcome reason is required")
+        if authoritative and (not release_run_id or not release_manifest_sha256):
+            raise ValueError("authoritative outcome requires release identity")
+        payload: dict[str, Any] = {
+            "attempt_id": attempt_id,
+            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "status": status,
+            "authoritative": authoritative,
+            "reason": reason.strip(),
+        }
+        if release_run_id is not None:
+            payload["release_run_id"] = release_run_id
+        if release_manifest_sha256 is not None:
+            payload["release_manifest_sha256"] = release_manifest_sha256
+        _validate_terminal_outcome(payload, attempt_id)
+        if (
+            status == "succeeded"
+            and _resolve_attempt_state_unlocked_at(registry_fd, attempt_id)["state"]
+            != "executing"
+        ):
+            raise ValueError("succeeded outcome requires executing state")
+        try:
+            _write_exclusive_at(
+                registry_fd,
+                f"{attempt_id}.outcome.json",
                 _json_bytes(payload),
             )
         except FileExistsError as exc:
@@ -823,6 +996,43 @@ def append_prepared_publication(
     return payload
 
 
+def append_prepared_publication_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    release_run_id: str,
+    sealed_protocol_sha256: str,
+    publication_identity: Mapping[str, object],
+) -> dict[str, Any]:
+    validate_publication_id(attempt_id)
+    validate_publication_id(release_run_id)
+    if _SHA256.fullmatch(sealed_protocol_sha256) is None:
+        raise ValueError("prepared publication identity differs")
+    name = f"{attempt_id}.prepared.json"
+    expected = {
+        "attempt_id": attempt_id,
+        "status": "prepared",
+        "authoritative": False,
+        "release_run_id": release_run_id,
+        "sealed_protocol_sha256": sealed_protocol_sha256,
+        **_validate_prepared_publication_identity(publication_identity),
+    }
+    if _entry_exists_at(registry_fd, name):
+        existing = _read_registry_json_at(registry_fd, name)
+        if _prepared_publication_matches(existing, expected):
+            return existing
+        raise ValueError("prepared publication identity differs")
+    payload = {**expected, "recorded_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        _write_exclusive_at(registry_fd, name, _json_bytes(payload))
+    except FileExistsError:
+        existing = _read_registry_json_at(registry_fd, name)
+        if _prepared_publication_matches(existing, expected):
+            return existing
+        raise ValueError("prepared publication identity differs") from None
+    return payload
+
+
 def _prepared_publication_matches(
     payload: dict[str, Any], expected: dict[str, Any]
 ) -> bool:
@@ -867,6 +1077,41 @@ def resolve_prepared_publication(
     expected.update(identity)
     if publication_identity is not None and identity != _validate_prepared_publication_identity(
         publication_identity
+    ):
+        raise ValueError("prepared final-test publication identity differs")
+    if not _prepared_publication_matches(prepared, expected):
+        raise ValueError("prepared final-test publication identity differs")
+    return prepared
+
+
+def resolve_prepared_publication_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    release_run_id: str,
+    sealed_protocol_sha256: str,
+    publication_identity: Mapping[str, object] | None = None,
+) -> dict[str, Any]:
+    validate_publication_id(attempt_id)
+    validate_publication_id(release_run_id)
+    expected = {
+        "attempt_id": attempt_id,
+        "status": "prepared",
+        "authoritative": False,
+        "release_run_id": release_run_id,
+        "sealed_protocol_sha256": sealed_protocol_sha256,
+    }
+    prepared = _read_registry_json_at(
+        registry_fd, f"{attempt_id}.prepared.json"
+    )
+    if _SHA256.fullmatch(sealed_protocol_sha256) is None:
+        raise ValueError("prepared final-test publication identity differs")
+    identity = _validate_prepared_publication_identity(
+        {key: prepared.get(key) for key in _PREPARED_PUBLICATION_IDENTITY_FIELDS}
+    )
+    expected.update(identity)
+    if publication_identity is not None and identity != (
+        _validate_prepared_publication_identity(publication_identity)
     ):
         raise ValueError("prepared final-test publication identity differs")
     if not _prepared_publication_matches(prepared, expected):
@@ -1270,6 +1515,34 @@ def recover_prepared_publication(
     )
 
 
+def recover_prepared_publication_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    current: dict[str, object],
+) -> dict[str, Any]:
+    validate_publication_id(attempt_id)
+    run_id = str(current.get("run_id", ""))
+    raw = _read_registry_json_at(registry_fd, f"{attempt_id}.prepared.json")
+    resolve_prepared_publication_at(
+        registry_fd,
+        attempt_id=attempt_id,
+        release_run_id=run_id,
+        sealed_protocol_sha256=str(raw.get("sealed_protocol_sha256", "")),
+    )
+    if not re.fullmatch(r"[0-9a-f]{64}", str(current.get("manifest_sha256", ""))):
+        raise ValueError("prepared final-test publication differs from CURRENT")
+    return append_attempt_outcome_at(
+        registry_fd,
+        attempt_id=attempt_id,
+        status="succeeded",
+        authoritative=True,
+        reason="recovered verified prepared final-test publication",
+        release_run_id=str(current["run_id"]),
+        release_manifest_sha256=str(current["manifest_sha256"]),
+    )
+
+
 def save_token_snapshot(
     registry_root: Path,
     *,
@@ -1299,3 +1572,26 @@ def _write_exclusive(path: Path, payload: bytes) -> None:
         os.fsync(directory)
     finally:
         os.close(directory)
+
+
+def _write_exclusive_at(directory_fd: int, name: str, payload: bytes) -> None:
+    descriptor = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW"),
+        0o600,
+        dir_fd=directory_fd,
+    )
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(descriptor)
+    except BaseException:
+        try:
+            os.unlink(name, dir_fd=directory_fd)
+        except FileNotFoundError:
+            pass
+        raise
+    finally:
+        os.close(descriptor)
+    os.fsync(directory_fd)

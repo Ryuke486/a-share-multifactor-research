@@ -2961,6 +2961,160 @@ def test_attempt_staging_rejects_canonical_final_root_replacement(
         )
 
 
+@pytest.mark.parametrize(
+    "replacement", ["attempts", "final_test", "processed", "data_root"]
+)
+def test_final_publication_rejects_namespace_replacement_after_validation(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    append_prepared = pipeline_module.append_prepared_publication
+    replaced = False
+
+    def append_then_replace(*args: object, **kwargs: object):
+        nonlocal replaced
+        result = append_prepared(*args, **kwargs)
+        if not replaced:
+            processed = prepared_attempt.data_root / "processed"
+            final_root = processed / "final_test"
+            target = {
+                "attempts": final_root / "attempts",
+                "final_test": final_root,
+                "processed": processed,
+                "data_root": prepared_attempt.data_root,
+            }[replacement]
+            displaced = tmp_path / f"validated-{replacement}"
+            target.rename(displaced)
+            shutil.copytree(displaced, target)
+            replaced = True
+        return result
+
+    monkeypatch.setattr(
+        pipeline_module, "append_prepared_publication", append_then_replace
+    )
+
+    with pytest.raises(ValueError, match="identity changed|publication transaction"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+    outcome_name = f"{prepared_attempt.attempt_id}.outcome.json"
+    final_current = [
+        path
+        for path in tmp_path.rglob("CURRENT.json")
+        if path.parent.name in {"final_test", "validated-final_test"}
+    ]
+    assert not final_current
+    assert not list(tmp_path.rglob(outcome_name))
+    canonical_final = prepared_attempt.data_root / "processed/final_test"
+    assert not (canonical_final / "CURRENT.json").exists()
+
+
+@pytest.mark.parametrize("recovery_mode", ["prepared", "orphan", "current"])
+@pytest.mark.parametrize("replacement", ["attempts", "processed", "data_root"])
+def test_recovery_rejects_namespace_replacement_after_complete_validation(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    recovery_mode: str,
+    replacement: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+
+    if recovery_mode == "prepared":
+        def interrupt(*_args: object, **_kwargs: object):
+            raise KeyboardInterrupt("after prepared validation")
+    elif recovery_mode == "orphan":
+        def interrupt(*args: object, **kwargs: object):
+            return publish(*args, **kwargs, fail_before_switch=True)
+    else:
+        def interrupt(*args: object, **kwargs: object):
+            publish(*args, **kwargs)
+            raise KeyboardInterrupt("after CURRENT")
+
+    monkeypatch.setattr(pipeline_module, "publish_release", interrupt)
+    with pytest.raises((KeyboardInterrupt, RuntimeError)):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+
+    namespace_replaced = False
+
+    def replace_namespace() -> None:
+        nonlocal namespace_replaced
+        if namespace_replaced:
+            return
+        processed = prepared_attempt.data_root / "processed"
+        final_root = processed / "final_test"
+        target = {
+            "attempts": final_root / "attempts",
+            "processed": processed,
+            "data_root": prepared_attempt.data_root,
+        }[replacement]
+        displaced = tmp_path / f"recovery-{recovery_mode}-{replacement}"
+        target.rename(displaced)
+        shutil.copytree(displaced, target)
+        namespace_replaced = True
+
+    if recovery_mode == "prepared":
+        verify = pipeline_module._verify_prepared_staging
+
+        def verify_then_replace(*args: object, **kwargs: object):
+            result = verify(*args, **kwargs)
+            replace_namespace()
+            return result
+
+        monkeypatch.setattr(
+            pipeline_module, "_verify_prepared_staging", verify_then_replace
+        )
+    else:
+        verify = pipeline_module._verify_complete_release_identity
+
+        def verify_then_replace(*args: object, **kwargs: object) -> None:
+            verify(*args, **kwargs)
+            replace_namespace()
+
+        monkeypatch.setattr(
+            pipeline_module, "_verify_complete_release_identity", verify_then_replace
+        )
+
+    with pytest.raises(ValueError, match="identity changed|descriptor chain"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+    outcome_name = f"{prepared_attempt.attempt_id}.outcome.json"
+    assert not list(tmp_path.rglob(outcome_name))
+    if recovery_mode != "current":
+        final_current = [
+            path
+            for path in tmp_path.rglob("CURRENT.json")
+            if path.parent.name == "final_test"
+        ]
+        assert not final_current
+
+
 def test_frozen_release_semantics_reject_self_consistent_post_manifest_date_rewrite(
     prepared_attempt: PreparedAttempt,
     monkeypatch: pytest.MonkeyPatch,
@@ -3061,10 +3215,13 @@ def test_signals_backtest_and_release_share_attempt_bound_panel_snapshot(
     ).read_bytes() == original
 
 
-@pytest.mark.parametrize("replacement_scope", ["file", "subtree", "in_place"])
+@pytest.mark.parametrize(
+    "replacement_scope", ["file", "subtree", "in_place", "preheld_write_fd"]
+)
 def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
     tmp_path: Path,
     replacement_scope: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     canonical_panel = tmp_path / "daily_panel"
     partition = canonical_panel / "year=2022/part-000.parquet"
@@ -3108,7 +3265,22 @@ def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
     datasets.mkdir()
     datasets_fd = os.open(datasets, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     snapshot: object | None = None
+    held_writer: int | None = None
     try:
+        if replacement_scope == "preheld_write_fd":
+            copy_tree = staging_module.copy_frozen_tree_at
+
+            def copy_then_hold_writer(*args: object, **kwargs: object) -> None:
+                nonlocal held_writer
+                copy_tree(*args, **kwargs)
+                held_writer = os.open(
+                    datasets / "final_daily_panel" / partition.relative_to(canonical_panel),
+                    os.O_RDWR | os.O_NOFOLLOW,
+                )
+
+            monkeypatch.setattr(
+                staging_module, "copy_frozen_tree_at", copy_then_hold_writer
+            )
         snapshot = staging_module.snapshot_attempt_panel(
             canonical_panel,
             expected_manifest_sha256=sha256_file(
@@ -3135,7 +3307,13 @@ def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
             displaced = tmp_path / "displaced-panel"
             canonical_panel.rename(displaced)
             shutil.copytree(displaced, canonical_panel)
-        if replacement_scope == "in_place":
+        if replacement_scope == "preheld_write_fd":
+            assert held_writer is not None
+            changed = bytearray(original_bytes)
+            changed[len(changed) // 2] ^= 1
+            os.pwrite(held_writer, changed, 0)
+            assert os.fstat(held_writer).st_size == len(original_bytes)
+        elif replacement_scope == "in_place":
             canonical_path = canonical_panel / relative
             changed = bytearray(canonical_path.read_bytes())
             changed[len(changed) // 2] ^= 1
@@ -3161,6 +3339,8 @@ def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
         assert observed.equals(original)
         assert frozen[relative.as_posix()] == original_bytes
     finally:
+        if held_writer is not None:
+            os.close(held_writer)
         if snapshot is not None and not isinstance(snapshot, Path):
             snapshot.close()  # type: ignore[attr-defined]
         os.close(datasets_fd)

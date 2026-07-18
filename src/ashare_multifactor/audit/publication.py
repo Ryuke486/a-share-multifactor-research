@@ -220,6 +220,156 @@ def publish_release(
         raise
 
 
+def publish_release_at(
+    root: Path,
+    *,
+    root_parent_fd: int,
+    root_fd: int,
+    releases_fd: int,
+    run_id: str,
+    frozen_release_files: Mapping[str, bytes],
+    manifest_metadata: Mapping[str, object] | None = None,
+    current_must_be_absent: bool = False,
+    fail_before_switch: bool = False,
+) -> PublishedRelease:
+    """Publish through one caller-held publication-root descriptor chain."""
+    release_files = dict(frozen_release_files)
+    manifest_bytes = _json_payload_bytes(
+        {
+            "files": _release_records(release_files),
+            "run_id": run_id,
+            **dict(manifest_metadata or {}),
+        }
+    )
+    complete_files = {**release_files, "manifest.json": manifest_bytes}
+    root_identity = _descriptor_identity(root_fd)
+    releases_identity = _descriptor_identity(releases_fd)
+    _assert_entry_identity(
+        root_parent_fd, root.name, root_identity, label="publication root"
+    )
+    _assert_entry_identity(root_fd, "releases", releases_identity, label="release root")
+    try:
+        os.stat(run_id, dir_fd=releases_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        pass
+    else:
+        raise FileExistsError(f"release already exists: {run_id}")
+    temporary_name = f".{run_id}.{uuid4().hex}.tmp"
+    temporary_fd: int | None = None
+    try:
+        write_frozen_tree_at(
+            releases_fd,
+            temporary_name,
+            complete_files,
+            resumable=False,
+            label="release temporary staging",
+        )
+        temporary_fd = os.open(
+            temporary_name,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            dir_fd=releases_fd,
+        )
+        temporary_identity = _descriptor_identity(temporary_fd)
+        if read_frozen_tree_at(
+            temporary_fd, label="release temporary staging"
+        ) != complete_files:
+            raise ValueError("release temporary staging bytes differ")
+        _assert_entry_identity(
+            root_parent_fd, root.name, root_identity, label="publication root"
+        )
+        _assert_entry_identity(
+            root_fd, "releases", releases_identity, label="release root"
+        )
+        atomic_rename_no_replace_at(releases_fd, temporary_name, run_id)
+        _assert_entry_identity(
+            releases_fd, run_id, temporary_identity, label="published release"
+        )
+        manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+        if fail_before_switch:
+            raise RuntimeError("injected failure before pointer switch")
+        pointer = {"manifest_sha256": manifest_hash, "run_id": run_id}
+        if current_must_be_absent:
+            _write_current_at(root_fd, pointer)
+        else:
+            _replace_current_at(root_fd, pointer)
+        _assert_entry_identity(
+            root_parent_fd, root.name, root_identity, label="publication root"
+        )
+        _assert_entry_identity(
+            root_fd, "releases", releases_identity, label="release root"
+        )
+        _assert_entry_identity(
+            releases_fd, run_id, temporary_identity, label="published release"
+        )
+        return _published(
+            root,
+            run_id,
+            manifest_hash,
+            directory_identity=temporary_identity,
+        )
+    finally:
+        if temporary_fd is not None:
+            os.close(temporary_fd)
+
+
+def resolve_release_at(root: Path, releases_fd: int, run_id: str) -> PublishedRelease:
+    release, _, _ = resolve_release_package_at(root, releases_fd, run_id)
+    return release
+
+
+def resolve_release_package_at(
+    root: Path, releases_fd: int, run_id: str
+) -> tuple[PublishedRelease, dict[str, bytes], dict[str, object]]:
+    release_fd = os.open(
+        run_id,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=releases_fd,
+    )
+    try:
+        identity = _descriptor_identity(release_fd)
+        manifest_hash, files, manifest = _verify_release_at(
+            release_fd, run_id=run_id
+        )
+        _assert_entry_identity(releases_fd, run_id, identity, label="release")
+        return (
+            _published(root, run_id, manifest_hash, directory_identity=identity),
+            files,
+            manifest,
+        )
+    finally:
+        os.close(release_fd)
+
+
+def restore_current_at(
+    root_fd: int,
+    releases_fd: int,
+    release: PublishedRelease,
+) -> None:
+    release_fd = os.open(
+        release.run_id,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=releases_fd,
+    )
+    try:
+        identity = _descriptor_identity(release_fd)
+        if release.directory_identity is not None and identity != release.directory_identity:
+            raise ValueError("orphan release identity changed before CURRENT recovery")
+        manifest_hash, _, _ = _verify_release_at(
+            release_fd,
+            run_id=release.run_id,
+            expected_manifest_sha256=release.manifest_sha256,
+        )
+        _write_current_at(
+            root_fd,
+            {"run_id": release.run_id, "manifest_sha256": manifest_hash},
+        )
+        _assert_entry_identity(
+            releases_fd, release.run_id, identity, label="orphan release"
+        )
+    finally:
+        os.close(release_fd)
+
+
 def _freeze_staged_release(
     staged_datasets: Path,
     staged_artifacts: Path,

@@ -659,6 +659,36 @@ def test_orphan_inventory_before_claim_recovers_without_rediscovery(
     )
 
 
+def test_claim_rejects_inventory_replaced_after_in_memory_binding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    claim_build = data_extension._claim_build
+
+    def replace_then_claim(*args: object, **kwargs: object):
+        inventory_path = (
+            config.paths.processed
+            / "final_test/data-build-inputs"
+            / f"{authorization.attempt_id}.json"
+        )
+        inventory_path.write_text('{"attacker": true}\n', encoding="utf-8")
+        return claim_build(*args, **kwargs)
+
+    monkeypatch.setattr(data_extension, "_claim_build", replace_then_claim)
+
+    with pytest.raises(ValueError, match="bound input inventory bytes differ"):
+        _build(config, authorization, code_root)
+
+    final_root = config.paths.processed / "final_test"
+    assert not (final_root / "daily_panel").exists()
+    assert not (final_root / "data-build-claim.json").exists()
+
+
 @pytest.mark.parametrize(
     ("drift", "message"),
     [
@@ -943,9 +973,11 @@ def test_data_build_rejects_same_size_partition_rewrite_before_publish(
     assert not (config.paths.processed / "final_test/daily_panel").exists()
 
 
-def test_data_build_cannot_succeed_after_final_root_replaced_during_claim(
+@pytest.mark.parametrize("replacement", ["final_test", "processed", "data_root"])
+def test_data_build_cannot_succeed_after_namespace_replaced_during_claim(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    replacement: str,
 ) -> None:
     from ashare_multifactor.final_test import data_extension
 
@@ -957,9 +989,18 @@ def test_data_build_cannot_succeed_after_final_root_replaced_during_claim(
 
     def replace_then_update(*args: object, status: str, **kwargs: object) -> None:
         if status == "published":
-            displaced = tmp_path / "displaced-final-root-after-publish"
-            final_root.rename(displaced)
-            shutil.copytree(displaced, final_root)
+            target = {
+                "final_test": final_root,
+                "processed": config.paths.processed,
+                "data_root": config.paths.processed.parent,
+            }[replacement]
+            displaced = (
+                tmp_path.with_name(f"{tmp_path.name}-displaced-data-root")
+                if replacement == "data_root"
+                else tmp_path / f"displaced-{replacement}-after-publish"
+            )
+            target.rename(displaced)
+            shutil.copytree(displaced, target)
         update_claim(*args, status=status, **kwargs)
 
     monkeypatch.setattr(data_extension, "_update_claim", replace_then_update)

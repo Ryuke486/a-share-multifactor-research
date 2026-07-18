@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 from dataclasses import dataclass, replace
 import hashlib
 import json
@@ -35,8 +36,10 @@ class FrozenPanelSnapshot:
     root_identity: tuple[int, int]
     source: DailyPanelSource | None
     files: tuple[_HeldFile, ...]
+    partition_relatives: tuple[str, ...]
     manifest_sha256: str
     detached: bool = False
+    anonymous_frozen: bool = False
     _closed: bool = False
 
     def assert_bound(self) -> None:
@@ -49,7 +52,7 @@ class FrozenPanelSnapshot:
                 or metadata.st_size != item.size_bytes
             ):
                 raise ValueError("attempt-bound final daily panel file identity changed")
-            if self.detached and metadata.st_nlink != 0:
+            if self.anonymous_frozen and metadata.st_nlink != 0:
                 raise ValueError("attempt-bound final daily panel file is still mutable")
 
     def read_frozen_files(self) -> dict[str, bytes]:
@@ -83,6 +86,35 @@ class FrozenPanelSnapshot:
         self.detached = True
         self.assert_bound()
 
+    def freeze_anonymous(self) -> None:
+        if self._closed or not self.detached or self.anonymous_frozen:
+            raise ValueError("attempt-bound anonymous panel freeze state is invalid")
+        originals = self.files
+        frozen: list[_HeldFile] = []
+        try:
+            for item in originals:
+                frozen.append(_anonymous_clone(item))
+            by_relative = {item.relative_path: item for item in frozen}
+            if self.source is not None:
+                self.source = replace(
+                    self.source,
+                    files=tuple(
+                        _descriptor_path(by_relative[path].descriptor)
+                        for path in self.partition_relatives
+                    ),
+                )
+            self.files = tuple(frozen)
+            self.anonymous_frozen = True
+            self.assert_bound()
+        except BaseException:
+            for item in reversed(frozen):
+                os.close(item.descriptor)
+            raise
+        finally:
+            if self.anonymous_frozen:
+                for item in reversed(originals):
+                    os.close(item.descriptor)
+
 
 def bind_panel_snapshot(
     root: Path,
@@ -109,14 +141,16 @@ def bind_panel_snapshot(
         ):
             raise ValueError("attempt-bound final daily panel identity differs")
         source: DailyPanelSource | None = None
+        partition_relatives: tuple[str, ...] = ()
         if "manifest.json" in by_relative:
             validated = validate_panel_source(root, period)
             _verify_source_against_held_files(validated, by_relative)
+            partition_relatives = tuple(
+                path.relative_to(root).as_posix() for path in validated.files
+            )
             held_partitions = tuple(
-                _descriptor_path(
-                    by_relative[path.relative_to(root).as_posix()].descriptor
-                )
-                for path in validated.files
+                _descriptor_path(by_relative[path].descriptor)
+                for path in partition_relatives
             )
             source = replace(validated, files=held_partitions)
         snapshot = FrozenPanelSnapshot(
@@ -126,6 +160,7 @@ def bind_panel_snapshot(
             root_identity=directory_identity(root_fd),
             source=source,
             files=tuple(held),
+            partition_relatives=partition_relatives,
             manifest_sha256=expected_manifest_sha256,
         )
         snapshot.assert_bound()
@@ -191,6 +226,71 @@ def _unlink_bound_tree(
         ):
             raise ValueError("attempt-bound final daily panel detach identity differs")
         os.unlink(name, dir_fd=directory_fd)
+
+
+def _anonymous_clone(item: _HeldFile) -> _HeldFile:
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.tmpfile.argtypes = []
+    libc.tmpfile.restype = ctypes.c_void_p
+    libc.fileno.argtypes = [ctypes.c_void_p]
+    libc.fileno.restype = ctypes.c_int
+    libc.fclose.argtypes = [ctypes.c_void_p]
+    libc.fclose.restype = ctypes.c_int
+    stream = libc.tmpfile()
+    if not stream:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    writer = libc.fileno(stream)
+    if writer < 0:
+        error = ctypes.get_errno()
+        libc.fclose(stream)
+        raise OSError(error, os.strerror(error))
+    reader: int | None = None
+    try:
+        digest = hashlib.sha256()
+        offset = 0
+        while offset < item.size_bytes:
+            chunk = os.pread(
+                item.descriptor,
+                min(1024 * 1024, item.size_bytes - offset),
+                offset,
+            )
+            if not chunk:
+                raise ValueError("attempt-bound panel changed during anonymous freeze")
+            view = memoryview(chunk)
+            while view:
+                written = os.write(writer, view)
+                if written <= 0:
+                    raise OSError("anonymous panel freeze made no write progress")
+                view = view[written:]
+            digest.update(chunk)
+            offset += len(chunk)
+        if digest.hexdigest() != item.sha256:
+            raise ValueError("attempt-bound panel changed during anonymous freeze")
+        os.fsync(writer)
+        reader = os.open(f"/dev/fd/{writer}", os.O_RDONLY | no_follow_flag())
+        opened = os.fstat(reader)
+        if opened.st_nlink != 0:
+            raise ValueError("anonymous panel freeze unexpectedly has a name")
+        if opened.st_size != item.size_bytes:
+            raise ValueError("anonymous panel freeze size differs")
+        return _HeldFile(
+            relative_path=item.relative_path,
+            descriptor=reader,
+            identity=(opened.st_dev, opened.st_ino),
+            size_bytes=opened.st_size,
+            sha256=item.sha256,
+        )
+    except BaseException:
+        if reader is not None:
+            os.close(reader)
+        raise
+    finally:
+        if libc.fclose(stream) != 0:
+            error = ctypes.get_errno()
+            if reader is not None:
+                os.close(reader)
+            raise OSError(error, os.strerror(error))
 
 
 def _read_held_file(item: _HeldFile) -> bytes:

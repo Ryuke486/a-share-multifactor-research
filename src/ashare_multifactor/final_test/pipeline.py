@@ -18,10 +18,7 @@ import polars as pl
 from ashare_multifactor.audit.publication import (
     PublishedRelease,
     opened_verified_current,
-    publish_release,
     resolve_current,
-    resolve_release,
-    restore_current,
 )
 from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.audit.secure_tree import (
@@ -55,6 +52,10 @@ from ashare_multifactor.final_test.interrupted_recovery import (
     has_recoverable_execution_archive,
     recover_interrupted_execution,
 )
+from ashare_multifactor.final_test.publication_transaction import (
+    FinalPublicationTransaction,
+    PublicationNamespaceChanged,
+)
 from ashare_multifactor.final_test.recovery_secure_fs import (
     opened_directory,
     read_bytes_at,
@@ -68,16 +69,13 @@ from ashare_multifactor.final_test.resume import (
     verify_resume_coverages,
 )
 from ashare_multifactor.final_test.registry import (
-    append_prepared_publication,
     append_attempt_outcome,
     assert_no_authoritative_success,
     bind_execution_identity,
     bind_execution_input_manifest_hash,
     bind_execution_output_intent,
     claim_attempt_execution,
-    recover_prepared_publication,
     resolve_optional_prepared_publication,
-    resolve_prepared_publication,
     resolve_attempt_state_readonly,
     resolve_optional_execution_binding,
     resolve_execution_output_intent,
@@ -131,6 +129,20 @@ class FinalTestPipelineResult:
     attempt_root: Path
     release: PublishedRelease | None
     gate_failures: tuple[str, ...]
+
+
+def append_prepared_publication(
+    transaction: FinalPublicationTransaction, **kwargs: object
+) -> dict[str, object]:
+    """Test seam around the descriptor-bound prepared-record write."""
+    return transaction.append_prepared(**kwargs)
+
+
+def publish_release(
+    transaction: FinalPublicationTransaction, **kwargs: object
+) -> PublishedRelease:
+    """Test seam around the descriptor-bound release transaction."""
+    return transaction.publish(**kwargs)
 
 
 def run_final_test_release(
@@ -242,7 +254,11 @@ def resume_final_test_release(
                     final_root,
                     attempt_id=attempt_id,
                 )
-            if not outcome.exists() and not publication_may_need_recovery:
+            if (
+                not outcome.exists()
+                and not publication_may_need_recovery
+                and not isinstance(error, PublicationNamespaceChanged)
+            ):
                 append_attempt_outcome(
                     registry_root,
                     attempt_id=attempt_id,
@@ -605,35 +621,29 @@ def _execute_authorized_final_test(
             preflight=preflight,
             execution_identity=execution_identity,
         )
-        append_prepared_publication(
-            registry_root,
-            attempt_id=authorization.attempt_id,
-            release_run_id=run_id,
-            sealed_protocol_sha256=authorization.sealed_protocol_sha256,
-            publication_identity=publication_identity,
-        )
-        release = publish_release(
-            final_root,
-            run_id=run_id,
-            staged_datasets=datasets,
-            staged_artifacts=artifacts,
-            lineage=lineage,
-            manifest_metadata=_release_manifest_metadata(
-                preflight,
-                execution_identity=execution_identity,
-            ),
-            frozen_release_files=prepared_package.release_files,
-            current_must_be_absent=True,
-        )
-        append_attempt_outcome(
-            registry_root,
-            attempt_id=authorization.attempt_id,
-            status="succeeded",
-            authoritative=True,
-            reason="all frozen final-test publication gates passed",
-            release_run_id=release.run_id,
-            release_manifest_sha256=release.manifest_sha256,
-        )
+        with FinalPublicationTransaction.open(
+            final_root, attempt_id=authorization.attempt_id
+        ) as transaction:
+            transaction.crosscheck_attempt(attempt_directories)
+            append_prepared_publication(
+                transaction,
+                release_run_id=run_id,
+                sealed_protocol_sha256=authorization.sealed_protocol_sha256,
+                publication_identity=publication_identity,
+            )
+            release = publish_release(
+                transaction,
+                run_id=run_id,
+                release_files=prepared_package.release_files,
+                manifest_metadata=_release_manifest_metadata(
+                    preflight,
+                    execution_identity=execution_identity,
+                ),
+                current_must_be_absent=True,
+            )
+            transaction.append_success(
+                release, reason="all frozen final-test publication gates passed"
+            )
         return FinalTestPipelineResult(
             authorization.attempt_id,
             True,
@@ -958,39 +968,36 @@ def _recover_or_reject_current(
     preflight: ResumePreflight,
     run_id: str,
 ) -> FinalTestPipelineResult:
-    with opened_verified_current(final_root) as held:
-        release = held.release
-        if release.run_id != run_id:
-            raise ValueError("prepared final-test publication run identity differs")
-        _verify_complete_release_identity(
-            final_root,
-            registry_root=registry_root,
-            preflight=preflight,
-            run_id=run_id,
-            release=release,
-            held_release_files=held.files,
-            held_manifest=held.manifest,
-        )
-        held.assert_unchanged()
-        current = {
-            "run_id": release.run_id,
-            "manifest_sha256": release.manifest_sha256,
-        }
-        attempt_id = preflight.authorization.attempt_id
-        outcome = registry_root / f"{attempt_id}.outcome.json"
-        if outcome.exists():
-            raise ValueError("authoritative final-test run already succeeded")
-        recover_prepared_publication(
-            registry_root, attempt_id=attempt_id, current=current
-        )
-        held.assert_unchanged()
-        return FinalTestPipelineResult(
-            attempt_id,
-            True,
-            final_root / "attempt_runs" / attempt_id,
-            release,
-            (),
-        )
+    del registry_root
+    attempt_id = preflight.authorization.attempt_id
+    with FinalPublicationTransaction.open(
+        final_root, attempt_id=attempt_id
+    ) as transaction:
+        with opened_verified_current(final_root) as held:
+            transaction.crosscheck_current(held)
+            release = held.release
+            if release.run_id != run_id:
+                raise ValueError("prepared final-test publication run identity differs")
+            _verify_complete_release_identity(
+                final_root,
+                registry_root=final_root / "attempts",
+                preflight=preflight,
+                run_id=run_id,
+                release=release,
+                held_release_files=held.files,
+                held_manifest=held.manifest,
+                transaction=transaction,
+            )
+            held.assert_unchanged()
+            transaction.recover_prepared(release)
+            held.assert_unchanged()
+            return FinalTestPipelineResult(
+                attempt_id,
+                True,
+                final_root / "attempt_runs" / attempt_id,
+                release,
+                (),
+            )
 
 
 def _recover_orphan_release(
@@ -1000,22 +1007,38 @@ def _recover_orphan_release(
     preflight: ResumePreflight,
     run_id: str,
 ) -> FinalTestPipelineResult | None:
-    release = _verify_orphan_release(final_root, preflight=preflight, run_id=run_id)
-    if release is None:
+    del registry_root
+    if not (final_root / "releases" / run_id).exists():
         return None
-    restore_current(final_root, release)
-    recover_prepared_publication(
-        registry_root,
-        attempt_id=preflight.authorization.attempt_id,
-        current={"run_id": release.run_id, "manifest_sha256": release.manifest_sha256},
-    )
-    return FinalTestPipelineResult(
-        preflight.authorization.attempt_id,
-        True,
-        final_root / "attempt_runs" / preflight.authorization.attempt_id,
-        release,
-        (),
-    )
+    attempt_id = preflight.authorization.attempt_id
+    with FinalPublicationTransaction.open(
+        final_root, attempt_id=attempt_id
+    ) as transaction:
+        if not transaction.release_exists(run_id):
+            return None
+        release, release_files, manifest = transaction.resolve_release_package(run_id)
+        try:
+            _verify_complete_release_identity(
+                final_root,
+                registry_root=final_root / "attempts",
+                preflight=preflight,
+                run_id=run_id,
+                release=release,
+                held_release_files=release_files,
+                held_manifest=manifest,
+                transaction=transaction,
+            )
+        except ValueError as error:
+            raise ValueError("orphan final-test release identity differs") from error
+        transaction.restore_current(release)
+        transaction.recover_prepared(release)
+        return FinalTestPipelineResult(
+            attempt_id,
+            True,
+            final_root / "attempt_runs" / attempt_id,
+            release,
+            (),
+        )
 
 
 def _verify_orphan_release(
@@ -1024,21 +1047,29 @@ def _verify_orphan_release(
     preflight: ResumePreflight,
     run_id: str,
 ) -> PublishedRelease | None:
-    release_root = final_root / "releases" / run_id
-    if not release_root.exists():
+    if not (final_root / "releases" / run_id).exists():
         return None
-    release = resolve_release(final_root, run_id)
-    try:
-        _verify_complete_release_identity(
-            final_root,
-            registry_root=final_root / "attempts",
-            preflight=preflight,
-            run_id=run_id,
-            release=release,
-        )
-    except ValueError as error:
-        raise ValueError("orphan final-test release identity differs") from error
-    return release
+    attempt_id = preflight.authorization.attempt_id
+    with FinalPublicationTransaction.open(
+        final_root, attempt_id=attempt_id
+    ) as transaction:
+        if not transaction.release_exists(run_id):
+            return None
+        release, release_files, manifest = transaction.resolve_release_package(run_id)
+        try:
+            _verify_complete_release_identity(
+                final_root,
+                registry_root=final_root / "attempts",
+                preflight=preflight,
+                run_id=run_id,
+                release=release,
+                held_release_files=release_files,
+                held_manifest=manifest,
+                transaction=transaction,
+            )
+        except ValueError as error:
+            raise ValueError("orphan final-test release identity differs") from error
+        return release
 
 
 def _recover_prepared_staging(
@@ -1048,39 +1079,33 @@ def _recover_prepared_staging(
     preflight: ResumePreflight,
     run_id: str,
 ) -> FinalTestPipelineResult:
+    del registry_root
     attempt_id = preflight.authorization.attempt_id
     attempt_root = final_root / "attempt_runs" / attempt_id
-    execution_identity, lineage, publication_identity, prepared_package = (
-        _verify_prepared_staging(
+    with FinalPublicationTransaction.open(
+        final_root, attempt_id=attempt_id
+    ) as transaction:
+        execution_identity, _, _, prepared_package = _verify_prepared_staging(
             attempt_root,
-            registry_root=registry_root,
+            registry_root=final_root / "attempts",
             preflight=preflight,
             run_id=run_id,
+            transaction=transaction,
         )
-    )
-    release = publish_release(
-        final_root,
-        run_id=run_id,
-        staged_datasets=attempt_root / "datasets",
-        staged_artifacts=attempt_root / "artifacts",
-        lineage=lineage,
-        manifest_metadata=_release_manifest_metadata(
-            preflight,
-            execution_identity=execution_identity,
-        ),
-        frozen_release_files=prepared_package.release_files,
-        current_must_be_absent=True,
-    )
-    append_attempt_outcome(
-        registry_root,
-        attempt_id=attempt_id,
-        status="succeeded",
-        authoritative=True,
-        reason="recovered verified prepared final-test publication",
-        release_run_id=release.run_id,
-        release_manifest_sha256=release.manifest_sha256,
-    )
-    return FinalTestPipelineResult(attempt_id, True, attempt_root, release, ())
+        release = publish_release(
+            transaction,
+            run_id=run_id,
+            release_files=prepared_package.release_files,
+            manifest_metadata=_release_manifest_metadata(
+                preflight,
+                execution_identity=execution_identity,
+            ),
+            current_must_be_absent=True,
+        )
+        transaction.append_success(
+            release, reason="recovered verified prepared final-test publication"
+        )
+        return FinalTestPipelineResult(attempt_id, True, attempt_root, release, ())
 
 
 def _verify_complete_release_identity(
@@ -1092,6 +1117,7 @@ def _verify_complete_release_identity(
     release: PublishedRelease,
     held_release_files: Mapping[str, bytes] | None = None,
     held_manifest: Mapping[str, object] | None = None,
+    transaction: FinalPublicationTransaction,
 ) -> None:
     attempt_id = preflight.authorization.attempt_id
     attempt_root = final_root / "attempt_runs" / attempt_id
@@ -1101,6 +1127,7 @@ def _verify_complete_release_identity(
             registry_root=registry_root,
             preflight=preflight,
             run_id=run_id,
+            transaction=transaction,
         )
     )
     try:
@@ -1144,6 +1171,7 @@ def _verify_prepared_staging(
     registry_root: Path,
     preflight: ResumePreflight,
     run_id: str,
+    transaction: FinalPublicationTransaction,
 ) -> tuple[
     dict[str, object],
     dict[str, object],
@@ -1177,6 +1205,7 @@ def _verify_prepared_staging(
             artifacts_fd=directories.artifacts_fd,
         )
         _assert_attempt_directory(opened_root, directories)
+        transaction.crosscheck_attempt(directories)
     finally:
         directories.close()
     execution_identity = dict(package.execution_identity)
@@ -1188,9 +1217,7 @@ def _verify_prepared_staging(
         execution_identity=execution_identity,
     )
     try:
-        resolve_prepared_publication(
-            registry_root,
-            attempt_id=attempt_id,
+        transaction.resolve_prepared(
             release_run_id=run_id,
             sealed_protocol_sha256=preflight.authorization.sealed_protocol_sha256,
             publication_identity=publication_identity,

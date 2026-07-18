@@ -182,6 +182,8 @@ def _resolve_authorized_data(
 ):
     if panel_snapshot is not None:
         panel_snapshot.assert_bound()
+        if not panel_snapshot.anonymous_frozen:
+            raise ValueError("attempt-bound final-test data is not anonymously frozen")
         if panel_snapshot.source is None:
             raise ValueError("attempt-bound final-test data manifest is missing")
         return panel_snapshot.source

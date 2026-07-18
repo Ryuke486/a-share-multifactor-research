@@ -19,26 +19,44 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     atomic_rename_no_replace_at,
     directory_identity,
     open_directory_at,
-    opened_directory,
+    open_directory_path,
     write_bytes_exclusive_at,
 )
 
 
 @dataclass
 class Stage2Directories:
+    data_root_parent_fd: int
+    data_root_fd: int
     processed_fd: int
     final_fd: int
     data_staging_fd: int
     attempt_fd: int
     validation_fd: int
+    data_root_identity: tuple[int, int]
+    processed_identity: tuple[int, int]
     final_identity: tuple[int, int]
     data_staging_identity: tuple[int, int]
     attempt_identity: tuple[int, int]
     validation_identity: tuple[int, int]
     final_name: str
     attempt_name: str
+    data_root_name: str
+    ancestors_removed: bool = False
 
     def assert_bound(self) -> None:
+        assert_directory_entry(
+            self.data_root_parent_fd,
+            self.data_root_name,
+            expected=self.data_root_identity,
+            label="final-test data root",
+        )
+        assert_directory_entry(
+            self.data_root_fd,
+            "processed",
+            expected=self.processed_identity,
+            label="final-test processed root",
+        )
         assert_directory_entry(
             self.processed_fd,
             self.final_name,
@@ -51,18 +69,19 @@ class Stage2Directories:
             expected=self.data_staging_identity,
             label="final-test data staging root",
         )
-        assert_directory_entry(
-            self.data_staging_fd,
-            self.attempt_name,
-            expected=self.attempt_identity,
-            label="final-test data staging attempt",
-        )
-        assert_directory_entry(
-            self.attempt_fd,
-            "validation_evaluation",
-            expected=self.validation_identity,
-            label="secure Stage-2 output parent",
-        )
+        if not self.ancestors_removed:
+            assert_directory_entry(
+                self.data_staging_fd,
+                self.attempt_name,
+                expected=self.attempt_identity,
+                label="final-test data staging attempt",
+            )
+            assert_directory_entry(
+                self.attempt_fd,
+                "validation_evaluation",
+                expected=self.validation_identity,
+                label="secure Stage-2 output parent",
+            )
 
     def assert_published(self, panel_identity: tuple[int, int]) -> None:
         assert_directory_entry(
@@ -76,52 +95,95 @@ class Stage2Directories:
         self.assert_bound()
         os.rmdir("validation_evaluation", dir_fd=self.attempt_fd)
         os.rmdir(self.attempt_name, dir_fd=self.data_staging_fd)
+        self.ancestors_removed = True
 
 
 @contextmanager
 def opened_stage2_directories(
     final_root: Path, attempt_id: str
 ) -> Iterator[Stage2Directories]:
-    with opened_directory(
-        final_root.parent, label="final-test processed parent"
-    ) as processed_fd:
+    with _opened_stage2_directories(
+        final_root, attempt_id, require_empty=True
+    ) as directories:
+        yield directories
+
+
+@contextmanager
+def opened_existing_stage2_directories(
+    final_root: Path, attempt_id: str
+) -> Iterator[Stage2Directories]:
+    with _opened_stage2_directories(
+        final_root, attempt_id, require_empty=False
+    ) as directories:
+        yield directories
+
+
+@contextmanager
+def _opened_stage2_directories(
+    final_root: Path, attempt_id: str, *, require_empty: bool
+) -> Iterator[Stage2Directories]:
+    data_root = final_root.parent.parent
+    data_root_parent_fd = open_directory_path(
+        data_root.parent, label="final-test data-root parent"
+    )
+    data_root_fd: int | None = None
+    processed_fd: int | None = None
+    final_fd: int | None = None
+    descriptors: list[int] = []
+    try:
+        data_root_fd = open_directory_at(
+            data_root_parent_fd, data_root.name, label="final-test data root"
+        )
+        processed_fd = open_directory_at(
+            data_root_fd, "processed", label="final-test processed root"
+        )
         final_fd = open_directory_at(
             processed_fd, final_root.name, label="final-test root"
         )
-        descriptors: list[int] = []
         current_fd = final_fd
-        try:
-            for part in ("data-staging", attempt_id, "validation_evaluation"):
+        for part in ("data-staging", attempt_id, "validation_evaluation"):
+            if require_empty:
                 try:
                     os.mkdir(part, mode=0o700, dir_fd=current_fd)
                 except FileExistsError:
                     pass
-                current_fd = open_directory_at(
-                    current_fd, part, label="secure Stage-2 output parent"
-                )
-                descriptors.append(current_fd)
-            data_staging_fd, attempt_fd, validation_fd = descriptors
+            current_fd = open_directory_at(
+                current_fd, part, label="secure Stage-2 output parent"
+            )
+            descriptors.append(current_fd)
+        data_staging_fd, attempt_fd, validation_fd = descriptors
+        if require_empty:
             if set(os.listdir(attempt_fd)) != {"validation_evaluation"}:
                 raise ValueError("secure Stage-2 attempt staging contains extra entries")
             if os.listdir(validation_fd):
                 raise ValueError("secure Stage-2 output parent is not empty")
-            yield Stage2Directories(
-                processed_fd=processed_fd,
-                final_fd=final_fd,
-                data_staging_fd=data_staging_fd,
-                attempt_fd=attempt_fd,
-                validation_fd=validation_fd,
-                final_identity=directory_identity(final_fd),
-                data_staging_identity=directory_identity(data_staging_fd),
-                attempt_identity=directory_identity(attempt_fd),
-                validation_identity=directory_identity(validation_fd),
-                final_name=final_root.name,
-                attempt_name=attempt_id,
-            )
-        finally:
-            for descriptor in reversed(descriptors):
+        directories_value = Stage2Directories(
+            data_root_parent_fd=data_root_parent_fd,
+            data_root_fd=data_root_fd,
+            processed_fd=processed_fd,
+            final_fd=final_fd,
+            data_staging_fd=data_staging_fd,
+            attempt_fd=attempt_fd,
+            validation_fd=validation_fd,
+            data_root_identity=directory_identity(data_root_fd),
+            processed_identity=directory_identity(processed_fd),
+            final_identity=directory_identity(final_fd),
+            data_staging_identity=directory_identity(data_staging_fd),
+            attempt_identity=directory_identity(attempt_fd),
+            validation_identity=directory_identity(validation_fd),
+            final_name=final_root.name,
+            attempt_name=attempt_id,
+            data_root_name=data_root.name,
+        )
+        directories_value.assert_bound()
+        yield directories_value
+        directories_value.assert_bound()
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+        for descriptor in (final_fd, processed_fd, data_root_fd, data_root_parent_fd):
+            if descriptor is not None:
                 os.close(descriptor)
-            os.close(final_fd)
 
 
 class SecureStage2Output:
