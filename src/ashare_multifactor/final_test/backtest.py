@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 from dataclasses import dataclass
 from datetime import date
 import json
@@ -23,6 +24,7 @@ from ashare_multifactor.final_test.execution_contracts import (
     normalize_security_event_rows,
 )
 from ashare_multifactor.final_test.execution_binding import (
+    BoundExecutionInputs,
     resolve_bound_execution_inputs,
 )
 from ashare_multifactor.final_test.gate import (
@@ -96,7 +98,7 @@ def run_final_test_backtest(
     _verify_data_authorization(config, authorization, code_root)
 
     failures = _fee_coverage_failures(code_root / "configs/market_rules.yaml")
-    verified_execution_inputs: dict[str, Path] | None = None
+    verified_execution_inputs: BoundExecutionInputs | None = None
     try:
         verified_execution_inputs = resolve_bound_execution_inputs(
             final_root, authorization
@@ -204,7 +206,7 @@ def _resolve_verified_inputs(
     code_root: Path,
     final_root: Path,
     supported_markets: tuple[str, ...],
-    verified_execution_inputs: dict[str, Path],
+    verified_execution_inputs: BoundExecutionInputs,
 ) -> FinalTestBacktestInputs:
     pretest = _resolve_pretest_execution_inputs(
         authorization,
@@ -336,13 +338,15 @@ def _resolve_pretest_execution_inputs(
     )
 
 
-def _load_final_actions(path: Path) -> pl.DataFrame:
-    frame = pl.read_parquet(path)
+def _load_final_actions(payload: bytes | Path) -> pl.DataFrame:
+    source = BytesIO(payload) if isinstance(payload, bytes) else payload
+    frame = pl.read_parquet(source)
     return normalize_corporate_action_rows(frame, maximum_date=FINAL_TEST_END)
 
 
-def _load_final_security_events(path: Path) -> pl.DataFrame:
-    frame = pl.read_parquet(path)
+def _load_final_security_events(payload: bytes | Path) -> pl.DataFrame:
+    source = BytesIO(payload) if isinstance(payload, bytes) else payload
+    frame = pl.read_parquet(source)
     return normalize_security_event_rows(frame).drop("evidence_id")
 
 

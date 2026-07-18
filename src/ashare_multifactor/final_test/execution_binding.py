@@ -1,56 +1,275 @@
-"""Resolve execution inputs only through append-only attempt bindings."""
+"""Resolve execution inputs into one immutable, descriptor-anchored snapshot."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
+import hashlib
 import json
-from pathlib import Path
+import os
+from pathlib import Path, PurePosixPath
+import stat
+from types import MappingProxyType
 
-from ashare_multifactor.audit.records import sha256_file
-from ashare_multifactor.final_test.action_source_contract import (
-    verify_execution_input_manifest,
-)
 from ashare_multifactor.final_test.execution_identity import (
     assert_execution_identity_authorized,
 )
-from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test.gate import (
+    FINAL_TEST_END,
+    FINAL_TEST_START,
+    FinalTestAuthorization,
+)
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    opened_directory,
+    opened_directory_at,
+    read_bytes_at,
+)
 from ashare_multifactor.final_test.registry import (
     resolve_execution_binding,
     resolve_execution_input_manifest_hash,
 )
 
 
+@dataclass(frozen=True)
+class BoundExecutionInputs:
+    """Validated input bytes; later source-path replacement cannot change them."""
+
+    manifest: Mapping[str, object]
+    manifest_sha256: str
+    files: Mapping[str, bytes]
+
+    def __getitem__(self, name: str) -> bytes:
+        return self.files[name]
+
+
 def resolve_bound_execution_inputs(
     final_root: Path,
     authorization: FinalTestAuthorization,
-) -> dict[str, Path]:
-    """Verify the registry, identity, snapshot, and manifest before Parquet reads."""
-    attempt_id = authorization.attempt_id
+) -> BoundExecutionInputs:
+    """Read the registry-bound input tree once through no-follow descriptors."""
     identity = assert_execution_identity_authorized(
-        resolve_execution_binding(final_root / "attempts", attempt_id=attempt_id),
+        resolve_execution_binding(
+            final_root / "attempts", attempt_id=authorization.attempt_id
+        ),
         authorization,
     )
-    identity_path = (
-        final_root / "attempt_runs" / attempt_id / "execution_identity.json"
+    expected_hash = resolve_execution_input_manifest_hash(
+        final_root / "attempts", identity=identity
     )
-    stored_identity = _read_safe_json(
-        identity_path,
-        root=final_root,
-        label="execution identity",
+    return validate_execution_input_candidate(
+        final_root,
+        authorization,
+        execution_identity=identity,
+        expected_manifest_sha256=expected_hash,
     )
-    if stored_identity != identity:
-        raise ValueError("execution identity differs from registry binding")
 
-    snapshot_manifest = (
-        final_root
-        / "execution_coverage_snapshots"
-        / attempt_id
-        / "snapshot_manifest.json"
+
+def validate_execution_input_candidate(
+    final_root: Path,
+    authorization: FinalTestAuthorization,
+    *,
+    execution_identity: Mapping[str, object],
+    expected_manifest_sha256: str | None = None,
+) -> BoundExecutionInputs:
+    """Validate complete canonical inputs, including before the hash append."""
+    identity = assert_execution_identity_authorized(
+        execution_identity, authorization
     )
-    snapshot = _read_safe_json(
-        snapshot_manifest,
-        root=final_root,
-        label="coverage snapshot manifest",
+    if final_root.is_symlink():
+        raise ValueError("final-test root uses a symlink")
+    root = final_root.resolve()
+    with opened_directory(root, label="final-test root") as final_fd:
+        stored_identity = _read_nested_json(
+            final_fd,
+            ("attempt_runs", authorization.attempt_id),
+            "execution_identity.json",
+            label="execution identity",
+        )
+        if stored_identity != identity:
+            raise ValueError("execution identity differs from registry binding")
+        with opened_directory_at(
+            final_fd, "attempt_inputs", label="execution-input parent"
+        ) as parent_fd:
+            with opened_directory_at(
+                parent_fd,
+                authorization.attempt_id,
+                label="execution-input root",
+            ) as input_fd:
+                tree = _read_stable_tree(input_fd)
+
+    manifest_bytes = tree.get("manifest.json")
+    if manifest_bytes is None:
+        raise ValueError("execution-input manifest is missing")
+    manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+    if (
+        expected_manifest_sha256 is not None
+        and manifest_sha256 != expected_manifest_sha256
+    ):
+        raise ValueError("execution-input manifest differs from registry binding")
+    try:
+        payload = json.loads(manifest_bytes)
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid execution-input manifest") from error
+    if not isinstance(payload, dict):
+        raise ValueError("invalid execution-input manifest")
+    _verify_manifest_payload(
+        payload,
+        authorization=authorization,
+        identity=identity,
+        tree=tree,
     )
+    return BoundExecutionInputs(
+        manifest=MappingProxyType(payload),
+        manifest_sha256=manifest_sha256,
+        files=MappingProxyType(tree),
+    )
+
+
+def _read_nested_json(
+    parent_fd: int,
+    directories: tuple[str, ...],
+    filename: str,
+    *,
+    label: str,
+) -> dict[str, object]:
+    descriptors: list[int] = []
+    current = parent_fd
+    try:
+        for name in directories:
+            descriptor = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY")
+                | getattr(os, "O_NOFOLLOW"),
+                dir_fd=current,
+            )
+            descriptors.append(descriptor)
+            current = descriptor
+        value = json.loads(read_bytes_at(current, filename, label=label))
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"{label} is missing or invalid") from error
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} is missing or invalid")
+    return value
+
+
+def _read_stable_tree(root_fd: int) -> dict[str, bytes]:
+    before = os.fstat(root_fd)
+    first_names = tuple(sorted(os.listdir(root_fd)))
+    result = _read_tree_at(root_fd, prefix="")
+    after_names = tuple(sorted(os.listdir(root_fd)))
+    after = os.fstat(root_fd)
+    if (
+        first_names != after_names
+        or before.st_dev != after.st_dev
+        or before.st_ino != after.st_ino
+        or before.st_mtime_ns != after.st_mtime_ns
+        or before.st_ctime_ns != after.st_ctime_ns
+    ):
+        raise ValueError("execution-input tree changed during binding")
+    return result
+
+
+def _read_tree_at(directory_fd: int, *, prefix: str) -> dict[str, bytes]:
+    result: dict[str, bytes] = {}
+    for name in sorted(os.listdir(directory_fd)):
+        metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        relative = f"{prefix}/{name}" if prefix else name
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError("execution-input tree uses a symlink")
+        if stat.S_ISDIR(metadata.st_mode):
+            with opened_directory_at(
+                directory_fd, name, label="execution-input child directory"
+            ) as child_fd:
+                before = os.fstat(child_fd)
+                child = _read_tree_at(child_fd, prefix=relative)
+                after = os.fstat(child_fd)
+                if (
+                    before.st_mtime_ns != after.st_mtime_ns
+                    or before.st_ctime_ns != after.st_ctime_ns
+                ):
+                    raise ValueError("execution-input tree changed during binding")
+                result.update(child)
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("execution-input tree contains a non-regular file")
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            dir_fd=directory_fd,
+        )
+        try:
+            opened = os.fstat(descriptor)
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                payload = stream.read()
+            closed = os.fstat(descriptor)
+        finally:
+            os.close(descriptor)
+        current = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        identities = {
+            (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns)
+            for item in (metadata, opened, closed, current)
+        }
+        if len(identities) != 1 or len(payload) != opened.st_size:
+            raise ValueError("execution-input file changed during binding")
+        result[relative] = payload
+    return result
+
+
+def _verify_manifest_payload(
+    payload: dict[str, object],
+    *,
+    authorization: FinalTestAuthorization,
+    identity: Mapping[str, object],
+    tree: Mapping[str, bytes],
+) -> None:
+    expected = {
+        "attempt_id": authorization.attempt_id,
+        "approval_id": authorization.approval_id,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "robustness_release": authorization.robustness_release,
+        "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
+        **identity,
+    }
+    if any(payload.get(key) != value for key, value in expected.items()):
+        raise ValueError("execution-input manifest differs from authorization")
+    primary = _records_by_path(payload.get("files"), label="file")
+    if set(primary) != {"corporate_actions.parquet", "security_events.parquet"}:
+        raise ValueError("execution-input manifest file set is incomplete")
+    coverage = _records_by_path(
+        payload.get("coverage_snapshot_files"),
+        label="coverage snapshot inventory",
+    )
+    if not coverage:
+        raise ValueError("execution-input coverage snapshot inventory is missing")
+    if any(
+        not PurePosixPath(path).parts
+        or PurePosixPath(path).parts[0] != "coverage_snapshot"
+        for path in coverage
+    ):
+        raise ValueError("execution-input coverage snapshot path is unsafe")
+    expected_paths = {"manifest.json", *primary, *coverage}
+    if set(tree) != expected_paths:
+        raise ValueError("execution-input full file inventory differs")
+    for path, record in {**primary, **coverage}.items():
+        data = tree[path]
+        if (
+            record.get("size_bytes") != len(data)
+            or record.get("sha256") != hashlib.sha256(data).hexdigest()
+        ):
+            raise ValueError(f"execution-input digest mismatch: {path}")
+    snapshot_bytes = tree.get("coverage_snapshot/snapshot_manifest.json")
+    if snapshot_bytes is None or hashlib.sha256(snapshot_bytes).hexdigest() != identity.get(
+        "coverage_snapshot_manifest_sha256"
+    ):
+        raise ValueError("coverage snapshot manifest differs from registry binding")
+    try:
+        snapshot = json.loads(snapshot_bytes)
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid coverage snapshot manifest") from error
     snapshot_expected = {
         "attempt_id": identity["attempt_id"],
         "prepare_manifest_sha256": identity["prepare_manifest_sha256"],
@@ -61,50 +280,29 @@ def resolve_bound_execution_inputs(
             "corporate_action_coverage_sha256"
         ],
     }
-    if (
-        sha256_file(snapshot_manifest)
-        != identity["coverage_snapshot_manifest_sha256"]
-        or any(snapshot.get(key) != value for key, value in snapshot_expected.items())
+    if not isinstance(snapshot, dict) or any(
+        snapshot.get(key) != value for key, value in snapshot_expected.items()
     ):
         raise ValueError("coverage snapshot manifest differs from registry binding")
-
-    manifest_path = final_root / "attempt_inputs" / attempt_id / "manifest.json"
-    _assert_safe_file(manifest_path, root=final_root, label="execution-input manifest")
-    expected_manifest_sha256 = resolve_execution_input_manifest_hash(
-        final_root / "attempts",
-        identity=identity,
-    )
-    if sha256_file(manifest_path) != expected_manifest_sha256:
-        raise ValueError("execution-input manifest differs from registry binding")
-    return verify_execution_input_manifest(
-        manifest_path,
-        authorization,
-        execution_identity=identity,
-    )
+    nested = _records_by_path(snapshot.get("files"), label="snapshot file inventory")
+    if {f"coverage_snapshot/{path}" for path in nested} != (
+        set(coverage) - {"coverage_snapshot/snapshot_manifest.json"}
+    ):
+        raise ValueError("coverage snapshot nested inventory differs")
 
 
-def _read_safe_json(path: Path, *, root: Path, label: str) -> dict[str, object]:
-    _assert_safe_file(path, root=root, label=label)
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
-        raise ValueError(f"invalid {label}") from error
-    if not isinstance(payload, dict):
-        raise ValueError(f"invalid {label}")
-    return payload
-
-
-def _assert_safe_file(path: Path, *, root: Path, label: str) -> None:
-    try:
-        relative = path.relative_to(root)
-    except ValueError as error:
-        raise ValueError(f"{label} escapes final-test root") from error
-    current = root
-    if root.is_symlink():
-        raise ValueError(f"{label} path uses a symlink")
-    for part in relative.parts:
-        current = current / part
-        if current.is_symlink():
-            raise ValueError(f"{label} path uses a symlink")
-    if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
-        raise ValueError(f"{label} is missing or escapes final-test root")
+def _records_by_path(value: object, *, label: str) -> dict[str, dict[str, object]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"execution-input {label} is missing")
+    records: dict[str, dict[str, object]] = {}
+    for record in value:
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            raise ValueError(f"execution-input {label} is invalid")
+        path = str(record["path"])
+        relative = PurePosixPath(path)
+        if relative.is_absolute() or ".." in relative.parts or path in records:
+            raise ValueError(f"execution-input {label} is invalid")
+        records[path] = record
+    if len(records) != len(value):
+        raise ValueError(f"execution-input {label} is invalid")
+    return records

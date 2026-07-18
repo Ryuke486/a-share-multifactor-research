@@ -8,7 +8,7 @@ import hashlib
 import hmac
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import shutil
 from uuid import uuid4
@@ -35,7 +35,9 @@ from ashare_multifactor.final_test.data_extension import (
 from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
 from ashare_multifactor.final_test.execution_sources import build_final_execution_inputs
 from ashare_multifactor.final_test.execution_binding import (
+    BoundExecutionInputs,
     resolve_bound_execution_inputs,
+    validate_execution_input_candidate,
 )
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
@@ -45,6 +47,9 @@ from ashare_multifactor.final_test.gate import (
 from ashare_multifactor.final_test.interrupted_recovery import (
     has_recoverable_execution_archive,
     recover_interrupted_execution,
+)
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    atomic_rename_no_replace,
 )
 from ashare_multifactor.final_test.resume import (
     ResumePreflight,
@@ -269,11 +274,6 @@ def _execute_authorized_final_test(
         expected_security_sha256=preflight.security_event_coverage_sha256,
         expected_corporate_sha256=preflight.corporate_action_coverage_sha256,
     )
-    recover_interrupted_execution(
-        final_root,
-        preflight=preflight,
-        coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
-    )
     execution_identity = resolve_optional_execution_binding(
         registry_root,
         attempt_id=authorization.attempt_id,
@@ -303,34 +303,56 @@ def _execute_authorized_final_test(
     if execution_identity != expected_execution_identity:
         raise ValueError("final-test execution registry binding differs")
     attempt_root = final_root / "attempt_runs" / authorization.attempt_id
+    bound_inputs = _bind_or_resolve_existing_execution_inputs(
+        final_root,
+        authorization=authorization,
+        execution_identity=execution_identity,
+    )
+    if not _is_resumable_attempt_shell(attempt_root, execution_identity):
+        recover_interrupted_execution(
+            final_root,
+            preflight=preflight,
+            coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
+        )
+    attempt_root = _ensure_attempt_root(
+        final_root,
+        authorization=authorization,
+        execution_identity=execution_identity,
+    )
     datasets = attempt_root / "datasets"
     artifacts = attempt_root / "artifacts"
-    datasets.mkdir(parents=True)
-    artifacts.mkdir()
-    _write_json(attempt_root / "execution_identity.json", execution_identity)
     started_at = datetime.now(timezone.utc).isoformat()
     try:
         config = _load_frozen_config(code_root, data_root)
-        execution_manifest = build_final_execution_inputs(
-            authorization,
-            code_root=code_root,
-            data_root=data_root,
-            final_root=final_root,
-            security_event_coverage_path=coverage_snapshot.security_event_coverage_path,
-            corporate_action_coverage_root=coverage_snapshot.corporate_action_coverage_root,
-            symbols=list(coverage_snapshot.symbols),
-            execution_identity=execution_identity,
-        )
-        bind_execution_input_manifest_hash(
-            registry_root,
-            identity=execution_identity,
-            manifest_sha256=sha256_file(
-                final_root
-                / "attempt_inputs"
-                / authorization.attempt_id
-                / "manifest.json"
-            ),
-        )
+        if bound_inputs is None:
+            build_final_execution_inputs(
+                authorization,
+                code_root=code_root,
+                data_root=data_root,
+                final_root=final_root,
+                security_event_coverage_path=(
+                    coverage_snapshot.security_event_coverage_path
+                ),
+                corporate_action_coverage_root=(
+                    coverage_snapshot.corporate_action_coverage_root
+                ),
+                symbols=list(coverage_snapshot.symbols),
+                execution_identity=execution_identity,
+            )
+            candidate = validate_execution_input_candidate(
+                final_root,
+                authorization,
+                execution_identity=execution_identity,
+            )
+            bind_execution_input_manifest_hash(
+                registry_root,
+                identity=execution_identity,
+                manifest_sha256=candidate.manifest_sha256,
+            )
+            bound_inputs = resolve_bound_execution_inputs(
+                final_root, authorization
+            )
+        execution_manifest = dict(bound_inputs.manifest)
         signals = build_final_test_signals(
             authorization,
             code_root=code_root,
@@ -377,10 +399,9 @@ def _execute_authorized_final_test(
         comparison.write_parquet(datasets / "period_comparison.parquet")
         completed_at = datetime.now(timezone.utc).isoformat()
         resolution = resolve_final_test_data_panel(final_root)
-        resolve_bound_execution_inputs(final_root, authorization)
         _copy_release_inputs(
             panel_root=resolution.root,
-            execution_root=(final_root / "attempt_inputs" / authorization.attempt_id),
+            execution_inputs=bound_inputs,
             datasets=datasets,
             artifacts=artifacts,
         )
@@ -1111,29 +1132,137 @@ def _release_manifest_metadata(
 def _copy_release_inputs(
     *,
     panel_root: Path,
-    execution_root: Path,
+    execution_inputs: BoundExecutionInputs,
     datasets: Path,
     artifacts: Path,
 ) -> None:
     _assert_safe_release_tree(panel_root, record_files=False)
-    execution_records = _assert_safe_release_tree(execution_root, record_files=True)
     execution_destination = artifacts / "execution_inputs"
     try:
-        shutil.copytree(execution_root, execution_destination)
-        actual_paths = {
-            path.relative_to(execution_destination).as_posix()
-            for path in execution_destination.rglob("*")
-            if path.is_file()
-        }
-        expected_paths = {str(record["path"]) for record in execution_records}
-        if actual_paths != expected_paths:
-            raise ValueError("final-test release execution input inventory changed")
-        for record in execution_records:
-            verify_file_record(record, root=execution_destination)
+        execution_destination.mkdir()
+        for relative, payload in sorted(execution_inputs.files.items()):
+            safe_relative = PurePosixPath(relative)
+            if safe_relative.is_absolute() or ".." in safe_relative.parts:
+                raise ValueError("final-test release execution input path is unsafe")
+            destination = execution_destination.joinpath(*relative.split("/"))
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(payload)
+        copied = validate_execution_input_candidate_bytes(
+            execution_destination,
+            execution_inputs=execution_inputs,
+        )
+        if copied != execution_inputs.manifest_sha256:
+            raise ValueError("final-test release execution input digest changed")
         shutil.copytree(panel_root, datasets / "final_daily_panel")
     except BaseException:
         shutil.rmtree(execution_destination, ignore_errors=True)
         raise
+
+
+def validate_execution_input_candidate_bytes(
+    root: Path,
+    *,
+    execution_inputs: BoundExecutionInputs,
+) -> str:
+    """Verify that a release copy exactly matches the frozen in-memory snapshot."""
+    items = list(root.rglob("*")) if root.is_dir() else []
+    if root.is_symlink() or any(path.is_symlink() for path in items):
+        raise ValueError("final-test release execution input uses a symlink")
+    actual = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in items
+        if path.is_file()
+    }
+    if actual != dict(execution_inputs.files):
+        raise ValueError("final-test release execution input inventory changed")
+    return hashlib.sha256(actual["manifest.json"]).hexdigest()
+
+
+def _bind_or_resolve_existing_execution_inputs(
+    final_root: Path,
+    *,
+    authorization: FinalTestAuthorization,
+    execution_identity: Mapping[str, object],
+) -> BoundExecutionInputs | None:
+    input_root = final_root / "attempt_inputs" / authorization.attempt_id
+    if input_root.is_symlink():
+        raise ValueError("execution-input root uses a symlink")
+    if not input_root.exists():
+        return None
+    candidate = validate_execution_input_candidate(
+        final_root,
+        authorization,
+        execution_identity=execution_identity,
+    )
+    bind_execution_input_manifest_hash(
+        final_root / "attempts",
+        identity=execution_identity,
+        manifest_sha256=candidate.manifest_sha256,
+    )
+    return resolve_bound_execution_inputs(final_root, authorization)
+
+
+def _is_resumable_attempt_shell(
+    attempt_root: Path,
+    execution_identity: Mapping[str, object],
+) -> bool:
+    if attempt_root.is_symlink() or not attempt_root.is_dir():
+        return False
+    items = {path.name: path for path in attempt_root.iterdir()}
+    if set(items) != {"execution_identity.json", "datasets", "artifacts"}:
+        return False
+    if (
+        not items["datasets"].is_dir()
+        or items["datasets"].is_symlink()
+        or any(items["datasets"].iterdir())
+        or not items["artifacts"].is_dir()
+        or items["artifacts"].is_symlink()
+        or any(items["artifacts"].iterdir())
+        or items["execution_identity.json"].is_symlink()
+    ):
+        return False
+    try:
+        stored = json.loads(
+            items["execution_identity.json"].read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError):
+        return False
+    return stored == dict(execution_identity)
+
+
+def _ensure_attempt_root(
+    final_root: Path,
+    *,
+    authorization: FinalTestAuthorization,
+    execution_identity: Mapping[str, object],
+) -> Path:
+    parent = final_root / "attempt_runs"
+    destination = parent / authorization.attempt_id
+    if destination.exists():
+        if not _is_resumable_attempt_shell(destination, execution_identity):
+            raise ValueError("final-test attempt shell is not safely resumable")
+        return destination
+    parent.mkdir(parents=True, exist_ok=True)
+    temporary = parent / f".{authorization.attempt_id}.initializing"
+    if temporary.is_symlink():
+        raise ValueError("final-test attempt initializer uses a symlink")
+    temporary.mkdir(exist_ok=True)
+    (temporary / "datasets").mkdir(exist_ok=True)
+    (temporary / "artifacts").mkdir(exist_ok=True)
+    identity_path = temporary / "execution_identity.json"
+    if identity_path.exists():
+        try:
+            stored = json.loads(identity_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError("final-test attempt initializer is invalid") from error
+        if stored != dict(execution_identity):
+            raise ValueError("final-test attempt initializer identity differs")
+    else:
+        _write_json(identity_path, execution_identity)
+    if not _is_resumable_attempt_shell(temporary, execution_identity):
+        raise ValueError("final-test attempt initializer is incomplete")
+    atomic_rename_no_replace(temporary, destination)
+    return destination
 
 
 def _assert_safe_release_tree(

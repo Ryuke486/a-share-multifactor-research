@@ -103,7 +103,7 @@ def test_recovery_rejects_replaced_attempt_input_manifest_bound_in_registry(
     assert (attempt_root / "execution_identity.json").is_file()
 
 
-def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
+def test_real_execution_inputs_are_archived_and_retained_after_crash(
     prepared_attempt: PreparedAttempt,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -173,17 +173,34 @@ def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
     assert (archive / "attempt_run/signals-and-backtest.completed").is_file()
     assert (archive / "execution_input_sources/source_manifest.json").is_file()
     assert (archive / "attempt_inputs/manifest.json").is_file()
-    rebuilt = build_final_execution_inputs(
-        preflight.authorization,
-        code_root=prepared_attempt.code_root,
-        data_root=prepared_attempt.data_root,
-        final_root=final_root,
-        security_event_coverage_path=snapshot.security_event_coverage_path,
-        corporate_action_coverage_root=snapshot.corporate_action_coverage_root,
-        symbols=list(snapshot.symbols),
-        execution_identity=execution_identity,
+    retained = final_root / "attempt_inputs" / prepared_attempt.attempt_id
+    assert (retained / "manifest.json").is_file()
+    assert sha256_file(retained / "manifest.json") == sha256_file(
+        archive / "attempt_inputs/manifest.json"
     )
-    assert rebuilt["execution_id"] == first_execution_id
+    with pytest.raises(FileExistsError, match="already bound"):
+        build_final_execution_inputs(
+            preflight.authorization,
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            final_root=final_root,
+            security_event_coverage_path=snapshot.security_event_coverage_path,
+            corporate_action_coverage_root=snapshot.corporate_action_coverage_root,
+            symbols=list(snapshot.symbols),
+            execution_identity=execution_identity,
+        )
+
+
+def test_execution_input_staging_resumes_only_an_exact_prefix(tmp_path: Path) -> None:
+    path = tmp_path / "corporate_actions.parquet"
+    path.write_bytes(b"exact-")
+
+    sources_module._write_resumable_bytes(path, b"exact-payload")
+
+    assert path.read_bytes() == b"exact-payload"
+    path.write_bytes(b"different")
+    with pytest.raises(ValueError, match="staging bytes differ"):
+        sources_module._write_resumable_bytes(path, b"exact-payload")
 
 
 @pytest.mark.parametrize(

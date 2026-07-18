@@ -6,6 +6,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.final_test.action_source_contract import (
     assert_allowed_evidence_url,
     build_execution_input_manifest,
@@ -60,6 +61,22 @@ def _execution_identity() -> dict[str, str]:
     }
 
 
+def _add_coverage_inventory(manifest_path: Path) -> None:
+    snapshot = manifest_path.parent / "coverage_snapshot"
+    snapshot.mkdir()
+    evidence = snapshot / "evidence.bin"
+    evidence.write_bytes(b"frozen evidence")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["coverage_snapshot_files"] = [
+        file_record(
+            evidence,
+            root=manifest_path.parent,
+            role="official_coverage_snapshot",
+        ).to_dict()
+    ]
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def test_manifest_binds_attempt_seal_period_and_hashed_files(tmp_path: Path) -> None:
     files = _write_inputs(tmp_path)
     manifest_path = tmp_path / "manifest.json"
@@ -89,6 +106,7 @@ def test_manifest_requires_exact_bound_execution_identity(tmp_path: Path) -> Non
         files=files,
         execution_identity=identity,
     )
+    _add_coverage_inventory(manifest_path)
 
     assert verify_execution_input_manifest(
         manifest_path,
@@ -101,6 +119,27 @@ def test_manifest_requires_exact_bound_execution_identity(tmp_path: Path) -> Non
     manifest_path.write_text(json.dumps(payload), encoding="utf-8")
 
     with pytest.raises(ValueError, match="execution identity"):
+        verify_execution_input_manifest(
+            manifest_path,
+            _authorization(),
+            execution_identity=identity,
+        )
+
+
+def test_bound_manifest_requires_complete_materialized_coverage_inventory(
+    tmp_path: Path,
+) -> None:
+    files = _write_inputs(tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    identity = _execution_identity()
+    build_execution_input_manifest(
+        manifest_path,
+        authorization=_authorization(),
+        files=files,
+        execution_identity=identity,
+    )
+
+    with pytest.raises(ValueError, match="coverage snapshot inventory"):
         verify_execution_input_manifest(
             manifest_path,
             _authorization(),

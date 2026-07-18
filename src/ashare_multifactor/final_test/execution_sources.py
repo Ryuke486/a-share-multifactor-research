@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from io import BytesIO
 import os
 from pathlib import Path
 import shutil
@@ -40,6 +41,9 @@ from ashare_multifactor.final_test.official_query_coverage import OfficialQueryS
 from ashare_multifactor.final_test.official_query_index import (
     copy_validated_official_query_coverage,
     validate_official_query_coverage_index,
+)
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    atomic_rename_no_replace,
 )
 
 
@@ -153,14 +157,25 @@ def build_final_execution_inputs(
     actions, events = _execution_frames(security_coverage, corporate_coverage)
     if execution_root.exists() or execution_root.is_symlink():
         raise FileExistsError("final execution inputs are already bound")
-    execution_root.mkdir(parents=True)
+    execution_root.parent.mkdir(parents=True, exist_ok=True)
+    staging = execution_root.parent / (
+        f".{authorization.attempt_id}.{execution_id}.building"
+    )
+    if staging.is_symlink():
+        raise ValueError("final execution input staging uses a symlink")
+    staging.mkdir(exist_ok=True)
     try:
         files = {
-            "corporate_actions.parquet": execution_root / "corporate_actions.parquet",
-            "security_events.parquet": execution_root / "security_events.parquet",
+            "corporate_actions.parquet": staging / "corporate_actions.parquet",
+            "security_events.parquet": staging / "security_events.parquet",
         }
-        actions.write_parquet(files["corporate_actions.parquet"])
-        events.write_parquet(files["security_events.parquet"])
+        for frame, path in (
+            (actions, files["corporate_actions.parquet"]),
+            (events, files["security_events.parquet"]),
+        ):
+            buffer = BytesIO()
+            frame.write_parquet(buffer)
+            _write_resumable_bytes(path, buffer.getvalue())
         from ashare_multifactor.final_test.coverage_snapshot import (
             materialize_bound_coverage_snapshot,
         )
@@ -168,14 +183,15 @@ def build_final_execution_inputs(
         snapshot_records = materialize_bound_coverage_snapshot(
             final_root,
             attempt_id=authorization.attempt_id,
-            destination=execution_root / "coverage_snapshot",
+            destination=staging / "coverage_snapshot",
             expected_manifest_sha256=coverage_snapshot_manifest_sha256,
         )
         manifest = build_execution_input_manifest(
-            execution_root / "manifest.json",
+            staging / "manifest.json",
             authorization=authorization,
             files=files,
             execution_identity=identity,
+            write=False,
         )
         manifest["source_contract"] = file_record(
             code_root / "configs/final_execution_sources.yaml",
@@ -191,11 +207,60 @@ def build_final_execution_inputs(
                 ).hexdigest(),
             }
         )
-        write_json(execution_root / "manifest.json", manifest)
+        _write_resumable_bytes(
+            staging / "manifest.json",
+            (
+                json.dumps(
+                    manifest,
+                    ensure_ascii=False,
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode("utf-8"),
+        )
+        from ashare_multifactor.final_test.execution_binding import (
+            _read_stable_tree,
+        )
+        from ashare_multifactor.final_test.recovery_secure_fs import opened_directory
+
+        with opened_directory(staging, label="execution-input staging") as staging_fd:
+            staged_files = _read_stable_tree(staging_fd)
+        expected_files = {
+            "manifest.json",
+            "corporate_actions.parquet",
+            "security_events.parquet",
+            *(str(record["path"]) for record in snapshot_records),
+        }
+        if set(staged_files) != expected_files:
+            raise ValueError("final execution input staging inventory differs")
+        atomic_rename_no_replace(staging, execution_root)
         return manifest
     except BaseException:
-        shutil.rmtree(execution_root, ignore_errors=True)
         raise
+
+
+def _write_resumable_bytes(path: Path, payload: bytes) -> None:
+    """Complete only an exact prefix left by a hard interruption."""
+    if path.is_symlink():
+        raise ValueError("execution-input staging file uses a symlink")
+    if path.exists():
+        if not path.is_file():
+            raise ValueError("execution-input staging contains a non-file")
+        existing = path.read_bytes()
+        if not payload.startswith(existing):
+            raise ValueError("execution-input staging bytes differ")
+        if existing == payload:
+            return
+        mode = "ab"
+        remainder = payload[len(existing) :]
+    else:
+        mode = "xb"
+        remainder = payload
+    with path.open(mode) as stream:
+        stream.write(remainder)
+        stream.flush()
+        os.fsync(stream.fileno())
 
 
 def generate_final_execution_sources(

@@ -15,6 +15,8 @@ from ashare_multifactor.audit.records import file_record, sha256_file, verify_fi
 from ashare_multifactor.final_test.execution_sources import (
     validate_final_execution_coverages,
 )
+from ashare_multifactor.final_test.execution_binding import _read_stable_tree
+from ashare_multifactor.final_test.recovery_secure_fs import opened_directory
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.official_query_index import (
     copy_validated_official_query_coverage,
@@ -150,17 +152,27 @@ def materialize_bound_coverage_snapshot(
     if (
         source.is_symlink()
         or source.resolve() != expected_source
-        or destination.exists()
         or destination.is_symlink()
         or not destination.parent.resolve().is_relative_to(final_root.resolve())
     ):
         raise ValueError("coverage snapshot materialization path is unsafe")
-    _verify_snapshot_tree(source, expected_manifest_sha256=expected_manifest_sha256)
-    shutil.copytree(source, destination)
-    _verify_snapshot_tree(
-        destination,
+    with opened_directory(source, label="bound coverage snapshot") as source_fd:
+        frozen = _read_stable_tree(source_fd)
+    _verify_snapshot_bytes(
+        frozen,
         expected_manifest_sha256=expected_manifest_sha256,
     )
+    destination.mkdir(exist_ok=True)
+    for relative, payload in sorted(frozen.items()):
+        target = destination.joinpath(*relative.split("/"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        _write_resumable_snapshot_bytes(target, payload)
+    with opened_directory(
+        destination, label="materialized coverage snapshot"
+    ) as destination_fd:
+        copied = _read_stable_tree(destination_fd)
+    if copied != frozen:
+        raise ValueError("coverage snapshot changed during materialization")
     return [
         file_record(
             path,
@@ -169,6 +181,67 @@ def materialize_bound_coverage_snapshot(
         ).to_dict()
         for path in sorted(item for item in destination.rglob("*") if item.is_file())
     ]
+
+
+def _write_resumable_snapshot_bytes(path: Path, payload: bytes) -> None:
+    if path.is_symlink():
+        raise ValueError("coverage snapshot destination uses a symlink")
+    if path.exists():
+        if not path.is_file():
+            raise ValueError("coverage snapshot destination is not a file")
+        existing = path.read_bytes()
+        if not payload.startswith(existing):
+            raise ValueError("coverage snapshot partial bytes differ")
+        if existing == payload:
+            return
+        mode = "ab"
+        remainder = payload[len(existing) :]
+    else:
+        mode = "xb"
+        remainder = payload
+    with path.open(mode) as stream:
+        stream.write(remainder)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _verify_snapshot_bytes(
+    files: dict[str, bytes],
+    *,
+    expected_manifest_sha256: str,
+) -> None:
+    manifest_bytes = files.get("snapshot_manifest.json")
+    if (
+        manifest_bytes is None
+        or hashlib.sha256(manifest_bytes).hexdigest()
+        != expected_manifest_sha256
+    ):
+        raise ValueError("coverage snapshot manifest hash differs")
+    try:
+        manifest = json.loads(manifest_bytes)
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid coverage snapshot manifest") from error
+    records = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(records, list):
+        raise ValueError("coverage snapshot file inventory is missing")
+    recorded: dict[str, dict[str, object]] = {}
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            raise ValueError("invalid coverage snapshot file record")
+        relative = _safe_snapshot_relative(str(record["path"]))
+        path = relative.as_posix()
+        if relative.parts[0] not in {"security", "corporate"} or path in recorded:
+            raise ValueError("invalid coverage snapshot file record")
+        recorded[path] = record
+    if set(files) - {"snapshot_manifest.json"} != set(recorded):
+        raise ValueError("coverage snapshot file inventory differs")
+    for path, record in recorded.items():
+        payload = files[path]
+        if (
+            record.get("size_bytes") != len(payload)
+            or record.get("sha256") != hashlib.sha256(payload).hexdigest()
+        ):
+            raise ValueError("coverage snapshot file digest differs")
 
 
 def _verify_snapshot_tree(

@@ -147,6 +147,7 @@ def build_execution_input_manifest(
     authorization: FinalTestAuthorization,
     files: dict[str, Path],
     execution_identity: Mapping[str, object] | None = None,
+    write: bool = True,
 ) -> dict[str, object]:
     _assert_authorization(authorization)
     required = {"corporate_actions.parquet", "security_events.parquet"}
@@ -175,7 +176,8 @@ def build_execution_input_manifest(
         payload.update(
             assert_execution_identity_authorized(execution_identity, authorization)
         )
-    write_json(destination, payload)
+    if write:
+        write_json(destination, payload)
     return payload
 
 
@@ -224,6 +226,10 @@ def verify_execution_input_manifest(
         except (FileNotFoundError, TypeError, ValueError) as error:
             raise ValueError(f"execution-input digest mismatch: {name}") from error
     snapshot_records = payload.get("coverage_snapshot_files")
+    if execution_identity is not None and snapshot_records is None:
+        raise ValueError(
+            "execution-input coverage snapshot inventory is missing"
+        )
     if snapshot_records is not None:
         if not isinstance(snapshot_records, list) or not snapshot_records:
             raise ValueError("execution-input coverage snapshot inventory is invalid")
@@ -247,9 +253,12 @@ def verify_execution_input_manifest(
                 raise ValueError(
                     "execution-input coverage snapshot digest mismatch"
                 ) from error
+        snapshot_items = list((path.parent / "coverage_snapshot").rglob("*"))
+        if any(item.is_symlink() for item in snapshot_items):
+            raise ValueError("execution-input coverage snapshot uses a symlink")
         actual_snapshot_paths = {
             item.relative_to(path.parent).as_posix()
-            for item in (path.parent / "coverage_snapshot").rglob("*")
+            for item in snapshot_items
             if item.is_file()
         }
         if actual_snapshot_paths != snapshot_paths:
