@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import date
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -21,10 +22,7 @@ from ashare_multifactor.final_test.data_extension import (
     recover_final_test_daily_panel,
 )
 from ashare_multifactor.final_test.data_inventory import (
-    file_identity,
-    fsync_directory,
     verify_file_identity,
-    write_json,
 )
 from ashare_multifactor.final_test.data_publication import (
     FinalTestDataResolution,
@@ -37,13 +35,23 @@ from ashare_multifactor.final_test.gate import (
     authorize_final_test,
     recover_registered_authorization,
 )
+from ashare_multifactor.final_test.final_root_binding import (
+    FinalRootBinding,
+    FinalRootNamespaceChanged,
+)
 from ashare_multifactor.final_test.registry import (
-    append_attempt_state,
-    append_attempt_outcome,
-    claim_attempt_preparation,
-    resolve_attempt_state,
+    append_attempt_state_at,
+    append_attempt_outcome_at,
+    claim_attempt_preparation_at,
+    resolve_attempt_state_at,
     resolve_attempt_state_readonly,
     validate_publication_id,
+)
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    atomic_rename_no_replace_at,
+    open_directory_at,
+    read_bytes_at,
+    write_bytes_exclusive_at,
 )
 
 
@@ -79,52 +87,97 @@ def prepare_final_test(
     final_root = data_root / "processed/final_test"
     registry_root = final_root / "attempts"
     actual_attempt_id = attempt_id or uuid4().hex
-    with claim_attempt_preparation(registry_root, attempt_id=actual_attempt_id):
-        try:
-            existing = _existing_attempt_authorization(registry_root, actual_attempt_id)
-            if existing is not None:
-                authorization = recover_registered_authorization(
-                    code_root=code_root,
-                    robustness_root=data_root / "processed/robustness",
-                    validation_root=data_root / "processed/validation_evaluation",
-                    opening_token_path=opening_token_path,
-                    approval_key=approval_key,
-                    registry_root=registry_root,
-                    requested_start=FINAL_TEST_START,
-                    requested_end=FINAL_TEST_END,
-                    attempt_id=actual_attempt_id,
-                )
-                return _recover_preparation(
-                    final_root,
-                    registry_root=registry_root,
-                    authorization=authorization,
+    registry_root.mkdir(parents=True, exist_ok=True)
+    with FinalRootBinding.open(final_root) as root_binding:
+        with claim_attempt_preparation_at(
+            root_binding.attempts_fd, attempt_id=actual_attempt_id
+        ):
+            root_binding.assert_bound()
+            try:
+                return _prepare_final_test_bound(
                     code_root=code_root,
                     data_root=data_root,
+                    opening_token_path=opening_token_path,
+                    approval_key=approval_key,
+                    actual_attempt_id=actual_attempt_id,
+                    root_binding=root_binding,
                 )
+            except Exception as error:
+                if not isinstance(error, FinalRootNamespaceChanged):
+                    root_binding.assert_bound()
+                    _record_preparation_failure(
+                        root_binding.attempts_fd, actual_attempt_id, error
+                    )
+                raise
 
-            authorization = authorize_final_test(
-                code_root=code_root,
-                robustness_root=data_root / "processed/robustness",
-                validation_root=data_root / "processed/validation_evaluation",
-                opening_token_path=opening_token_path,
-                approval_key=approval_key,
-                registry_root=registry_root,
-                requested_start=FINAL_TEST_START,
-                requested_end=FINAL_TEST_END,
-                attempt_id=actual_attempt_id,
-            )
-            append_attempt_state(
-                registry_root, attempt_id=authorization.attempt_id, state="preparing"
-            )
-            return _complete_preparation(
-                final_root,
-                authorization=authorization,
-                code_root=code_root,
-                data_root=data_root,
-            )
-        except Exception as error:
-            _record_preparation_failure(registry_root, actual_attempt_id, error)
-            raise
+
+def _prepare_final_test_bound(
+    *,
+    code_root: Path,
+    data_root: Path,
+    opening_token_path: Path,
+    approval_key: bytes,
+    actual_attempt_id: str,
+    root_binding: FinalRootBinding,
+) -> FinalTestPreparation:
+    final_root = data_root / "processed/final_test"
+    registry_root = final_root / "attempts"
+    root_binding.assert_bound()
+    existing = _existing_attempt_authorization(
+        registry_root,
+        actual_attempt_id,
+        registry_fd=root_binding.attempts_fd,
+    )
+    root_binding.assert_bound()
+    if existing is not None:
+        authorization = recover_registered_authorization(
+            code_root=code_root,
+            robustness_root=data_root / "processed/robustness",
+            validation_root=data_root / "processed/validation_evaluation",
+            opening_token_path=opening_token_path,
+            approval_key=approval_key,
+            registry_root=registry_root,
+            requested_start=FINAL_TEST_START,
+            requested_end=FINAL_TEST_END,
+            attempt_id=actual_attempt_id,
+            registry_fd=root_binding.attempts_fd,
+        )
+        root_binding.assert_bound()
+        return _recover_preparation(
+            final_root,
+            registry_root=registry_root,
+            authorization=authorization,
+            code_root=code_root,
+            data_root=data_root,
+            root_binding=root_binding,
+        )
+
+    authorization = authorize_final_test(
+        code_root=code_root,
+        robustness_root=data_root / "processed/robustness",
+        validation_root=data_root / "processed/validation_evaluation",
+        opening_token_path=opening_token_path,
+        approval_key=approval_key,
+        registry_root=registry_root,
+        requested_start=FINAL_TEST_START,
+        requested_end=FINAL_TEST_END,
+        attempt_id=actual_attempt_id,
+        registry_fd=root_binding.attempts_fd,
+    )
+    root_binding.assert_bound()
+    append_attempt_state_at(
+        root_binding.attempts_fd,
+        attempt_id=authorization.attempt_id,
+        state="preparing",
+    )
+    root_binding.assert_bound()
+    return _complete_preparation(
+        final_root,
+        authorization=authorization,
+        code_root=code_root,
+        data_root=data_root,
+        root_binding=root_binding,
+    )
 
 
 def _complete_preparation(
@@ -133,38 +186,49 @@ def _complete_preparation(
     authorization: FinalTestAuthorization,
     code_root: Path,
     data_root: Path,
+    root_binding: FinalRootBinding,
 ) -> FinalTestPreparation:
-    registry_root = final_root / "attempts"
-
+    root_binding.assert_bound()
     config = _load_frozen_config(code_root, data_root)
+    root_binding.assert_bound()
     _assert_final_root(config, final_root)
     preparation_root = final_root / "preparations" / authorization.attempt_id
     _assert_new_preparation_root(preparation_root)
     resolution = _resolve_or_build_data_panel(
-        config, authorization, code_root=code_root, final_root=final_root
+        config,
+        authorization,
+        code_root=code_root,
+        final_root=final_root,
+        root_binding=root_binding,
     )
+    root_binding.assert_bound()
     source = validate_panel_source(
         resolution.root, Period(FINAL_TEST_START, FINAL_TEST_END)
     )
     symbols = _symbols_from_verified_panel(source)
+    root_binding.assert_bound()
     result = _publish_preparation(
         final_root,
         authorization=authorization,
         resolution=resolution,
         symbols=symbols,
+        root_binding=root_binding,
     )
+    root_binding.assert_bound()
     _verify_preparation_files(
         final_root,
         preparation_root=result.root,
         authorization=authorization,
         resolution=resolution,
     )
-    append_attempt_state(
-        registry_root,
+    root_binding.assert_bound()
+    append_attempt_state_at(
+        root_binding.attempts_fd,
         attempt_id=authorization.attempt_id,
         state="awaiting_official_evidence",
         identities={"prepare_manifest_sha256": result.manifest_sha256},
     )
+    root_binding.assert_bound()
     return result
 
 
@@ -175,17 +239,26 @@ def _recover_preparation(
     authorization: FinalTestAuthorization,
     code_root: Path,
     data_root: Path,
+    root_binding: FinalRootBinding,
 ) -> FinalTestPreparation:
-    state = resolve_attempt_state(registry_root, authorization.attempt_id)
+    state = resolve_attempt_state_at(
+        root_binding.attempts_fd, authorization.attempt_id
+    )
+    root_binding.assert_bound()
     if state["state"] == "awaiting_official_evidence":
-        return verify_preparation(
+        result = verify_preparation(
             final_root,
             attempt_id=authorization.attempt_id,
             authorization=authorization,
+            root_binding=root_binding,
         )
+        root_binding.assert_bound()
+        return result
     if state["state"] == "registered":
-        append_attempt_state(
-            registry_root, attempt_id=authorization.attempt_id, state="preparing"
+        append_attempt_state_at(
+            root_binding.attempts_fd,
+            attempt_id=authorization.attempt_id,
+            state="preparing",
         )
     elif state["state"] != "preparing":
         raise ValueError("final-test attempt cannot resume preparation from its state")
@@ -196,8 +269,10 @@ def _recover_preparation(
             authorization=authorization,
             code_root=code_root,
             data_root=data_root,
+            root_binding=root_binding,
         )
     resolution = resolve_final_test_data_panel(final_root)
+    root_binding.assert_bound()
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication is not ready for preparation")
     _assert_data_claim_identity(
@@ -209,12 +284,14 @@ def _recover_preparation(
         authorization=authorization,
         resolution=resolution,
     )
-    append_attempt_state(
-        registry_root,
+    root_binding.assert_bound()
+    append_attempt_state_at(
+        root_binding.attempts_fd,
         attempt_id=authorization.attempt_id,
         state="awaiting_official_evidence",
         identities={"prepare_manifest_sha256": result.manifest_sha256},
     )
+    root_binding.assert_bound()
     return result
 
 
@@ -224,6 +301,7 @@ def verify_preparation(
     attempt_id: str,
     authorization: FinalTestAuthorization,
     expected_state: str = "awaiting_official_evidence",
+    root_binding: FinalRootBinding | None = None,
 ) -> FinalTestPreparation:
     """Verify exact files and identities; never rebuild or replace symbol scope."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -236,7 +314,11 @@ def verify_preparation(
         raise ValueError("preparation attempt differs from authorization")
     if expected_state not in {"awaiting_official_evidence", "executing", "failed"}:
         raise ValueError("invalid final-test preparation expected state")
-    state = resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
+    state = (
+        resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
+        if root_binding is None
+        else resolve_attempt_state_at(root_binding.attempts_fd, attempt_id)
+    )
     if state["state"] != expected_state:
         label = expected_state.replace("_", " ")
         raise ValueError(f"final-test preparation is not {label}")
@@ -250,6 +332,8 @@ def verify_preparation(
         authorization=authorization,
         resolution=resolution,
     )
+    if root_binding is not None:
+        root_binding.assert_bound()
     if state["identities"].get("prepare_manifest_sha256") != result.manifest_sha256:
         raise ValueError("attempt state preparation manifest identity differs")
     return replace(result, state=expected_state)
@@ -268,16 +352,30 @@ def _load_frozen_config(code_root: Path, data_root: Path) -> ResearchConfig:
 
 
 def _existing_attempt_authorization(
-    registry_root: Path, attempt_id: str | None
+    registry_root: Path,
+    attempt_id: str | None,
+    *,
+    registry_fd: int | None = None,
 ) -> FinalTestAuthorization | None:
     if attempt_id is None:
         return None
     record_path = registry_root / f"{attempt_id}.json"
-    if not record_path.exists():
+    if registry_fd is not None:
+        try:
+            os.stat(
+                f"{attempt_id}.json",
+                dir_fd=registry_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            return None
+        state = resolve_attempt_state_at(registry_fd, attempt_id)
+    elif not record_path.exists():
         return None
-    if record_path.is_symlink():
-        raise ValueError("final-test attempt record uses a symlink")
-    state = resolve_attempt_state(registry_root, attempt_id)
+    else:
+        if record_path.is_symlink():
+            raise ValueError("final-test attempt record uses a symlink")
+        state = resolve_attempt_state_readonly(registry_root, attempt_id)
     required = (
         "approval_id",
         "registered_at",
@@ -310,6 +408,7 @@ def _resolve_or_build_data_panel(
     *,
     code_root: Path,
     final_root: Path,
+    root_binding: FinalRootBinding,
 ) -> FinalTestDataResolution:
     claim_path = final_root / "data-build-claim.json"
     if claim_path.exists() or claim_path.is_symlink():
@@ -319,6 +418,7 @@ def _resolve_or_build_data_panel(
             FINAL_TEST_START,
             FINAL_TEST_END,
             code_root=code_root,
+            root_binding=root_binding,
         )
     else:
         build_final_test_daily_panel(
@@ -327,23 +427,31 @@ def _resolve_or_build_data_panel(
             FINAL_TEST_START,
             FINAL_TEST_END,
             code_root=code_root,
+            root_binding=root_binding,
         )
+        root_binding.assert_bound()
         resolution = resolve_final_test_data_panel(final_root)
+        root_binding.assert_bound()
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication is not ready for preparation")
-    _assert_data_claim_identity(claim_path, authorization, resolution)
+    _assert_data_claim_identity(
+        claim_path,
+        authorization,
+        resolution,
+        final_fd=root_binding.final_fd,
+    )
+    root_binding.assert_bound()
     return resolution
 
 
 def _record_preparation_failure(
-    registry_root: Path, attempt_id: str, error: Exception
+    registry_fd: int, attempt_id: str, error: Exception
 ) -> None:
-    record = registry_root / f"{attempt_id}.json"
-    outcome = registry_root / f"{attempt_id}.outcome.json"
-    if not record.is_file() or outcome.exists():
+    entries = set(os.listdir(registry_fd))
+    if f"{attempt_id}.json" not in entries or f"{attempt_id}.outcome.json" in entries:
         return
-    append_attempt_outcome(
-        registry_root,
+    append_attempt_outcome_at(
+        registry_fd,
         attempt_id=attempt_id,
         status="failed",
         authoritative=False,
@@ -355,9 +463,17 @@ def _assert_data_claim_identity(
     claim_path: Path,
     authorization: FinalTestAuthorization,
     resolution: FinalTestDataResolution,
+    final_fd: int | None = None,
 ) -> None:
     try:
-        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim_bytes = (
+            claim_path.read_bytes()
+            if final_fd is None
+            else read_bytes_at(
+                final_fd, claim_path.name, label="final-test data publication claim"
+            )
+        )
+        claim = json.loads(claim_bytes)
     except (FileNotFoundError, json.JSONDecodeError) as error:
         raise ValueError("invalid final-test data publication claim") from error
     expected = {
@@ -415,24 +531,72 @@ def _publish_preparation(
     authorization: FinalTestAuthorization,
     resolution: FinalTestDataResolution,
     symbols: list[str],
+    root_binding: FinalRootBinding | None = None,
 ) -> FinalTestPreparation:
-    parent = final_root / "preparations"
-    if parent.is_symlink():
-        raise ValueError("final-test preparations path uses a symlink")
-    parent.mkdir(parents=True, exist_ok=True)
-    root = parent / authorization.attempt_id
-    _assert_new_preparation_root(root)
-    temporary = parent / f".{authorization.attempt_id}.{uuid4().hex}.tmp"
-    temporary.mkdir()
+    if root_binding is None:
+        with FinalRootBinding.open(final_root) as opened_binding:
+            return _publish_preparation(
+                final_root,
+                authorization=authorization,
+                resolution=resolution,
+                symbols=symbols,
+                root_binding=opened_binding,
+            )
+    root_binding.assert_bound()
     try:
-        scope = temporary / "symbol_scope.parquet"
-        pl.DataFrame({"symbol": symbols}, schema={"symbol": pl.String}).write_parquet(scope)
+        os.mkdir("preparations", mode=0o700, dir_fd=root_binding.final_fd)
+    except FileExistsError:
+        pass
+    parent_fd = open_directory_at(
+        root_binding.final_fd, "preparations", label="final-test preparations"
+    )
+    root = final_root / "preparations" / authorization.attempt_id
+    temporary_name = f".{authorization.attempt_id}.{uuid4().hex}.tmp"
+    temporary_fd: int | None = None
+    try:
+        try:
+            os.stat(
+                authorization.attempt_id,
+                dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            raise FileExistsError(f"final-test preparation already exists: {root}")
+        os.mkdir(temporary_name, mode=0o700, dir_fd=parent_fd)
+        temporary_fd = open_directory_at(
+            parent_fd, temporary_name, label="final-test temporary preparation"
+        )
+        scope_buffer = BytesIO()
+        pl.DataFrame(
+            {"symbol": symbols}, schema={"symbol": pl.String}
+        ).write_parquet(scope_buffer)
+        scope_bytes = scope_buffer.getvalue()
+        write_bytes_exclusive_at(temporary_fd, "symbol_scope.parquet", scope_bytes)
         scope_record = {
-            **file_identity(scope, relative_path="symbol_scope.parquet"),
+            "relative_path": "symbol_scope.parquet",
+            "sha256": hashlib.sha256(scope_bytes).hexdigest(),
+            "size_bytes": len(scope_bytes),
             "symbol_count": len(symbols),
             "symbols_sha256": _symbols_digest(symbols),
         }
-        data_manifest = resolution.root / "data_manifest.json"
+        daily_panel_fd = open_directory_at(
+            root_binding.final_fd, "daily_panel", label="final-test daily panel"
+        )
+        try:
+            data_manifest_bytes = read_bytes_at(
+                daily_panel_fd,
+                "data_manifest.json",
+                label="final-test data manifest",
+            )
+        finally:
+            os.close(daily_panel_fd)
+        if (
+            hashlib.sha256(data_manifest_bytes).hexdigest()
+            != resolution.data_manifest_sha256
+        ):
+            raise ValueError("final-test preparation data manifest identity differs")
         manifest = {
             "schema_version": _SCHEMA_VERSION,
             "attempt_id": authorization.attempt_id,
@@ -446,29 +610,49 @@ def _publish_preparation(
             "git": {"commit": authorization.git_commit, "tree": authorization.git_tree},
             "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
             "supported_markets": list(_SUPPORTED_MARKETS),
-            "data_manifest": file_identity(
-                data_manifest, relative_path="daily_panel/data_manifest.json"
-            ),
+            "data_manifest": {
+                "relative_path": "daily_panel/data_manifest.json",
+                "sha256": hashlib.sha256(data_manifest_bytes).hexdigest(),
+                "size_bytes": len(data_manifest_bytes),
+            },
             "symbol_scope": scope_record,
             "created_at": authorization.registered_at,
             "state": "awaiting_official_evidence",
         }
-        write_json(temporary / "prepare_manifest.json", manifest)
-        os.replace(temporary, root)
-        fsync_directory(parent)
+        manifest_bytes = (
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        write_bytes_exclusive_at(
+            temporary_fd, "prepare_manifest.json", manifest_bytes
+        )
+        atomic_rename_no_replace_at(
+            parent_fd,
+            temporary_name,
+            parent_fd,
+            authorization.attempt_id,
+        )
+        os.fsync(parent_fd)
+        root_binding.assert_bound()
     except BaseException:
-        if temporary.exists():
-            for path in temporary.iterdir():
-                path.unlink()
-            temporary.rmdir()
+        if temporary_fd is not None:
+            for name in os.listdir(temporary_fd):
+                os.unlink(name, dir_fd=temporary_fd)
+        try:
+            os.rmdir(temporary_name, dir_fd=parent_fd)
+        except FileNotFoundError:
+            pass
         raise
+    finally:
+        if temporary_fd is not None:
+            os.close(temporary_fd)
+        os.close(parent_fd)
     manifest_path = root / "prepare_manifest.json"
     return FinalTestPreparation(
         attempt_id=authorization.attempt_id,
         state="awaiting_official_evidence",
         root=root,
         manifest_path=manifest_path,
-        manifest_sha256=_sha256_file(manifest_path),
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         symbol_scope_path=root / "symbol_scope.parquet",
         symbol_count=len(symbols),
         symbols_sha256=_symbols_digest(symbols),

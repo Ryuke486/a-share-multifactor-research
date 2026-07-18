@@ -17,10 +17,15 @@ from ashare_multifactor.audit.records import sha256_file, verify_file_record
 from ashare_multifactor.config import load_config
 from ashare_multifactor.final_test.registry import (
     append_attempt_outcome,
+    append_attempt_outcome_at,
     assert_no_authoritative_success,
+    assert_no_authoritative_success_at,
     register_attempt,
+    register_attempt_at,
     save_token_snapshot,
+    save_token_snapshot_at,
 )
+from ashare_multifactor.final_test.recovery_secure_fs import read_bytes_at
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
 from ashare_multifactor.robustness.successor_seal import (
     verify_action_coverage_audit,
@@ -65,6 +70,7 @@ def authorize_final_test(
     requested_start: date,
     requested_end: date,
     attempt_id: str | None = None,
+    registry_fd: int | None = None,
 ) -> FinalTestAuthorization:
     """Verify the frozen Stage-8 contract and register before any test-data read."""
     if (requested_start, requested_end) != (FINAL_TEST_START, FINAL_TEST_END):
@@ -85,7 +91,10 @@ def authorize_final_test(
         seal_sha256=seal,
     )
     _verify_frozen_contract(code_root, sealed, validation_root, robustness.lineage)
-    assert_no_authoritative_success(registry_root)
+    if registry_fd is None:
+        assert_no_authoritative_success(registry_root)
+    else:
+        assert_no_authoritative_success_at(registry_fd)
 
     current_commit = _git(code_root, "rev-parse", "HEAD").strip()
     current_tree = _git(code_root, "rev-parse", "HEAD^{tree}").strip()
@@ -100,8 +109,9 @@ def authorize_final_test(
         robustness_lineage_sha256=frozen.lineage_sha256,
     )
     actual_attempt_id = attempt_id or uuid.uuid4().hex
-    record = register_attempt(
-        registry_root,
+    register = register_attempt if registry_fd is None else register_attempt_at
+    record = register(
+        registry_root if registry_fd is None else registry_fd,
         attempt_id=actual_attempt_id,
         git_commit=current_commit,
         git_tree=current_tree,
@@ -113,22 +123,37 @@ def authorize_final_test(
         robustness_lineage_sha256=frozen.lineage_sha256,
     )
     try:
-        token_snapshot = save_token_snapshot(
-            registry_root,
-            attempt_id=actual_attempt_id,
-            token_bytes=token_bytes,
-            expected_sha256=token_sha256,
-        )
+        if registry_fd is None:
+            token_snapshot = save_token_snapshot(
+                registry_root,
+                attempt_id=actual_attempt_id,
+                token_bytes=token_bytes,
+                expected_sha256=token_sha256,
+            )
+        else:
+            save_token_snapshot_at(
+                registry_fd,
+                attempt_id=actual_attempt_id,
+                token_bytes=token_bytes,
+                expected_sha256=token_sha256,
+            )
+            token_snapshot = opening_token_path
         verify_test_opening_token(
             token_snapshot,
             sealed,
             approval_key=approval_key,
             attempt_id=actual_attempt_id,
+            token_bytes=token_bytes,
         )
         _assert_stage8_identity_unchanged(robustness, frozen)
     except Exception as error:
-        append_attempt_outcome(
-            registry_root,
+        append_outcome = (
+            append_attempt_outcome
+            if registry_fd is None
+            else append_attempt_outcome_at
+        )
+        append_outcome(
+            registry_root if registry_fd is None else registry_fd,
             attempt_id=actual_attempt_id,
             status="failed",
             authoritative=False,
@@ -160,13 +185,18 @@ def recover_registered_authorization(
     requested_start: date,
     requested_end: date,
     attempt_id: str,
+    registry_fd: int | None = None,
 ) -> FinalTestAuthorization:
     """Idempotently complete one registered authorization before any data read."""
     if (requested_start, requested_end) != (FINAL_TEST_START, FINAL_TEST_END):
         raise ValueError("requested dates differ from the sealed final-test period")
     outcome_path = registry_root / f"{attempt_id}.outcome.json"
     try:
-        record = _load_registered_attempt(registry_root, attempt_id)
+        record = (
+            _load_registered_attempt(registry_root, attempt_id)
+            if registry_fd is None
+            else _load_registered_attempt_at(registry_fd, attempt_id)
+        )
         code_root = code_root.resolve()
         robustness = resolve_current(robustness_root)
         sealed = json.loads(
@@ -210,7 +240,24 @@ def recover_registered_authorization(
         ):
             raise ValueError("registered final-test token identity changed")
         snapshot = registry_root / f"{attempt_id}.token"
-        if snapshot.exists() or snapshot.is_symlink():
+        if registry_fd is not None:
+            try:
+                snapshot_bytes = read_bytes_at(
+                    registry_fd,
+                    f"{attempt_id}.token",
+                    label="final-test token snapshot",
+                )
+            except FileNotFoundError:
+                save_token_snapshot_at(
+                    registry_fd,
+                    attempt_id=attempt_id,
+                    token_bytes=token_bytes,
+                    expected_sha256=token_sha256,
+                )
+            else:
+                if snapshot_bytes != token_bytes:
+                    raise ValueError("final-test token snapshot identity changed")
+        elif snapshot.exists() or snapshot.is_symlink():
             if snapshot.is_symlink() or snapshot.read_bytes() != token_bytes:
                 raise ValueError("final-test token snapshot identity changed")
         else:
@@ -231,10 +278,11 @@ def recover_registered_authorization(
             )
         else:
             verify_test_opening_token(
-                snapshot,
+                opening_token_path if registry_fd is not None else snapshot,
                 sealed,
                 approval_key=approval_key,
                 attempt_id=attempt_id,
+                token_bytes=token_bytes,
             )
             _verify_opening_ledger(
                 ledger_path,
@@ -257,9 +305,19 @@ def recover_registered_authorization(
             robustness_lineage_sha256=frozen.lineage_sha256,
         )
     except Exception as error:
-        if not outcome_path.exists():
-            append_attempt_outcome(
-                registry_root,
+        outcome_exists = (
+            outcome_path.exists()
+            if registry_fd is None
+            else f"{attempt_id}.outcome.json" in os.listdir(registry_fd)
+        )
+        if not outcome_exists:
+            append_outcome = (
+                append_attempt_outcome
+                if registry_fd is None
+                else append_attempt_outcome_at
+            )
+            append_outcome(
+                registry_root if registry_fd is None else registry_fd,
                 attempt_id=attempt_id,
                 status="failed",
                 authoritative=False,
@@ -299,6 +357,24 @@ def _load_registered_attempt(
         or record.get("status") != "registered"
         or record.get("authoritative") is not False
     ):
+        raise ValueError("invalid final-test attempt registration")
+    return record
+
+
+def _load_registered_attempt_at(
+    registry_fd: int, attempt_id: str
+) -> dict[str, object]:
+    try:
+        record = json.loads(
+            read_bytes_at(
+                registry_fd,
+                f"{attempt_id}.json",
+                label="final-test attempt registration",
+            )
+        )
+    except (FileNotFoundError, json.JSONDecodeError) as error:
+        raise ValueError("invalid final-test attempt registration") from error
+    if not isinstance(record, dict) or record.get("attempt_id") != attempt_id:
         raise ValueError("invalid final-test attempt registration")
     return record
 
@@ -500,6 +576,36 @@ def _load_execution_token(
         token = json.loads(token_bytes)
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         raise ValueError("invalid final-test opening token") from exc
+    return _validate_execution_token_bytes(
+        token_bytes,
+        token=token,
+        sealed_protocol_sha256=sealed_protocol_sha256,
+        approval_key=approval_key,
+        current_commit=current_commit,
+        current_tree=current_tree,
+        robustness_release=robustness_release,
+        robustness_manifest_sha256=robustness_manifest_sha256,
+        robustness_lineage_sha256=robustness_lineage_sha256,
+    )
+
+
+def _validate_execution_token_bytes(
+    token_bytes: bytes,
+    *,
+    token: object | None = None,
+    sealed_protocol_sha256: str,
+    approval_key: bytes,
+    current_commit: str,
+    current_tree: str,
+    robustness_release: str,
+    robustness_manifest_sha256: str,
+    robustness_lineage_sha256: str,
+) -> tuple[dict[str, object], bytes, str]:
+    if token is None:
+        try:
+            token = json.loads(token_bytes)
+        except json.JSONDecodeError as error:
+            raise ValueError("invalid final-test opening token") from error
     if not isinstance(token, dict) or len(approval_key) < 16:
         raise ValueError("invalid final-test opening token")
     approval_id = str(token.get("approval_id", ""))

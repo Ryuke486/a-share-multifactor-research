@@ -84,12 +84,7 @@ def _attempt_transition_lock(registry_root: Path, attempt_id: str):
 
 @contextmanager
 def _attempt_transition_lock_at(registry_fd: int, attempt_id: str):
-    descriptor = os.open(
-        f"{attempt_id}.lock",
-        os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW"),
-        0o600,
-        dir_fd=registry_fd,
-    )
+    descriptor = _open_or_create_lock_at(registry_fd, f"{attempt_id}.lock")
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
         try:
@@ -126,6 +121,20 @@ def claim_attempt_preparation(registry_root: Path, *, attempt_id: str):
         registry_root / f"{attempt_id}.preparation.lock",
         os.O_WRONLY | os.O_CREAT,
         0o600,
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+@contextmanager
+def claim_attempt_preparation_at(registry_fd: int, *, attempt_id: str):
+    validate_publication_id(attempt_id)
+    descriptor = _open_or_create_lock_at(
+        registry_fd, f"{attempt_id}.preparation.lock"
     )
     try:
         fcntl.flock(descriptor, fcntl.LOCK_EX)
@@ -175,6 +184,57 @@ def claim_attempt_execution(
         os.close(descriptor)
 
 
+@contextmanager
+def claim_attempt_execution_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    identities: dict[str, str],
+):
+    validate_publication_id(attempt_id)
+    descriptor = _open_or_create_lock_at(
+        registry_fd, f"{attempt_id}.execution.lock"
+    )
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        with _attempt_transition_lock_at(registry_fd, attempt_id):
+            current = _resolve_attempt_state_unlocked_at(registry_fd, attempt_id)
+            if current["state"] == "awaiting_official_evidence":
+                _append_attempt_state_unlocked_at(
+                    registry_fd,
+                    attempt_id=attempt_id,
+                    state="executing",
+                    identities=identities,
+                )
+                recovered = False
+            elif current["state"] == "executing":
+                validated = _validate_state_identities("executing", identities)
+                if current["identities"] != validated:
+                    raise ValueError(
+                        "executing state identity differs from resume preflight"
+                    )
+                recovered = True
+            else:
+                raise ValueError("invalid final-test state transition")
+        yield recovered
+    finally:
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        os.close(descriptor)
+
+
+def _open_or_create_lock_at(registry_fd: int, name: str) -> int:
+    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW")
+    try:
+        return os.open(
+            name,
+            flags | os.O_CREAT | os.O_EXCL,
+            0o600,
+            dir_fd=registry_fd,
+        )
+    except FileExistsError:
+        return os.open(name, flags, dir_fd=registry_fd)
+
+
 def append_attempt_state(
     registry_root: Path,
     *,
@@ -187,6 +247,23 @@ def append_attempt_state(
     with _attempt_transition_lock(registry_root, attempt_id):
         return _append_attempt_state_unlocked(
             registry_root,
+            attempt_id=attempt_id,
+            state=state,
+            identities=identities or {},
+        )
+
+
+def append_attempt_state_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    state: str,
+    identities: dict[str, str] | None = None,
+) -> AttemptStateEvent:
+    validate_publication_id(attempt_id)
+    with _attempt_transition_lock_at(registry_fd, attempt_id):
+        return _append_attempt_state_unlocked_at(
+            registry_fd,
             attempt_id=attempt_id,
             state=state,
             identities=identities or {},
@@ -227,6 +304,41 @@ def _append_attempt_state_unlocked(
     return payload
 
 
+def _append_attempt_state_unlocked_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    state: str,
+    identities: dict[str, str],
+) -> AttemptStateEvent:
+    current = _resolve_attempt_state_unlocked_at(registry_fd, attempt_id)
+    if current["state"] in {"failed", "published"}:
+        raise ValueError("terminal final-test state cannot transition")
+    expected = _STATE_SEQUENCE.get(str(current["state"]), -1) + 1
+    if _STATE_SEQUENCE.get(state) != expected:
+        raise ValueError("invalid final-test state transition")
+    validated_identities = _validate_state_identities(state, identities)
+    _validate_state_identity_inheritance(
+        state, current["identities"], validated_identities
+    )
+    payload: AttemptStateEvent = {
+        "attempt_id": attempt_id,
+        "sequence": expected,
+        "state": state,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "identities": validated_identities,
+    }
+    try:
+        _write_exclusive_at(
+            registry_fd,
+            f"{attempt_id}.state.{expected:02d}-{state}.json",
+            _json_bytes(payload),
+        )
+    except FileExistsError as exc:
+        raise ValueError("invalid final-test state transition") from exc
+    return payload
+
+
 def resolve_attempt_state(registry_root: Path, attempt_id: str) -> dict[str, Any]:
     """Rebuild an attempt state from immutable registration, events, and outcome."""
     validate_publication_id(attempt_id)
@@ -241,6 +353,12 @@ def resolve_attempt_state_readonly(
     validate_publication_id(attempt_id)
     with _attempt_read_lock(registry_root, attempt_id):
         return _resolve_attempt_state_unlocked(registry_root, attempt_id)
+
+
+def resolve_attempt_state_at(registry_fd: int, attempt_id: str) -> dict[str, Any]:
+    validate_publication_id(attempt_id)
+    with _attempt_transition_lock_at(registry_fd, attempt_id):
+        return _resolve_attempt_state_unlocked_at(registry_fd, attempt_id)
 
 
 def bind_execution_identity(
@@ -285,6 +403,43 @@ def bind_execution_identity(
         return validated
 
 
+def bind_execution_identity_at(
+    registry_fd: int, *, identity: Mapping[str, object]
+) -> dict[str, str]:
+    validated = validate_execution_identity(identity)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    name = f"{attempt_id}.execution-binding.json"
+    with _attempt_transition_lock_at(registry_fd, attempt_id):
+        state = _resolve_attempt_state_unlocked_at(registry_fd, attempt_id)
+        expected = {
+            key: validated[key]
+            for key in (
+                "prepare_manifest_sha256",
+                "security_event_coverage_sha256",
+                "corporate_action_coverage_sha256",
+            )
+        }
+        if state["state"] != "executing" or state["identities"] != expected:
+            raise ValueError("execution binding differs from executing attempt")
+        if _entry_exists_at(registry_fd, name):
+            existing = validate_execution_identity(
+                _read_registry_json_at(registry_fd, name)
+            )
+            if existing != validated:
+                raise ValueError("execution binding differs from existing record")
+            return existing
+        try:
+            _write_exclusive_at(registry_fd, name, _json_bytes(validated))
+        except FileExistsError:
+            existing = validate_execution_identity(
+                _read_registry_json_at(registry_fd, name)
+            )
+            if existing != validated:
+                raise ValueError("execution binding differs from existing record") from None
+            return existing
+        return validated
+
+
 def resolve_execution_binding(
     registry_root: Path,
     *,
@@ -313,6 +468,20 @@ def resolve_optional_execution_binding(
         if not path.exists():
             return None
         return _resolve_execution_binding_unlocked(registry_root, attempt_id)
+
+
+def resolve_optional_execution_binding_at(
+    registry_fd: int, *, attempt_id: str
+) -> dict[str, str] | None:
+    validate_publication_id(attempt_id)
+    with _attempt_transition_lock_at(registry_fd, attempt_id):
+        state = _resolve_attempt_state_unlocked_at(registry_fd, attempt_id)
+        if state["state"] != "executing":
+            raise ValueError("execution binding requires an executing attempt")
+        name = f"{attempt_id}.execution-binding.json"
+        if not _entry_exists_at(registry_fd, name):
+            return None
+        return _resolve_execution_binding_unlocked_at(registry_fd, attempt_id)
 
 
 def bind_execution_input_manifest_hash(
@@ -351,6 +520,35 @@ def bind_execution_input_manifest_hash(
         return manifest_sha256
 
 
+def bind_execution_input_manifest_hash_at(
+    registry_fd: int,
+    *,
+    identity: Mapping[str, object],
+    manifest_sha256: str,
+) -> str:
+    validated = validate_execution_identity(identity)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    if _SHA256.fullmatch(manifest_sha256) is None:
+        raise ValueError("execution-input manifest hash is invalid")
+    name = (
+        f"{validated['attempt_id']}.execution-input."
+        f"{validated['execution_id']}.json"
+    )
+    payload = {**validated, "execution_input_manifest_sha256": manifest_sha256}
+    with _attempt_transition_lock_at(registry_fd, attempt_id):
+        if _resolve_execution_binding_unlocked_at(registry_fd, attempt_id) != validated:
+            raise ValueError("execution-input binding differs from execution identity")
+        if _entry_exists_at(registry_fd, name):
+            existing = _read_execution_input_binding_payload(
+                _read_registry_json_at(registry_fd, name)
+            )
+            if existing != payload:
+                raise ValueError("execution-input binding differs from existing record")
+            return manifest_sha256
+        _write_exclusive_at(registry_fd, name, _json_bytes(payload))
+        return manifest_sha256
+
+
 def bind_execution_output_intent(
     registry_root: Path,
     *,
@@ -384,6 +582,34 @@ def bind_execution_output_intent(
     return canonical
 
 
+def bind_execution_output_intent_at(
+    registry_fd: int,
+    *,
+    identity: Mapping[str, object],
+    outputs: Mapping[str, Mapping[str, object]],
+) -> dict[str, dict[str, object]]:
+    validated = validate_execution_identity(identity)
+    canonical = _validate_execution_output_intent(outputs)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    name = (
+        f"{validated['attempt_id']}.execution-output."
+        f"{validated['execution_id']}.json"
+    )
+    payload = {**validated, "outputs": canonical}
+    with _attempt_transition_lock_at(registry_fd, attempt_id):
+        if _resolve_execution_binding_unlocked_at(registry_fd, attempt_id) != validated:
+            raise ValueError("execution-output intent differs from execution identity")
+        if _entry_exists_at(registry_fd, name):
+            existing = _read_execution_output_intent_payload(
+                _read_registry_json_at(registry_fd, name)
+            )
+            if existing != payload:
+                raise ValueError("execution-output intent differs from existing record")
+        else:
+            _write_exclusive_at(registry_fd, name, _json_bytes(payload))
+    return canonical
+
+
 def resolve_execution_output_intent(
     registry_root: Path,
     *,
@@ -399,6 +625,28 @@ def resolve_execution_output_intent(
         if path.is_symlink() or not path.is_file():
             raise ValueError("execution-output intent is missing")
         payload = _read_execution_output_intent(path)
+        if any(payload.get(key) != value for key, value in validated.items()):
+            raise ValueError("execution-output intent differs from execution identity")
+        return dict(payload["outputs"])
+
+
+def resolve_execution_output_intent_at(
+    registry_fd: int, *, identity: Mapping[str, object]
+) -> dict[str, dict[str, object]]:
+    validated = validate_execution_identity(identity)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    name = (
+        f"{validated['attempt_id']}.execution-output."
+        f"{validated['execution_id']}.json"
+    )
+    with _attempt_transition_lock_at(registry_fd, attempt_id):
+        if _resolve_execution_binding_unlocked_at(registry_fd, attempt_id) != validated:
+            raise ValueError("execution-output intent differs from execution identity")
+        if not _entry_exists_at(registry_fd, name):
+            raise ValueError("execution-output intent is missing")
+        payload = _read_execution_output_intent_payload(
+            _read_registry_json_at(registry_fd, name)
+        )
         if any(payload.get(key) != value for key, value in validated.items()):
             raise ValueError("execution-output intent differs from execution identity")
         return dict(payload["outputs"])
@@ -457,6 +705,28 @@ def _resolve_execution_binding_unlocked(
     return binding
 
 
+def _resolve_execution_binding_unlocked_at(
+    registry_fd: int, attempt_id: str
+) -> dict[str, str]:
+    state = _resolve_attempt_state_unlocked_at(registry_fd, attempt_id)
+    if state["state"] != "executing":
+        raise ValueError("execution binding requires an executing attempt")
+    binding = validate_execution_identity(
+        _read_registry_json_at(registry_fd, f"{attempt_id}.execution-binding.json")
+    )
+    expected = {
+        key: binding[key]
+        for key in (
+            "prepare_manifest_sha256",
+            "security_event_coverage_sha256",
+            "corporate_action_coverage_sha256",
+        )
+    }
+    if binding["attempt_id"] != attempt_id or state["identities"] != expected:
+        raise ValueError("execution binding differs from executing attempt")
+    return binding
+
+
 def _execution_input_binding_path(
     registry_root: Path,
     identity: Mapping[str, str],
@@ -502,7 +772,12 @@ def _validate_execution_output_intent(
 
 
 def _read_execution_output_intent(path: Path) -> dict[str, object]:
-    payload = _read_registry_json(path)
+    return _read_execution_output_intent_payload(_read_registry_json(path))
+
+
+def _read_execution_output_intent_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
     try:
         identity = validate_execution_identity(
             {key: payload.get(key) for key in EXECUTION_IDENTITY_FIELDS}
@@ -517,7 +792,12 @@ def _read_execution_output_intent(path: Path) -> dict[str, object]:
 
 
 def _read_execution_input_binding(path: Path) -> dict[str, object]:
-    payload = _read_registry_json(path)
+    return _read_execution_input_binding_payload(_read_registry_json(path))
+
+
+def _read_execution_input_binding_payload(
+    payload: dict[str, object],
+) -> dict[str, object]:
     try:
         validate_execution_identity(
             {key: payload.get(key) for key in EXECUTION_IDENTITY_FIELDS}
@@ -810,6 +1090,15 @@ def assert_no_authoritative_success(registry_root: Path) -> None:
             raise ValueError("authoritative final-test run already succeeded")
 
 
+def assert_no_authoritative_success_at(registry_fd: int) -> None:
+    for name in sorted(os.listdir(registry_fd)):
+        if not name.endswith(".json"):
+            continue
+        record = _read_registry_json_at(registry_fd, name)
+        if record.get("status") == "succeeded" and record.get("authoritative") is True:
+            raise ValueError("authoritative final-test run already succeeded")
+
+
 def append_attempt_outcome(
     registry_root: Path,
     *,
@@ -949,6 +1238,42 @@ def register_attempt(
         )
     except FileExistsError as exc:
         raise ValueError("final-test attempt ID is already registered") from exc
+    return record
+
+
+def register_attempt_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    git_commit: str,
+    sealed_protocol_sha256: str,
+    robustness_release: str,
+    approval_id: str,
+    git_tree: str,
+    token_sha256: str,
+    robustness_manifest_sha256: str,
+    robustness_lineage_sha256: str,
+) -> dict[str, Any]:
+    validate_publication_id(attempt_id)
+    assert_no_authoritative_success_at(registry_fd)
+    record: dict[str, Any] = {
+        "attempt_id": attempt_id,
+        "registered_at": datetime.now(timezone.utc).isoformat(),
+        "git_commit": git_commit,
+        "git_tree": git_tree,
+        "token_sha256": token_sha256,
+        "sealed_protocol_sha256": sealed_protocol_sha256,
+        "robustness_release": robustness_release,
+        "robustness_manifest_sha256": robustness_manifest_sha256,
+        "robustness_lineage_sha256": robustness_lineage_sha256,
+        "approval_id": approval_id,
+        "status": "registered",
+        "authoritative": False,
+    }
+    try:
+        _write_exclusive_at(registry_fd, f"{attempt_id}.json", _json_bytes(record))
+    except FileExistsError as error:
+        raise ValueError("final-test attempt ID is already registered") from error
     return record
 
 
@@ -1142,6 +1467,28 @@ def resolve_optional_prepared_publication(
         raise ValueError("prepared final-test publication identity differs") from error
     return resolve_prepared_publication(
         registry_root,
+        attempt_id=attempt_id,
+        release_run_id=run_id,
+        sealed_protocol_sha256=sealed_protocol_sha256,
+    )
+
+
+def resolve_optional_prepared_publication_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    sealed_protocol_sha256: str,
+) -> dict[str, Any] | None:
+    validate_publication_id(attempt_id)
+    name = f"{attempt_id}.prepared.json"
+    if not _entry_exists_at(registry_fd, name):
+        return None
+    prepared = _read_registry_json_at(registry_fd, name)
+    run_id = prepared.get("release_run_id")
+    if not isinstance(run_id, str):
+        raise ValueError("prepared final-test publication identity differs")
+    return resolve_prepared_publication_at(
+        registry_fd,
         attempt_id=attempt_id,
         release_run_id=run_id,
         sealed_protocol_sha256=sealed_protocol_sha256,
@@ -1555,6 +1902,18 @@ def save_token_snapshot(
     destination = registry_root / f"{attempt_id}.token"
     _write_exclusive(destination, token_bytes)
     return destination
+
+
+def save_token_snapshot_at(
+    registry_fd: int,
+    *,
+    attempt_id: str,
+    token_bytes: bytes,
+    expected_sha256: str,
+) -> None:
+    if hashlib.sha256(token_bytes).hexdigest() != expected_sha256:
+        raise ValueError("final-test token snapshot hash changed")
+    _write_exclusive_at(registry_fd, f"{attempt_id}.token", token_bytes)
 
 
 def _write_exclusive(path: Path, payload: bytes) -> None:

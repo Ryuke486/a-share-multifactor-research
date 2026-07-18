@@ -116,8 +116,10 @@ def claim_build(
     input_inventory: dict[str, object] | None = None,
     bound_inventory_bytes: bytes | None = None,
     staging_relative_path: str | None = None,
+    final_fd: int | None = None,
 ) -> Path:
-    final_root.mkdir(parents=True, exist_ok=True)
+    if final_fd is None:
+        final_root.mkdir(parents=True, exist_ok=True)
     claim_path = final_root / "data-build-claim.json"
     payload = _claim_payload(
         authorization,
@@ -129,51 +131,75 @@ def claim_build(
     claim_bytes = (
         json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
+    if final_fd is not None:
+        _install_claim_at(
+            final_fd,
+            claim_path=claim_path,
+            claim_bytes=claim_bytes,
+            temporary_name=temporary_name,
+            input_inventory=input_inventory,
+            bound_inventory_bytes=bound_inventory_bytes,
+        )
+        return claim_path
     with _opened_publication_root(final_root) as directories:
-        final_fd = directories.final_fd
-        if bound_inventory_bytes is not None:
-            _assert_bound_inventory_at(
-                final_fd, input_inventory, bound_inventory_bytes
-            )
-        try:
-            write_bytes_exclusive_at(final_fd, temporary_name, claim_bytes)
-            temporary_metadata = os.stat(
-                temporary_name, dir_fd=final_fd, follow_symlinks=False
-            )
-            try:
-                atomic_rename_no_replace_at(
-                    final_fd,
-                    temporary_name,
-                    final_fd,
-                    claim_path.name,
-                )
-            except FileExistsError as error:
-                raise ValueError("final-test data build is already claimed") from error
-            installed_metadata = os.stat(
-                claim_path.name, dir_fd=final_fd, follow_symlinks=False
-            )
-            installed_bytes = read_bytes_at(
-                final_fd, claim_path.name, label="final-test data claim"
-            )
-            if (
-                (installed_metadata.st_dev, installed_metadata.st_ino)
-                != (temporary_metadata.st_dev, temporary_metadata.st_ino)
-                or installed_bytes != claim_bytes
-            ):
-                _unlink_if_identity(final_fd, claim_path.name, installed_metadata)
-                raise ValueError("final-test data claim identity or bytes changed")
-        finally:
-            try:
-                os.unlink(temporary_name, dir_fd=final_fd)
-            except FileNotFoundError:
-                pass
-        if bound_inventory_bytes is not None:
-            _assert_bound_inventory_at(
-                final_fd, input_inventory, bound_inventory_bytes
-            )
+        _install_claim_at(
+            directories.final_fd,
+            claim_path=claim_path,
+            claim_bytes=claim_bytes,
+            temporary_name=temporary_name,
+            input_inventory=input_inventory,
+            bound_inventory_bytes=bound_inventory_bytes,
+        )
         directories.assert_bound()
-        os.fsync(final_fd)
     return claim_path
+
+
+def _install_claim_at(
+    final_fd: int,
+    *,
+    claim_path: Path,
+    claim_bytes: bytes,
+    temporary_name: str,
+    input_inventory: dict[str, object] | None,
+    bound_inventory_bytes: bytes | None,
+) -> None:
+    if bound_inventory_bytes is not None:
+        _assert_bound_inventory_at(final_fd, input_inventory, bound_inventory_bytes)
+    try:
+        write_bytes_exclusive_at(final_fd, temporary_name, claim_bytes)
+        temporary_metadata = os.stat(
+            temporary_name, dir_fd=final_fd, follow_symlinks=False
+        )
+        try:
+            atomic_rename_no_replace_at(
+                final_fd,
+                temporary_name,
+                final_fd,
+                claim_path.name,
+            )
+        except FileExistsError as error:
+            raise ValueError("final-test data build is already claimed") from error
+        installed_metadata = os.stat(
+            claim_path.name, dir_fd=final_fd, follow_symlinks=False
+        )
+        installed_bytes = read_bytes_at(
+            final_fd, claim_path.name, label="final-test data claim"
+        )
+        if (
+            (installed_metadata.st_dev, installed_metadata.st_ino)
+            != (temporary_metadata.st_dev, temporary_metadata.st_ino)
+            or installed_bytes != claim_bytes
+        ):
+            _unlink_if_identity(final_fd, claim_path.name, installed_metadata)
+            raise ValueError("final-test data claim identity or bytes changed")
+    finally:
+        try:
+            os.unlink(temporary_name, dir_fd=final_fd)
+        except FileNotFoundError:
+            pass
+    if bound_inventory_bytes is not None:
+        _assert_bound_inventory_at(final_fd, input_inventory, bound_inventory_bytes)
+    os.fsync(final_fd)
 
 
 def _assert_bound_inventory_at(

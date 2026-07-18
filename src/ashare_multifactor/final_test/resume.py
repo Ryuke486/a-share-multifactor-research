@@ -22,6 +22,7 @@ from ashare_multifactor.final_test.gate import (
     _assert_stage8_identity_unchanged,
     _git,
     _load_execution_token,
+    _validate_execution_token_bytes,
     _valid_sha256,
     _verify_frozen_contract,
     _verify_sealed_payload,
@@ -30,7 +31,10 @@ from ashare_multifactor.final_test.preparation import (
     FinalTestPreparation,
     verify_preparation,
 )
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
+from ashare_multifactor.final_test.recovery_secure_fs import read_bytes_at
 from ashare_multifactor.final_test.registry import (
+    resolve_attempt_state_at,
     resolve_attempt_state_readonly,
     validate_publication_id,
 )
@@ -50,6 +54,7 @@ def load_registered_authorization(
     data_root: Path,
     attempt_id: str,
     approval_key: bytes,
+    root_binding: FinalRootBinding | None = None,
 ) -> FinalTestAuthorization:
     """Reconstruct one consumed authorization without consuming its token again."""
     validate_publication_id(attempt_id)
@@ -62,7 +67,13 @@ def load_registered_authorization(
     record_path = registry_root / f"{attempt_id}.json"
     if record_path.is_symlink():
         raise ValueError("final-test attempt registration uses a symlink")
-    record = resolve_attempt_state_readonly(registry_root, attempt_id)
+    record = (
+        resolve_attempt_state_readonly(registry_root, attempt_id)
+        if root_binding is None
+        else resolve_attempt_state_at(root_binding.attempts_fd, attempt_id)
+    )
+    if root_binding is not None:
+        root_binding.assert_bound()
     _verify_registration(record, attempt_id)
 
     current_commit = _git(code_root, "rev-parse", "HEAD").strip()
@@ -105,22 +116,41 @@ def load_registered_authorization(
     )
 
     token_path = registry_root / f"{attempt_id}.token"
-    if token_path.is_symlink() or not token_path.is_file():
-        raise ValueError("final-test token snapshot is missing or uses a symlink")
-    token_bytes = token_path.read_bytes()
+    if root_binding is None:
+        if token_path.is_symlink() or not token_path.is_file():
+            raise ValueError("final-test token snapshot is missing or uses a symlink")
+        token_bytes = token_path.read_bytes()
+    else:
+        token_bytes = read_bytes_at(
+            root_binding.attempts_fd,
+            f"{attempt_id}.token",
+            label="final-test token snapshot",
+        )
     token_sha256 = hashlib.sha256(token_bytes).hexdigest()
     if token_sha256 != record["token_sha256"]:
         raise ValueError("final-test token snapshot hash changed")
-    token, verified_bytes, verified_sha256 = _load_execution_token(
-        token_path,
-        sealed_protocol_sha256=frozen.seal_sha256,
-        approval_key=approval_key,
-        current_commit=current_commit,
-        current_tree=current_tree,
-        robustness_release=frozen.run_id,
-        robustness_manifest_sha256=frozen.manifest_sha256,
-        robustness_lineage_sha256=frozen.lineage_sha256,
-    )
+    if root_binding is None:
+        token, verified_bytes, verified_sha256 = _load_execution_token(
+            token_path,
+            sealed_protocol_sha256=frozen.seal_sha256,
+            approval_key=approval_key,
+            current_commit=current_commit,
+            current_tree=current_tree,
+            robustness_release=frozen.run_id,
+            robustness_manifest_sha256=frozen.manifest_sha256,
+            robustness_lineage_sha256=frozen.lineage_sha256,
+        )
+    else:
+        token, verified_bytes, verified_sha256 = _validate_execution_token_bytes(
+            token_bytes,
+            sealed_protocol_sha256=frozen.seal_sha256,
+            approval_key=approval_key,
+            current_commit=current_commit,
+            current_tree=current_tree,
+            robustness_release=frozen.run_id,
+            robustness_manifest_sha256=frozen.manifest_sha256,
+            robustness_lineage_sha256=frozen.lineage_sha256,
+        )
     if (
         verified_bytes != token_bytes
         or verified_sha256 != token_sha256
@@ -147,6 +177,7 @@ def preflight_resume(
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
     expected_state: str = "awaiting_official_evidence",
+    root_binding: FinalRootBinding | None = None,
 ) -> ResumePreflight:
     """Verify a prepared attempt and exact official evidence without state writes."""
     authorization = load_registered_authorization(
@@ -154,6 +185,7 @@ def preflight_resume(
         data_root=data_root,
         attempt_id=attempt_id,
         approval_key=approval_key,
+        root_binding=root_binding,
     )
     final_root = data_root.resolve() / "processed/final_test"
     preparation = verify_preparation(
@@ -161,6 +193,7 @@ def preflight_resume(
         attempt_id=attempt_id,
         authorization=authorization,
         expected_state=expected_state,
+        root_binding=root_binding,
     )
     symbols = load_bound_symbol_scope(preparation)
     security, corporate = validate_final_execution_coverages(
@@ -178,7 +211,11 @@ def preflight_resume(
             corporate, "corporate-action coverage"
         ),
     )
-    state = resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
+    state = (
+        resolve_attempt_state_readonly(final_root / "attempts", attempt_id)
+        if root_binding is None
+        else resolve_attempt_state_at(root_binding.attempts_fd, attempt_id)
+    )
     if state["state"] != expected_state:
         raise ValueError("final-test attempt state changed during resume preflight")
     if expected_state == "executing" and state["identities"] != {
@@ -188,6 +225,8 @@ def preflight_resume(
     }:
         raise ValueError("executing state identity differs from resume preflight")
     return result
+
+
 
 
 def verify_resume_coverages(

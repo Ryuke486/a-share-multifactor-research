@@ -112,10 +112,12 @@ def verify_test_opening_token(
     approval_key: bytes,
     before_scan: Callable[[], object] | None = None,
     attempt_id: str | None = None,
+    token_bytes: bytes | None = None,
 ) -> dict[str, object]:
     """Validate explicit Stage-9 approval before invoking any test-data scanner."""
     try:
-        token = json.loads(token_path.read_text(encoding="utf-8"))
+        verified_token_bytes = token_path.read_bytes() if token_bytes is None else token_bytes
+        token = json.loads(verified_token_bytes)
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         raise ValueError("invalid final-test opening token") from exc
     sealed_copy = dict(sealed_protocol)
@@ -167,7 +169,7 @@ def verify_test_opening_token(
         "approval_id": approval_id,
         "sealed_protocol_sha256": seal,
         **{field: token[field] for field in identity_fields},
-        "token_sha256": hashlib.sha256(token_path.read_bytes()).hexdigest(),
+        "token_sha256": hashlib.sha256(verified_token_bytes).hexdigest(),
     }
     if attempt_id is not None:
         record["attempt_id"] = attempt_id

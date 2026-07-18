@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import inspect
@@ -452,7 +453,7 @@ def test_resume_completes_binding_after_crash_before_manifest_hash_append(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_steps(monkeypatch, publishable=True)
-    bind_manifest = pipeline_module.bind_execution_input_manifest_hash
+    bind_manifest = pipeline_module.bind_execution_input_manifest_hash_at
     crashed = False
 
     def crash_before_bind(*_args: object, **_kwargs: object) -> str:
@@ -464,7 +465,7 @@ def test_resume_completes_binding_after_crash_before_manifest_hash_append(
 
     monkeypatch.setattr(
         pipeline_module,
-        "bind_execution_input_manifest_hash",
+        "bind_execution_input_manifest_hash_at",
         crash_before_bind,
     )
     with pytest.raises(KeyboardInterrupt, match="before manifest hash append"):
@@ -501,7 +502,7 @@ def test_resume_rejects_self_consistent_primary_files_before_first_hash_bind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_steps(monkeypatch, publishable=True)
-    bind_manifest = pipeline_module.bind_execution_input_manifest_hash
+    bind_manifest = pipeline_module.bind_execution_input_manifest_hash_at
     crashed = False
 
     def crash_before_bind(*_args: object, **_kwargs: object) -> str:
@@ -513,7 +514,7 @@ def test_resume_rejects_self_consistent_primary_files_before_first_hash_bind(
 
     monkeypatch.setattr(
         pipeline_module,
-        "bind_execution_input_manifest_hash",
+        "bind_execution_input_manifest_hash_at",
         crash_before_bind,
     )
     with pytest.raises(KeyboardInterrupt, match="first input hash bind"):
@@ -548,7 +549,7 @@ def test_resume_rejects_self_consistent_primary_files_before_first_hash_bind(
     )
     monkeypatch.setattr(
         pipeline_module,
-        "bind_execution_input_manifest_hash",
+        "bind_execution_input_manifest_hash_at",
         bind_manifest,
     )
 
@@ -2959,6 +2960,51 @@ def test_attempt_staging_rejects_canonical_final_root_replacement(
             corporate_action_coverage_root=prepared_attempt.corporate_coverage,
             run_id="final-release",
         )
+
+
+@pytest.mark.parametrize("replacement", ["final_test", "processed"])
+def test_execution_claim_rejects_namespace_replacement_before_attempt_chain(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    replacement: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    claim = pipeline_module.claim_attempt_execution_at
+
+    @contextmanager
+    def claim_then_replace(*args: object, **kwargs: object):
+        with claim(*args, **kwargs) as recovered:
+            processed = prepared_attempt.data_root / "processed"
+            final_root = processed / "final_test"
+            target = final_root if replacement == "final_test" else processed
+            displaced = tmp_path / f"claimed-{replacement}"
+            target.rename(displaced)
+            shutil.copytree(displaced, target)
+            yield recovered
+
+    monkeypatch.setattr(
+        pipeline_module, "claim_attempt_execution_at", claim_then_replace
+    )
+
+    with pytest.raises(ValueError, match="claimed final-test root namespace"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    outcome_name = f"{prepared_attempt.attempt_id}.outcome.json"
+    assert not [
+        path
+        for path in tmp_path.rglob("CURRENT.json")
+        if path.parent.name in {"final_test", "claimed-final_test"}
+    ]
+    assert not list(tmp_path.rglob(outcome_name))
 
 
 @pytest.mark.parametrize(

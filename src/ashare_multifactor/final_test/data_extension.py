@@ -34,6 +34,7 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.panel_binding import (
     FrozenPanelSnapshot,
     bind_panel_snapshot,
@@ -50,6 +51,7 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
 )
 from ashare_multifactor.final_test.secure_stage2_output import (
     SecureStage2Output,
+    Stage2Directories,
     opened_existing_stage2_directories,
     opened_stage2_directories,
 )
@@ -98,6 +100,7 @@ def build_final_test_daily_panel(
     end: date,
     *,
     code_root: Path,
+    root_binding: FinalRootBinding | None = None,
 ) -> BuildManifest:
     """Build the authorized one-shot panel through the unchanged Stage-2 pipeline."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -111,26 +114,71 @@ def build_final_test_daily_panel(
         raise ValueError("configured test period differs from the sealed final-test period")
 
     final_root, target = _validate_target_paths(config)
+    _assert_root_binding(root_binding)
     _verify_authorization(config, authorization, code_root)
     claim_path = final_root / "data-build-claim.json"
-    if claim_path.exists() or claim_path.is_symlink():
+    claim_exists = (
+        claim_path.exists() or claim_path.is_symlink()
+        if root_binding is None
+        else _entry_exists(root_binding.final_fd, claim_path.name)
+    )
+    if claim_exists:
         raise ValueError("final-test data build is already claimed")
     inventory_root = final_root / "data-build-inputs"
     if inventory_root.is_symlink():
         raise ValueError("final-test bound input inventory path uses a symlink")
-    inventory_root.mkdir(parents=True, exist_ok=True)
+    inventory_fd: int | None = None
+    if root_binding is None:
+        inventory_root.mkdir(parents=True, exist_ok=True)
+    else:
+        try:
+            os.mkdir("data-build-inputs", mode=0o700, dir_fd=root_binding.final_fd)
+        except FileExistsError:
+            pass
+        inventory_fd = open_directory_at(
+            root_binding.final_fd,
+            "data-build-inputs",
+            label="final-test bound input inventory",
+        )
     inventory_path = inventory_root / f"{authorization.attempt_id}.json"
     inventory_identity: dict[str, object]
-    if inventory_path.exists() or inventory_path.is_symlink():
-        inventory, pairs = _load_orphan_input_inventory(
-            inventory_path,
-            config=config,
-            authorization=authorization,
-            start=start,
-            end=end,
-        )
+    inventory_exists = (
+        inventory_path.exists() or inventory_path.is_symlink()
+        if inventory_fd is None
+        else _entry_exists(inventory_fd, inventory_path.name)
+    )
+    if inventory_exists:
+        if inventory_fd is None:
+            inventory, pairs = _load_orphan_input_inventory(
+                inventory_path,
+                config=config,
+                authorization=authorization,
+                start=start,
+                end=end,
+            )
+        else:
+            inventory, pairs = _load_orphan_input_inventory_bytes(
+                read_bytes_at(
+                    inventory_fd,
+                    inventory_path.name,
+                    label="orphan final-test input inventory",
+                ),
+                config=config,
+                authorization=authorization,
+                start=start,
+                end=end,
+            )
         inventory_bytes = _json_bytes(inventory)
-        if inventory_path.read_bytes() != inventory_bytes:
+        actual_inventory_bytes = (
+            inventory_path.read_bytes()
+            if inventory_fd is None
+            else read_bytes_at(
+                inventory_fd,
+                inventory_path.name,
+                label="orphan final-test input inventory",
+            )
+        )
+        if actual_inventory_bytes != inventory_bytes:
             raise ValueError("orphan final-test input inventory bytes differ")
     else:
         try:
@@ -139,11 +187,30 @@ def build_final_test_daily_panel(
                 authorization,
             )
         except Exception as error:
-            claim_path = _claim_build(final_root, authorization)
-            _update_claim(claim_path, authorization, status="failed", error=error)
+            claim_path = _claim_build(
+                final_root,
+                authorization,
+                final_fd=(
+                    root_binding.final_fd if root_binding is not None else None
+                ),
+            )
+            _update_claim(
+                claim_path,
+                authorization,
+                status="failed",
+                error=error,
+                final_fd=(
+                    root_binding.final_fd if root_binding is not None else None
+                ),
+            )
             raise
-        _write_json(inventory_path, inventory)
         inventory_bytes = _json_bytes(inventory)
+        if inventory_fd is None:
+            _write_json(inventory_path, inventory)
+        else:
+            write_bytes_exclusive_at(
+                inventory_fd, inventory_path.name, inventory_bytes
+            )
         pairs = load_bound_input_pairs(
             config,
             inventory,
@@ -161,7 +228,11 @@ def build_final_test_daily_panel(
         input_inventory=inventory_identity,
         bound_inventory_bytes=inventory_bytes,
         staging_relative_path=staging_relative_path,
+        final_fd=root_binding.final_fd if root_binding is not None else None,
     )
+    if inventory_fd is not None:
+        os.close(inventory_fd)
+    _assert_root_binding(root_binding)
     return _build_claimed_panel(
         config,
         authorization,
@@ -171,6 +242,7 @@ def build_final_test_daily_panel(
         target=target,
         inventory=inventory,
         pairs=pairs,
+        root_binding=root_binding,
     )
 
 
@@ -196,8 +268,25 @@ def _load_orphan_input_inventory(
 ) -> tuple[dict[str, object], list[DailyFilePair]]:
     if path.is_symlink() or not path.is_file():
         raise ValueError("orphan final-test input inventory path is invalid")
+    return _load_orphan_input_inventory_bytes(
+        path.read_bytes(),
+        config=config,
+        authorization=authorization,
+        start=start,
+        end=end,
+    )
+
+
+def _load_orphan_input_inventory_bytes(
+    payload: bytes,
+    *,
+    config: ResearchConfig,
+    authorization: FinalTestAuthorization,
+    start: date,
+    end: date,
+) -> tuple[dict[str, object], list[DailyFilePair]]:
     try:
-        inventory = json.loads(path.read_text(encoding="utf-8"))
+        inventory = json.loads(payload)
     except json.JSONDecodeError as error:
         raise ValueError("orphan final-test input inventory is invalid") from error
     if (
@@ -210,6 +299,14 @@ def _load_orphan_input_inventory(
         raise ValueError("orphan final-test input inventory identity differs")
     pairs = load_bound_input_pairs(config, inventory, start=start, end=end)
     return inventory, pairs
+
+
+def _entry_exists(directory_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def _authorization_identity(
@@ -238,6 +335,7 @@ def _build_claimed_panel(
     target: Path,
     inventory: dict[str, object],
     pairs: list[DailyFilePair],
+    root_binding: FinalRootBinding | None = None,
 ) -> BuildManifest:
     processed = config.paths.processed
     temporary_processed = processed / "final_test/data-staging" / authorization.attempt_id
@@ -259,6 +357,7 @@ def _build_claimed_panel(
         with opened_stage2_directories(
             target.parent, authorization.attempt_id
         ) as stage2_directories:
+            _crosscheck_stage2_root(root_binding, stage2_directories)
             _assert_claim_inventory_at(
                 stage2_directories.final_fd, authorization, inventory
             )
@@ -275,6 +374,7 @@ def _build_claimed_panel(
                     secure_output=secure_output,
                 )
             stage2_directories.assert_bound()
+            _crosscheck_stage2_root(root_binding, stage2_directories)
             load_bound_input_pairs(config, inventory, start=start, end=end)
             bound_panel, data_manifest_identity = _bind_built_panel(
                 temporary_target,
@@ -322,6 +422,7 @@ def _build_claimed_panel(
                     stage2_directories.final_fd, authorization, inventory
                 )
                 stage2_directories.assert_bound()
+                _crosscheck_stage2_root(root_binding, stage2_directories)
                 stage2_directories.assert_published(bound_panel.root_identity)
                 stage2_directories.remove_empty_ancestors()
             except Exception as error:
@@ -336,6 +437,9 @@ def _build_claimed_panel(
                 authorization,
                 status="failed",
                 error=error,
+                final_fd=(
+                    root_binding.final_fd if root_binding is not None else None
+                ),
             )
         raise
     except BaseException:
@@ -648,22 +752,42 @@ def recover_final_test_daily_panel(
     end: date,
     *,
     code_root: Path,
+    root_binding: FinalRootBinding | None = None,
 ) -> FinalTestDataResolution:
     """Recover the same claim and exact bound inputs without new discovery."""
     if (start, end) != (FINAL_TEST_START, FINAL_TEST_END):
         raise ValueError("build dates must equal the exact final-test period")
     _verify_authorization(config, authorization, code_root)
     final_root = config.paths.processed / "final_test"
+    _assert_root_binding(root_binding)
     target = final_root / "daily_panel"
     claim_path = final_root / "data-build-claim.json"
-    claim = _load_claim_for_authorization(claim_path, authorization)
+    claim = (
+        _load_claim_for_authorization(claim_path, authorization)
+        if root_binding is None
+        else _load_claim_for_authorization_bytes(
+            read_bytes_at(
+                root_binding.final_fd,
+                claim_path.name,
+                label="final-test data publication claim",
+            ),
+            authorization,
+        )
+    )
+    _assert_root_binding(root_binding)
     status = claim.get("status")
     if status == "failed":
         raise ValueError("final-test data claim is failed and cannot be recovered")
     if status == "published":
-        return resolve_final_test_data_panel(final_root)
+        resolution = resolve_final_test_data_panel(final_root)
+        _assert_root_binding(root_binding)
+        return resolution
     if status == "publishing":
-        inventory = _load_claim_inventory(final_root, claim)
+        inventory = (
+            _load_claim_inventory(final_root, claim)
+            if root_binding is None
+            else _load_claim_inventory_at(root_binding.final_fd, claim)
+        )
         _recover_publishing_claim(
             final_root,
             target=target,
@@ -672,11 +796,18 @@ def recover_final_test_daily_panel(
             inventory=inventory,
             authorization=authorization,
             period=Period(start, end),
+            root_binding=root_binding,
         )
-        return resolve_final_test_data_panel(final_root)
+        resolution = resolve_final_test_data_panel(final_root)
+        _assert_root_binding(root_binding)
+        return resolution
     if status != "claimed":
         raise ValueError("final-test data claim has an invalid recovery state")
-    inventory = _load_claim_inventory(final_root, claim)
+    inventory = (
+        _load_claim_inventory(final_root, claim)
+        if root_binding is None
+        else _load_claim_inventory_at(root_binding.final_fd, claim)
+    )
     pairs = load_bound_input_pairs(config, inventory, start=start, end=end)
     staging = _claim_staging_path(final_root, claim)
     if staging.exists() and staging != final_root / "data-staging" / authorization.attempt_id:
@@ -690,15 +821,28 @@ def recover_final_test_daily_panel(
         target=target,
         inventory=inventory,
         pairs=pairs,
+        root_binding=root_binding,
     )
-    return resolve_final_test_data_panel(final_root)
+    resolution = resolve_final_test_data_panel(final_root)
+    _assert_root_binding(root_binding)
+    return resolution
 
 
 def _load_claim_for_authorization(
     path: Path, authorization: FinalTestAuthorization
 ) -> dict[str, object]:
     try:
-        claim = json.loads(path.read_text(encoding="utf-8"))
+        payload = path.read_bytes()
+    except FileNotFoundError as error:
+        raise ValueError("invalid final-test data publication claim") from error
+    return _load_claim_for_authorization_bytes(payload, authorization)
+
+
+def _load_claim_for_authorization_bytes(
+    payload: bytes, authorization: FinalTestAuthorization
+) -> dict[str, object]:
+    try:
+        claim = json.loads(payload)
     except (FileNotFoundError, json.JSONDecodeError) as error:
         raise ValueError("invalid final-test data publication claim") from error
     expected = {
@@ -734,6 +878,39 @@ def _load_claim_inventory(
     return inventory
 
 
+def _load_claim_inventory_at(
+    final_fd: int, claim: dict[str, object]
+) -> dict[str, object]:
+    record = claim.get("input_inventory")
+    if not isinstance(record, dict):
+        raise ValueError("final-test data claim lacks bound input inventory")
+    relative = record.get("relative_path")
+    parts = Path(str(relative)).parts
+    if len(parts) != 2 or parts[0] != "data-build-inputs":
+        raise ValueError("final-test data claim lacks bound input inventory")
+    inventory_fd = open_directory_at(
+        final_fd, parts[0], label="final-test bound input inventory"
+    )
+    try:
+        payload = read_bytes_at(
+            inventory_fd, parts[1], label="final-test bound input inventory"
+        )
+    finally:
+        os.close(inventory_fd)
+    if (
+        hashlib.sha256(payload).hexdigest() != record.get("sha256")
+        or len(payload) != record.get("size_bytes")
+    ):
+        raise ValueError("bound input inventory identity differs")
+    try:
+        inventory = json.loads(payload)
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid claim-bound final-test input inventory") from error
+    if not isinstance(inventory, dict):
+        raise ValueError("invalid claim-bound final-test input inventory")
+    return inventory
+
+
 def _claim_staging_path(final_root: Path, claim: dict[str, object]) -> Path:
     relative = claim.get("staging_relative_path")
     if (
@@ -757,6 +934,7 @@ def _recover_publishing_claim(
     inventory: dict[str, object],
     authorization: FinalTestAuthorization,
     period: Period,
+    root_binding: FinalRootBinding | None = None,
 ) -> None:
     manifest_record = claim.get("data_manifest")
     expected_manifest_sha256 = (
@@ -769,6 +947,7 @@ def _recover_publishing_claim(
     with opened_existing_stage2_directories(
         final_root, authorization.attempt_id
     ) as stage2_directories:
+        _crosscheck_stage2_root(root_binding, stage2_directories)
         _assert_claim_inventory_at(
             stage2_directories.final_fd, authorization, inventory
         )
@@ -802,6 +981,7 @@ def _recover_publishing_claim(
         try:
             snapshot.read_frozen_files()
             stage2_directories.assert_bound()
+            _crosscheck_stage2_root(root_binding, stage2_directories)
             stage2_directories.assert_published(snapshot.root_identity)
             resolution = resolve_final_test_data_panel(final_root)
             if not resolution.requires_recovery:
@@ -824,9 +1004,27 @@ def _recover_publishing_claim(
             )
             snapshot.read_frozen_files()
             stage2_directories.assert_bound()
+            _crosscheck_stage2_root(root_binding, stage2_directories)
             stage2_directories.assert_published(snapshot.root_identity)
         finally:
             snapshot.close()
+
+
+def _assert_root_binding(root_binding: FinalRootBinding | None) -> None:
+    if root_binding is not None:
+        root_binding.assert_bound()
+
+
+def _crosscheck_stage2_root(
+    root_binding: FinalRootBinding | None,
+    stage2_directories: Stage2Directories,
+) -> None:
+    if root_binding is None:
+        return
+    root_binding.crosscheck(
+        processed_fd=stage2_directories.processed_fd,
+        final_identity=stage2_directories.final_identity,
+    )
 
 
 def _bind_existing_panel(

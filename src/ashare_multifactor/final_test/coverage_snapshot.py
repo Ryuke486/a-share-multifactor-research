@@ -60,6 +60,7 @@ def snapshot_execution_coverages(
     corporate_action_coverage_root: Path,
     expected_security_sha256: str,
     expected_corporate_sha256: str,
+    final_fd: int | None = None,
 ) -> ExecutionCoverageSnapshot:
     """Copy, atomically publish, and revalidate exact validator dependencies."""
     validate_publication_id(attempt_id)
@@ -142,39 +143,13 @@ def snapshot_execution_coverages(
                 frozen["snapshot_manifest.json"]
             ).hexdigest(),
         )
-        with opened_directory(final_root, label="final-test root") as final_fd:
-            try:
-                os.mkdir("execution_coverage_snapshots", mode=0o700, dir_fd=final_fd)
-            except FileExistsError:
-                pass
-            with opened_directory_at(
-                final_fd,
-                "execution_coverage_snapshots",
-                label="coverage snapshot root",
-            ) as parent_fd:
-                temporary_name = f".{attempt_id}.{uuid4().hex}.tmp"
-                write_frozen_tree_at(
-                    parent_fd,
-                    temporary_name,
-                    frozen,
-                    resumable=False,
-                    label="coverage snapshot staging",
+        if final_fd is None:
+            with opened_directory(final_root, label="final-test root") as opened_final_fd:
+                _publish_snapshot_at(
+                    opened_final_fd, attempt_id=attempt_id, frozen=frozen
                 )
-                with opened_directory_at(
-                    parent_fd,
-                    temporary_name,
-                    label="coverage snapshot staging",
-                ) as staging_fd:
-                    staging_identity = directory_identity(staging_fd)
-                    atomic_rename_no_replace_at(
-                        parent_fd, temporary_name, attempt_id
-                    )
-                    assert_directory_entry(
-                        parent_fd,
-                        attempt_id,
-                        expected=staging_identity,
-                        label="execution coverage snapshot",
-                    )
+        else:
+            _publish_snapshot_at(final_fd, attempt_id=attempt_id, frozen=frozen)
     return _verify_snapshot(
         destination,
         attempt_id=attempt_id,
@@ -183,6 +158,41 @@ def snapshot_execution_coverages(
         expected_security_sha256=expected_security_sha256,
         expected_corporate_sha256=expected_corporate_sha256,
     )
+
+
+def _publish_snapshot_at(
+    final_fd: int, *, attempt_id: str, frozen: dict[str, bytes]
+) -> None:
+    try:
+        os.mkdir("execution_coverage_snapshots", mode=0o700, dir_fd=final_fd)
+    except FileExistsError:
+        pass
+    with opened_directory_at(
+        final_fd,
+        "execution_coverage_snapshots",
+        label="coverage snapshot root",
+    ) as parent_fd:
+        temporary_name = f".{attempt_id}.{uuid4().hex}.tmp"
+        write_frozen_tree_at(
+            parent_fd,
+            temporary_name,
+            frozen,
+            resumable=False,
+            label="coverage snapshot staging",
+        )
+        with opened_directory_at(
+            parent_fd,
+            temporary_name,
+            label="coverage snapshot staging",
+        ) as staging_fd:
+            staging_identity = directory_identity(staging_fd)
+            atomic_rename_no_replace_at(parent_fd, temporary_name, attempt_id)
+            assert_directory_entry(
+                parent_fd,
+                attempt_id,
+                expected=staging_identity,
+                label="execution coverage snapshot",
+            )
 
 
 def materialize_bound_coverage_snapshot(

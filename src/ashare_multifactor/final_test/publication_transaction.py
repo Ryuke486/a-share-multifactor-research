@@ -26,6 +26,7 @@ from ashare_multifactor.final_test.registry import (
     recover_prepared_publication_at,
     resolve_prepared_publication_at,
 )
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.secure_attempt_staging import AttemptDirectories
 
 
@@ -224,6 +225,20 @@ class FinalPublicationTransaction:
             raise PublicationNamespaceChanged(
                 "final publication attempt descriptor chain differs"
             )
+        self.assert_bound()
+
+    def crosscheck_root(self, binding: FinalRootBinding) -> None:
+        expected = (
+            (self.data_root_identity, binding.data_identity),
+            (self.processed_identity, binding.processed_identity),
+            (self.final_identity, binding.final_identity),
+            (self.attempts_identity, binding.attempts_identity),
+        )
+        if any(left != right for left, right in expected):
+            raise PublicationNamespaceChanged(
+                "final publication root descriptor chain differs"
+            )
+        binding.assert_bound()
         self.assert_bound()
 
     def crosscheck_current(self, held: HeldPublishedRelease) -> None:

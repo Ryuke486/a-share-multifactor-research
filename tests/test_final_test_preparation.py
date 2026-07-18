@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import date
 import hashlib
 import json
@@ -22,6 +23,7 @@ from test_final_test_gate import (
 )
 
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test import preparation as preparation_module
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
     register_attempt,
@@ -82,7 +84,7 @@ def _patch_prepare_dependencies(
         lambda **_kwargs: calls.append("registered") or _authorization(),
     )
     monkeypatch.setattr(
-        "ashare_multifactor.final_test.preparation.append_attempt_state",
+        "ashare_multifactor.final_test.preparation.append_attempt_state_at",
         lambda _root, **kwargs: calls.append(str(kwargs["state"])),
     )
     monkeypatch.setattr(
@@ -514,6 +516,43 @@ def test_prepare_recovers_half_registered_authorization_before_data_access(
 
     assert result == "prepared"
     assert calls == ["data_access"]
+
+
+@pytest.mark.parametrize("replacement", ["final_test", "processed"])
+def test_preparation_claim_rejects_namespace_replacement_before_authorization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    replacement: str,
+) -> None:
+    paths, data_root, authorization = _gate_attempt(tmp_path)
+    claim = preparation_module.claim_attempt_preparation_at
+
+    @contextmanager
+    def claim_then_replace(*args: object, **kwargs: object):
+        with claim(*args, **kwargs):
+            processed = data_root / "processed"
+            final_root = processed / "final_test"
+            target = final_root if replacement == "final_test" else processed
+            displaced = tmp_path / f"claimed-{replacement}"
+            target.rename(displaced)
+            shutil.copytree(displaced, target)
+            yield
+
+    monkeypatch.setattr(
+        preparation_module, "claim_attempt_preparation_at", claim_then_replace
+    )
+
+    with pytest.raises(ValueError, match="claimed final-test root namespace"):
+        prepare_final_test(
+            code_root=paths["code"],
+            data_root=data_root,
+            opening_token_path=paths["token"],
+            approval_key=APPROVAL_KEY,
+            attempt_id=authorization.attempt_id,
+        )
+
+    assert not list(tmp_path.rglob("*.state.01-preparing.json"))
+    assert not list(tmp_path.rglob("*.outcome.json"))
 
 
 @pytest.mark.parametrize("drift", ["git", "stage8"])

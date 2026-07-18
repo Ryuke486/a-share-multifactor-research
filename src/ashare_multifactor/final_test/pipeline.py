@@ -48,6 +48,10 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.final_root_binding import (
+    FinalRootBinding,
+    FinalRootNamespaceChanged,
+)
 from ashare_multifactor.final_test.interrupted_recovery import (
     has_recoverable_execution_archive,
     recover_interrupted_execution,
@@ -69,16 +73,16 @@ from ashare_multifactor.final_test.resume import (
     verify_resume_coverages,
 )
 from ashare_multifactor.final_test.registry import (
-    append_attempt_outcome,
-    assert_no_authoritative_success,
-    bind_execution_identity,
-    bind_execution_input_manifest_hash,
-    bind_execution_output_intent,
-    claim_attempt_execution,
-    resolve_optional_prepared_publication,
-    resolve_attempt_state_readonly,
-    resolve_optional_execution_binding,
-    resolve_execution_output_intent,
+    append_attempt_outcome_at,
+    assert_no_authoritative_success_at,
+    bind_execution_identity_at,
+    bind_execution_input_manifest_hash_at,
+    bind_execution_output_intent_at,
+    claim_attempt_execution_at,
+    resolve_optional_prepared_publication_at,
+    resolve_attempt_state_at,
+    resolve_optional_execution_binding_at,
+    resolve_execution_output_intent_at,
     validate_publication_id,
 )
 from ashare_multifactor.final_test.release_outputs import (
@@ -184,12 +188,39 @@ def resume_final_test_release(
     code_root = code_root.resolve()
     data_root = data_root.resolve()
     final_root = data_root / "processed/final_test"
-    registry_root = final_root / "attempts"
     _assert_safe_roots(data_root, final_root)
-    assert_no_authoritative_success(registry_root)
+    with FinalRootBinding.open(final_root) as root_binding:
+        return _resume_final_test_release_bound(
+            code_root=code_root,
+            data_root=data_root,
+            approval_key=approval_key,
+            attempt_id=attempt_id,
+            security_event_coverage_path=security_event_coverage_path,
+            corporate_action_coverage_root=corporate_action_coverage_root,
+            run_id=run_id,
+            root_binding=root_binding,
+        )
+
+
+def _resume_final_test_release_bound(
+    *,
+    code_root: Path,
+    data_root: Path,
+    approval_key: bytes,
+    attempt_id: str,
+    security_event_coverage_path: Path,
+    corporate_action_coverage_root: Path,
+    run_id: str,
+    root_binding: FinalRootBinding,
+) -> FinalTestPipelineResult:
+    final_root = data_root / "processed/final_test"
+    root_binding.assert_bound()
+    assert_no_authoritative_success_at(root_binding.attempts_fd)
+    root_binding.assert_bound()
     _validate_publication_id(attempt_id)
     _validate_publication_id(run_id)
-    state = resolve_attempt_state_readonly(registry_root, attempt_id)["state"]
+    state = resolve_attempt_state_at(root_binding.attempts_fd, attempt_id)["state"]
+    root_binding.assert_bound()
     if state not in {"awaiting_official_evidence", "executing"}:
         raise ValueError("invalid final-test state transition")
     preflight = preflight_resume(
@@ -200,12 +231,15 @@ def resume_final_test_release(
         security_event_coverage_path=security_event_coverage_path,
         corporate_action_coverage_root=corporate_action_coverage_root,
         expected_state=str(state),
+        root_binding=root_binding,
     )
-    prepared = resolve_optional_prepared_publication(
-        registry_root,
+    root_binding.assert_bound()
+    prepared = resolve_optional_prepared_publication_at(
+        root_binding.attempts_fd,
         attempt_id=attempt_id,
         sealed_protocol_sha256=preflight.authorization.sealed_protocol_sha256,
     )
+    root_binding.assert_bound()
     prepared_run_id = (
         str(prepared["release_run_id"]) if prepared is not None else None
     )
@@ -216,11 +250,12 @@ def resume_final_test_release(
         "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
         "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
     }
-    with claim_attempt_execution(
-        registry_root,
+    with claim_attempt_execution_at(
+        root_binding.attempts_fd,
         attempt_id=attempt_id,
         identities=identities,
     ):
+        root_binding.assert_bound()
         try:
             return _execute_authorized_final_test(
                 code_root=code_root,
@@ -230,20 +265,30 @@ def resume_final_test_release(
                 corporate_action_coverage_root=corporate_action_coverage_root,
                 run_id=run_id,
                 prepared_run_id=prepared_run_id,
+                root_binding=root_binding,
             )
         except Exception as error:
-            outcome = registry_root / f"{attempt_id}.outcome.json"
-            prepared = registry_root / f"{attempt_id}.prepared.json"
-            publication_may_need_recovery = (
-                prepared.is_file() and (final_root / "CURRENT.json").is_file()
+            if isinstance(error, FinalRootNamespaceChanged):
+                raise
+            root_binding.assert_bound()
+            outcome_exists = _entry_exists_fd(
+                root_binding.attempts_fd, f"{attempt_id}.outcome.json"
             )
-            if prepared.is_file() and not publication_may_need_recovery:
+            prepared_exists = _entry_exists_fd(
+                root_binding.attempts_fd, f"{attempt_id}.prepared.json"
+            )
+            current_exists = _entry_exists_fd(root_binding.final_fd, "CURRENT.json")
+            publication_may_need_recovery = (
+                prepared_exists and current_exists
+            )
+            if prepared_exists and not publication_may_need_recovery:
                 try:
                     publication_may_need_recovery = (
                         _verify_orphan_release(
                             final_root,
                             preflight=preflight,
                             run_id=run_id,
+                            root_binding=root_binding,
                         )
                         is not None
                     )
@@ -255,18 +300,28 @@ def resume_final_test_release(
                     attempt_id=attempt_id,
                 )
             if (
-                not outcome.exists()
+                not outcome_exists
                 and not publication_may_need_recovery
-                and not isinstance(error, PublicationNamespaceChanged)
+                and not isinstance(
+                    error, (PublicationNamespaceChanged, FinalRootNamespaceChanged)
+                )
             ):
-                append_attempt_outcome(
-                    registry_root,
+                append_attempt_outcome_at(
+                    root_binding.attempts_fd,
                     attempt_id=attempt_id,
                     status="failed",
                     authoritative=False,
                     reason=f"{type(error).__name__}: {error}",
                 )
             raise
+
+
+def _entry_exists_fd(directory_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def _execute_authorized_final_test(
@@ -278,24 +333,29 @@ def _execute_authorized_final_test(
     corporate_action_coverage_root: Path,
     run_id: str,
     prepared_run_id: str | None,
+    root_binding: FinalRootBinding,
 ) -> FinalTestPipelineResult:
     """Execute only from a verified preparation; never authorize or build data."""
     authorization = preflight.authorization
     _assert_authorization(authorization)
     final_root = data_root / "processed/final_test"
     registry_root = final_root / "attempts"
+    root_binding.assert_bound()
     if (final_root / "CURRENT.json").is_file():
+        root_binding.assert_bound()
         return _recover_or_reject_current(
             final_root,
             registry_root,
             preflight=preflight,
             run_id=run_id,
+            root_binding=root_binding,
         )
     orphan = _recover_orphan_release(
         final_root,
         registry_root=registry_root,
         preflight=preflight,
         run_id=run_id,
+        root_binding=root_binding,
     )
     if orphan is not None:
         return orphan
@@ -305,12 +365,14 @@ def _execute_authorized_final_test(
             registry_root=registry_root,
             preflight=preflight,
             run_id=run_id,
+            root_binding=root_binding,
         )
     verify_resume_coverages(
         preflight,
         security_event_coverage_path=security_event_coverage_path,
         corporate_action_coverage_root=corporate_action_coverage_root,
     )
+    root_binding.assert_bound()
     coverage_snapshot = snapshot_execution_coverages(
         final_root,
         attempt_id=authorization.attempt_id,
@@ -319,14 +381,17 @@ def _execute_authorized_final_test(
         corporate_action_coverage_root=corporate_action_coverage_root,
         expected_security_sha256=preflight.security_event_coverage_sha256,
         expected_corporate_sha256=preflight.corporate_action_coverage_sha256,
+        final_fd=root_binding.final_fd,
     )
-    execution_identity = resolve_optional_execution_binding(
-        registry_root,
+    root_binding.assert_bound()
+    execution_identity = resolve_optional_execution_binding_at(
+        root_binding.attempts_fd,
         attempt_id=authorization.attempt_id,
     )
+    root_binding.assert_bound()
     if execution_identity is None:
-        execution_identity = bind_execution_identity(
-            registry_root,
+        execution_identity = bind_execution_identity_at(
+            root_binding.attempts_fd,
             identity={
                 "execution_id": uuid4().hex,
                 "attempt_id": authorization.attempt_id,
@@ -341,6 +406,7 @@ def _execute_authorized_final_test(
                 "coverage_snapshot_manifest_sha256": coverage_snapshot.manifest_sha256,
             },
         )
+        root_binding.assert_bound()
     expected_execution_identity = _expected_execution_identity(
         preflight,
         execution_id=execution_identity.get("execution_id"),
@@ -354,8 +420,8 @@ def _execute_authorized_final_test(
         corporate_action_coverage_root=coverage_snapshot.corporate_action_coverage_root,
         execution_identity=execution_identity,
     )
-    bind_execution_output_intent(
-        registry_root,
+    bind_execution_output_intent_at(
+        root_binding.attempts_fd,
         identity=execution_identity,
         outputs={
             name: {
@@ -365,27 +431,36 @@ def _execute_authorized_final_test(
             for name, payload in sorted(expected_parquet_bytes.items())
         },
     )
-    expected_primary_outputs = resolve_execution_output_intent(
-        registry_root,
+    root_binding.assert_bound()
+    expected_primary_outputs = resolve_execution_output_intent_at(
+        root_binding.attempts_fd,
         identity=execution_identity,
     )
+    root_binding.assert_bound()
     attempt_root = final_root / "attempt_runs" / authorization.attempt_id
     bound_inputs = _bind_or_resolve_existing_execution_inputs(
         final_root,
         authorization=authorization,
         execution_identity=execution_identity,
         expected_primary_outputs=expected_primary_outputs,
+        root_binding=root_binding,
     )
+    root_binding.assert_bound()
     if not _is_resumable_attempt_shell(attempt_root, execution_identity):
         recover_interrupted_execution(
             final_root,
             preflight=preflight,
             coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
         )
+        root_binding.assert_bound()
     attempt_root, attempt_directories = _secure_ensure_attempt_root(
         final_root,
         attempt_id=authorization.attempt_id,
         execution_identity=execution_identity,
+    )
+    root_binding.crosscheck(
+        processed_fd=attempt_directories.root_parent_fd,
+        final_identity=attempt_directories.root_identity,
     )
     datasets = attempt_root / "datasets"
     artifacts = attempt_root / "artifacts"
@@ -411,20 +486,23 @@ def _execute_authorized_final_test(
                 execution_identity=execution_identity,
                 expected_parquet_bytes=expected_parquet_bytes,
             )
+            root_binding.assert_bound()
             candidate = validate_execution_input_candidate(
                 final_root,
                 authorization,
                 execution_identity=execution_identity,
                 expected_primary_outputs=expected_primary_outputs,
             )
-            bind_execution_input_manifest_hash(
-                registry_root,
+            root_binding.assert_bound()
+            bind_execution_input_manifest_hash_at(
+                root_binding.attempts_fd,
                 identity=execution_identity,
                 manifest_sha256=candidate.manifest_sha256,
             )
             bound_inputs = resolve_bound_execution_inputs(
                 final_root, authorization
             )
+            root_binding.assert_bound()
         execution_manifest = dict(bound_inputs.manifest)
         panel_resolution = resolve_final_test_data_panel(final_root)
         panel_snapshot = _snapshot_attempt_panel(
@@ -476,8 +554,8 @@ def _execute_authorized_final_test(
                 reason=reason,
                 bound_panel_files=bound_panel_files,
             )
-            append_attempt_outcome(
-                registry_root,
+            append_attempt_outcome_at(
+                root_binding.attempts_fd,
                 attempt_id=authorization.attempt_id,
                 status="failed",
                 authoritative=False,
@@ -624,6 +702,7 @@ def _execute_authorized_final_test(
         with FinalPublicationTransaction.open(
             final_root, attempt_id=authorization.attempt_id
         ) as transaction:
+            transaction.crosscheck_root(root_binding)
             transaction.crosscheck_attempt(attempt_directories)
             append_prepared_publication(
                 transaction,
@@ -967,12 +1046,14 @@ def _recover_or_reject_current(
     *,
     preflight: ResumePreflight,
     run_id: str,
+    root_binding: FinalRootBinding,
 ) -> FinalTestPipelineResult:
     del registry_root
     attempt_id = preflight.authorization.attempt_id
     with FinalPublicationTransaction.open(
         final_root, attempt_id=attempt_id
     ) as transaction:
+        transaction.crosscheck_root(root_binding)
         with opened_verified_current(final_root) as held:
             transaction.crosscheck_current(held)
             release = held.release
@@ -1006,6 +1087,7 @@ def _recover_orphan_release(
     registry_root: Path,
     preflight: ResumePreflight,
     run_id: str,
+    root_binding: FinalRootBinding,
 ) -> FinalTestPipelineResult | None:
     del registry_root
     if not (final_root / "releases" / run_id).exists():
@@ -1014,6 +1096,7 @@ def _recover_orphan_release(
     with FinalPublicationTransaction.open(
         final_root, attempt_id=attempt_id
     ) as transaction:
+        transaction.crosscheck_root(root_binding)
         if not transaction.release_exists(run_id):
             return None
         release, release_files, manifest = transaction.resolve_release_package(run_id)
@@ -1046,6 +1129,7 @@ def _verify_orphan_release(
     *,
     preflight: ResumePreflight,
     run_id: str,
+    root_binding: FinalRootBinding,
 ) -> PublishedRelease | None:
     if not (final_root / "releases" / run_id).exists():
         return None
@@ -1053,6 +1137,7 @@ def _verify_orphan_release(
     with FinalPublicationTransaction.open(
         final_root, attempt_id=attempt_id
     ) as transaction:
+        transaction.crosscheck_root(root_binding)
         if not transaction.release_exists(run_id):
             return None
         release, release_files, manifest = transaction.resolve_release_package(run_id)
@@ -1078,6 +1163,7 @@ def _recover_prepared_staging(
     registry_root: Path,
     preflight: ResumePreflight,
     run_id: str,
+    root_binding: FinalRootBinding,
 ) -> FinalTestPipelineResult:
     del registry_root
     attempt_id = preflight.authorization.attempt_id
@@ -1085,6 +1171,7 @@ def _recover_prepared_staging(
     with FinalPublicationTransaction.open(
         final_root, attempt_id=attempt_id
     ) as transaction:
+        transaction.crosscheck_root(root_binding)
         execution_identity, _, _, prepared_package = _verify_prepared_staging(
             attempt_root,
             registry_root=final_root / "attempts",
@@ -1352,6 +1439,7 @@ def _bind_or_resolve_existing_execution_inputs(
     authorization: FinalTestAuthorization,
     execution_identity: Mapping[str, object],
     expected_primary_outputs: Mapping[str, Mapping[str, object]],
+    root_binding: FinalRootBinding,
 ) -> BoundExecutionInputs | None:
     input_root = final_root / "attempt_inputs" / authorization.attempt_id
     if input_root.is_symlink():
@@ -1364,12 +1452,15 @@ def _bind_or_resolve_existing_execution_inputs(
         execution_identity=execution_identity,
         expected_primary_outputs=expected_primary_outputs,
     )
-    bind_execution_input_manifest_hash(
-        final_root / "attempts",
+    root_binding.assert_bound()
+    bind_execution_input_manifest_hash_at(
+        root_binding.attempts_fd,
         identity=execution_identity,
         manifest_sha256=candidate.manifest_sha256,
     )
-    return resolve_bound_execution_inputs(final_root, authorization)
+    result = resolve_bound_execution_inputs(final_root, authorization)
+    root_binding.assert_bound()
+    return result
 
 
 def _is_resumable_attempt_shell(
