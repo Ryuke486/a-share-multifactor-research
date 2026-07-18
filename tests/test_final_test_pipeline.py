@@ -339,7 +339,7 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
             path = destination.joinpath(*relative.split("/"))
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(payload)
-        (datasets / "final_daily_panel").mkdir()
+        (datasets / "final_daily_panel").mkdir(exist_ok=True)
 
     for name, value in {
         "build_final_execution_inputs": build_execution_inputs,
@@ -350,7 +350,10 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
         "build_final_report": report,
         "_copy_release_inputs": copy_inputs,
         "resolve_final_test_data_panel": lambda final_root: SimpleNamespace(
-            root=final_root / "daily_panel"
+            root=final_root / "daily_panel",
+            data_manifest_sha256=sha256_file(
+                final_root / "daily_panel/data_manifest.json"
+            ),
         ),
         "_upstream_identity": lambda *_args, **_kwargs: {
             "robustness_release": "stage8-successor",
@@ -2462,6 +2465,7 @@ def test_release_copies_final_data_and_execution_evidence(tmp_path: Path) -> Non
     _copy_release_inputs(
         panel_root=panel,
         execution_inputs=frozen,
+        panel_manifest_sha256=sha256_file(panel / "data_manifest.json"),
         datasets=datasets,
         artifacts=artifacts,
     )
@@ -2491,11 +2495,43 @@ def test_release_copy_rejects_nested_execution_evidence_symlink(
         _copy_release_inputs(
             panel_root=panel,
             execution_inputs=frozen,
+            panel_manifest_sha256=sha256_file(panel / "data_manifest.json"),
             datasets=datasets,
             artifacts=artifacts,
         )
 
     assert not (artifacts / "execution_inputs").exists()
+
+
+def test_release_copy_rejects_panel_replaced_after_resolution(
+    tmp_path: Path,
+) -> None:
+    panel = tmp_path / "daily_panel"
+    panel.mkdir()
+    manifest = panel / "data_manifest.json"
+    manifest.write_text('{"identity":"resolved"}\n', encoding="utf-8")
+    expected = sha256_file(manifest)
+    manifest.write_text('{"identity":"replacement"}\n', encoding="utf-8")
+    frozen = BoundExecutionInputs(
+        manifest={},
+        manifest_sha256=hashlib.sha256(b"{}\n").hexdigest(),
+        files={"manifest.json": b"{}\n"},
+    )
+    datasets = tmp_path / "staged/datasets"
+    artifacts = tmp_path / "staged/artifacts"
+    datasets.mkdir(parents=True)
+    artifacts.mkdir()
+
+    with pytest.raises(ValueError, match="panel manifest identity differs"):
+        _copy_release_inputs(
+            panel_root=panel,
+            execution_inputs=frozen,
+            panel_manifest_sha256=expected,
+            datasets=datasets,
+            artifacts=artifacts,
+        )
+
+    assert not (datasets / "final_daily_panel").exists()
 
 
 def test_pipeline_release_ignores_later_active_execution_source_changes(
@@ -2583,7 +2619,12 @@ def test_pipeline_release_ignores_later_active_execution_source_changes(
     monkeypatch.setattr(
         pipeline_module,
         "resolve_final_test_data_panel",
-        lambda _root: SimpleNamespace(root=panel_root),
+        lambda _root: SimpleNamespace(
+            root=panel_root,
+            data_manifest_sha256=sha256_file(
+                panel_root / "data_manifest.json"
+            ),
+        ),
     )
     monkeypatch.setattr(pipeline_module, "_copy_release_inputs", copy_after_source_change)
 
@@ -2654,6 +2695,163 @@ def test_prepared_release_uses_frozen_package_after_staging_replacement(
     assert result.release is not None
     for relative, expected in originals.items():
         assert (result.release.root / relative).read_bytes() == expected
+
+
+@pytest.mark.parametrize("target", ["report", "metrics", "identity", "lineage"])
+def test_prepared_package_rejects_replacement_before_freeze(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    freeze_package = pipeline_module._freeze_prepared_package
+
+    def replace_then_freeze(*args: object, **kwargs: object):
+        attempt_root = (
+            prepared_attempt.data_root
+            / "processed/final_test/attempt_runs"
+            / prepared_attempt.attempt_id
+        )
+        paths = {
+            "report": attempt_root / "artifacts/report.md",
+            "metrics": attempt_root / "datasets/final_test_metrics.parquet",
+            "identity": attempt_root / "execution_identity.json",
+            "lineage": attempt_root / "artifacts/lineage_preview.json",
+        }
+        path = paths[target]
+        if target in {"identity", "lineage"}:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["replacement"] = True
+            path.write_text(
+                json.dumps(payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        else:
+            path.write_bytes(f"replacement:{target}".encode())
+        return freeze_package(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "_freeze_prepared_package",
+        replace_then_freeze,
+    )
+
+    with pytest.raises(ValueError, match="prepared|lineage"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    assert not (final_root / "CURRENT.json").exists()
+    assert not (
+        final_root / "attempts" / f"{prepared_attempt.attempt_id}.prepared.json"
+    ).exists()
+    assert not (final_root / "releases/final-release").exists()
+
+
+@pytest.mark.parametrize("child", ["datasets", "artifacts"])
+def test_attempt_staging_rejects_child_directory_replacement(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    child: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    check_bounds = pipeline_module._assert_release_date_bounds
+    replaced = False
+
+    def check_then_replace(root: Path) -> None:
+        nonlocal replaced
+        check_bounds(root)
+        if not replaced:
+            original = root / child
+            displaced = root / f"{child}.displaced"
+            original.rename(displaced)
+            shutil.copytree(displaced, original)
+            replaced = True
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "_assert_release_date_bounds",
+        check_then_replace,
+    )
+
+    with pytest.raises(ValueError, match=f"attempt {child} staging identity changed"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    assert not (final_root / "CURRENT.json").exists()
+    assert not (
+        final_root / "attempts" / f"{prepared_attempt.attempt_id}.prepared.json"
+    ).exists()
+
+
+def test_signals_backtest_and_release_share_attempt_bound_panel_snapshot(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    build_signals = pipeline_module.build_final_test_signals
+    run_backtest = pipeline_module.run_final_test_backtest
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    canonical_panel = final_root / "daily_panel"
+    canonical_file = next(
+        path
+        for path in sorted(canonical_panel.rglob("*"))
+        if path.is_file() and path.name != "data_manifest.json"
+    )
+    original = canonical_file.read_bytes()
+    observed_panel_roots: list[Path] = []
+
+    def signals_then_replace(*args: object, **kwargs: object) -> FinalTestSignals:
+        panel_root = Path(str(kwargs["panel_root"]))
+        observed_panel_roots.append(panel_root)
+        result = build_signals(*args, **kwargs)
+        canonical_file.write_bytes(b"replacement after signals snapshot")
+        return result
+
+    def backtest_from_snapshot(
+        *args: object, **kwargs: object
+    ) -> FinalTestBacktestResult:
+        observed_panel_roots.append(Path(str(kwargs["panel_root"])))
+        return run_backtest(*args, **kwargs)
+
+    monkeypatch.setattr(
+        pipeline_module, "build_final_test_signals", signals_then_replace
+    )
+    monkeypatch.setattr(
+        pipeline_module, "run_final_test_backtest", backtest_from_snapshot
+    )
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    assert result.release is not None
+    assert observed_panel_roots[0] == observed_panel_roots[1]
+    relative = canonical_file.relative_to(canonical_panel)
+    assert (
+        result.release.datasets / "final_daily_panel" / relative
+    ).read_bytes() == original
 
 
 def test_failed_attempt_data_reuse_requires_same_seal_git_and_raw_inventory() -> None:

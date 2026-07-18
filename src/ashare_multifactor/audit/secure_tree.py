@@ -51,6 +51,21 @@ def read_frozen_tree_at(directory_fd: int, *, label: str) -> dict[str, bytes]:
     return _read_level(directory_fd, prefix="", label=label)
 
 
+def copy_frozen_tree_at(
+    source_fd: int,
+    destination_parent_fd: int,
+    destination_name: str,
+    *,
+    label: str,
+) -> None:
+    """Stream one stable source tree into a new descriptor-anchored tree."""
+    os.mkdir(destination_name, mode=0o700, dir_fd=destination_parent_fd)
+    with _opened_directory_at(
+        destination_parent_fd, destination_name, label=label
+    ) as destination_fd:
+        _copy_level(source_fd, destination_fd, label=label)
+
+
 def atomic_rename_no_replace_at(
     parent_fd: int,
     source_name: str,
@@ -256,6 +271,74 @@ def _read_level(directory_fd: int, *, prefix: str, label: str) -> dict[str, byte
     ):
         raise ValueError(f"{label} changed during verification")
     return files
+
+
+def _copy_level(source_fd: int, destination_fd: int, *, label: str) -> None:
+    source_before = os.fstat(source_fd)
+    names = tuple(sorted(os.listdir(source_fd)))
+    for name in names:
+        metadata = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"{label} uses a symlink")
+        if stat.S_ISDIR(metadata.st_mode):
+            os.mkdir(name, mode=0o700, dir_fd=destination_fd)
+            with _opened_directory_at(source_fd, name, label=label) as child_source:
+                with _opened_directory_at(
+                    destination_fd, name, label=label
+                ) as child_destination:
+                    _copy_level(child_source, child_destination, label=label)
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError(f"{label} contains a non-regular file")
+        source_file = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            dir_fd=source_fd,
+        )
+        destination_file = os.open(
+            name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_NOFOLLOW"),
+            0o600,
+            dir_fd=destination_fd,
+        )
+        try:
+            opened = os.fstat(source_file)
+            copied = 0
+            while chunk := os.read(source_file, 1024 * 1024):
+                view = memoryview(chunk)
+                while view:
+                    written = os.write(destination_file, view)
+                    if written <= 0:
+                        raise OSError(f"{label} write made no progress")
+                    copied += written
+                    view = view[written:]
+            os.fsync(destination_file)
+            closed = os.fstat(source_file)
+            destination_metadata = os.fstat(destination_file)
+        finally:
+            os.close(destination_file)
+            os.close(source_file)
+        current = os.stat(name, dir_fd=source_fd, follow_symlinks=False)
+        identities = {
+            (item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns)
+            for item in (metadata, opened, closed, current)
+        }
+        if (
+            len(identities) != 1
+            or copied != opened.st_size
+            or destination_metadata.st_size != copied
+        ):
+            raise ValueError(f"{label} file changed during copy")
+    source_after = os.fstat(source_fd)
+    if (
+        tuple(sorted(os.listdir(source_fd))) != names
+        or source_before.st_mtime_ns != source_after.st_mtime_ns
+        or source_before.st_ctime_ns != source_after.st_ctime_ns
+    ):
+        raise ValueError(f"{label} changed during copy")
 
 
 @contextmanager

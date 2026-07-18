@@ -14,6 +14,7 @@ import polars as pl
 
 from ashare_multifactor.audit.secure_tree import (
     atomic_rename_no_replace_at,
+    copy_frozen_tree_at,
     frozen_records,
     read_frozen_tree_at,
 )
@@ -42,11 +43,15 @@ class FrozenPreparedPackage:
 
 @dataclass(frozen=True)
 class AttemptDirectories:
+    root_fd: int
     parent_fd: int
     attempt_fd: int
     datasets_fd: int
     artifacts_fd: int
     attempt_identity: tuple[int, int]
+    parent_identity: tuple[int, int]
+    datasets_identity: tuple[int, int]
+    artifacts_identity: tuple[int, int]
 
     def close(self) -> None:
         for descriptor in (
@@ -54,6 +59,7 @@ class AttemptDirectories:
             self.datasets_fd,
             self.attempt_fd,
             self.parent_fd,
+            self.root_fd,
         ):
             os.close(descriptor)
 
@@ -63,107 +69,105 @@ def ensure_attempt_root(
     *,
     attempt_id: str,
     execution_identity: Mapping[str, object],
-) -> Path:
+) -> tuple[Path, AttemptDirectories]:
     destination = final_root / "attempt_runs" / attempt_id
-    with opened_directory(final_root, label="final-test root") as final_fd:
+    final_fd = open_directory_path(final_root, label="final-test root")
+    parent_fd: int | None = None
+    attempt_fd: int | None = None
+    try:
         try:
             os.mkdir("attempt_runs", mode=0o700, dir_fd=final_fd)
         except FileExistsError:
             pass
-        with opened_directory_at(
+        parent_fd = open_directory_at(
             final_fd, "attempt_runs", label="attempt-runs root"
-        ) as parent_fd:
-            if entry_exists_at(parent_fd, attempt_id):
-                with opened_directory_at(
-                    parent_fd, attempt_id, label="attempt staging root"
-                ) as destination_fd:
-                    if not _is_resumable_attempt_shell_at(
-                        destination_fd, execution_identity
-                    ):
-                        raise ValueError(
-                            "final-test attempt shell is not safely resumable"
-                        )
-                return destination
-            temporary_name = f".{attempt_id}.initializing"
+        )
+        if entry_exists_at(parent_fd, attempt_id):
+            attempt_fd = open_directory_at(
+                parent_fd, attempt_id, label="attempt staging root"
+            )
+            if not _is_resumable_attempt_shell_at(attempt_fd, execution_identity):
+                raise ValueError("final-test attempt shell is not safely resumable")
+            return destination, _directories_from_open_fds(
+                final_fd, parent_fd, attempt_fd
+            )
+        temporary_name = f".{attempt_id}.initializing"
+        try:
+            os.mkdir(temporary_name, mode=0o700, dir_fd=parent_fd)
+        except FileExistsError:
+            pass
+        attempt_fd = open_directory_at(
+            parent_fd, temporary_name, label="attempt initializer"
+        )
+        for name in ("datasets", "artifacts"):
             try:
-                os.mkdir(temporary_name, mode=0o700, dir_fd=parent_fd)
+                os.mkdir(name, mode=0o700, dir_fd=attempt_fd)
             except FileExistsError:
                 pass
-            with opened_directory_at(
-                parent_fd, temporary_name, label="attempt initializer"
-            ) as temporary_fd:
-                for name in ("datasets", "artifacts"):
-                    try:
-                        os.mkdir(name, mode=0o700, dir_fd=temporary_fd)
-                    except FileExistsError:
-                        pass
-                if entry_exists_at(temporary_fd, "execution_identity.json"):
-                    try:
-                        stored = json.loads(
-                            read_bytes_at(
-                                temporary_fd,
-                                "execution_identity.json",
-                                label="attempt initializer identity",
-                            )
-                        )
-                    except json.JSONDecodeError as error:
-                        raise ValueError(
-                            "final-test attempt initializer is invalid"
-                        ) from error
-                    if stored != dict(execution_identity):
-                        raise ValueError(
-                            "final-test attempt initializer identity differs"
-                        )
-                else:
-                    write_json_at(
-                        temporary_fd,
+        if entry_exists_at(attempt_fd, "execution_identity.json"):
+            try:
+                stored = json.loads(
+                    read_bytes_at(
+                        attempt_fd,
                         "execution_identity.json",
-                        execution_identity,
+                        label="attempt initializer identity",
                     )
-                if not _is_resumable_attempt_shell_at(
-                    temporary_fd, execution_identity
-                ):
-                    raise ValueError("final-test attempt initializer is incomplete")
-                temporary_identity = directory_identity(temporary_fd)
-                atomic_rename_no_replace_at(parent_fd, temporary_name, attempt_id)
-                assert_directory_entry(
-                    parent_fd,
-                    attempt_id,
-                    expected=temporary_identity,
-                    label="attempt staging root",
                 )
-    return destination
+            except json.JSONDecodeError as error:
+                raise ValueError("final-test attempt initializer is invalid") from error
+            if stored != dict(execution_identity):
+                raise ValueError("final-test attempt initializer identity differs")
+        else:
+            write_json_at(attempt_fd, "execution_identity.json", execution_identity)
+        if not _is_resumable_attempt_shell_at(attempt_fd, execution_identity):
+            raise ValueError("final-test attempt initializer is incomplete")
+        temporary_identity = directory_identity(attempt_fd)
+        atomic_rename_no_replace_at(parent_fd, temporary_name, attempt_id)
+        assert_directory_entry(
+            parent_fd,
+            attempt_id,
+            expected=temporary_identity,
+            label="attempt staging root",
+        )
+        return destination, _directories_from_open_fds(
+            final_fd, parent_fd, attempt_fd
+        )
+    except BaseException:
+        for descriptor in (attempt_fd, parent_fd, final_fd):
+            if descriptor is not None:
+                os.close(descriptor)
+        raise
 
 
-def open_attempt_directories(attempt_root: Path) -> AttemptDirectories:
-    descriptors: list[int] = []
+def _directories_from_open_fds(
+    root_fd: int,
+    parent_fd: int,
+    attempt_fd: int,
+) -> AttemptDirectories:
+    datasets_fd: int | None = None
+    artifacts_fd: int | None = None
     try:
-        parent_fd = open_directory_path(
-            attempt_root.parent, label="attempt staging parent"
-        )
-        descriptors.append(parent_fd)
-        attempt_fd = open_directory_at(
-            parent_fd, attempt_root.name, label="attempt staging root"
-        )
-        descriptors.append(attempt_fd)
         datasets_fd = open_directory_at(
             attempt_fd, "datasets", label="attempt datasets staging"
         )
-        descriptors.append(datasets_fd)
         artifacts_fd = open_directory_at(
             attempt_fd, "artifacts", label="attempt artifacts staging"
         )
-        descriptors.append(artifacts_fd)
         return AttemptDirectories(
+            root_fd=root_fd,
             parent_fd=parent_fd,
             attempt_fd=attempt_fd,
             datasets_fd=datasets_fd,
             artifacts_fd=artifacts_fd,
             attempt_identity=directory_identity(attempt_fd),
+            parent_identity=directory_identity(parent_fd),
+            datasets_identity=directory_identity(datasets_fd),
+            artifacts_identity=directory_identity(artifacts_fd),
         )
     except BaseException:
-        for descriptor in reversed(descriptors):
-            os.close(descriptor)
+        for descriptor in (artifacts_fd, datasets_fd):
+            if descriptor is not None:
+                os.close(descriptor)
         raise
 
 
@@ -171,10 +175,28 @@ def assert_attempt_directory(
     attempt_root: Path, directories: AttemptDirectories
 ) -> None:
     assert_directory_entry(
+        directories.root_fd,
+        "attempt_runs",
+        expected=directories.parent_identity,
+        label="attempt-runs root",
+    )
+    assert_directory_entry(
         directories.parent_fd,
         attempt_root.name,
         expected=directories.attempt_identity,
         label="attempt staging root",
+    )
+    assert_directory_entry(
+        directories.attempt_fd,
+        "datasets",
+        expected=directories.datasets_identity,
+        label="attempt datasets staging",
+    )
+    assert_directory_entry(
+        directories.attempt_fd,
+        "artifacts",
+        expected=directories.artifacts_identity,
+        label="attempt artifacts staging",
     )
 
 
@@ -217,6 +239,54 @@ def write_attempt_manifest(
         "attempt_manifest.json",
         {**metadata, "files": records},
     )
+
+
+def snapshot_attempt_panel(
+    panel_root: Path,
+    *,
+    expected_manifest_sha256: str,
+    datasets_fd: int,
+    staged_panel_root: Path,
+) -> Path:
+    with opened_directory(
+        panel_root.parent, label="final daily panel parent"
+    ) as panel_parent_fd:
+        with opened_directory_at(
+            panel_parent_fd, panel_root.name, label="final daily panel"
+        ) as panel_fd:
+            panel_identity = directory_identity(panel_fd)
+            manifest = read_bytes_at(
+                panel_fd,
+                "data_manifest.json",
+                label="final daily panel manifest",
+            )
+            if hashlib.sha256(manifest).hexdigest() != expected_manifest_sha256:
+                raise ValueError("final daily panel manifest identity differs")
+            copy_frozen_tree_at(
+                panel_fd,
+                datasets_fd,
+                staged_panel_root.name,
+                label="attempt-bound final daily panel",
+            )
+            assert_directory_entry(
+                panel_parent_fd,
+                panel_root.name,
+                expected=panel_identity,
+                label="final daily panel",
+            )
+    with opened_directory_at(
+        datasets_fd,
+        staged_panel_root.name,
+        label="attempt-bound final daily panel",
+    ) as staged_fd:
+        staged_manifest = read_bytes_at(
+            staged_fd,
+            "data_manifest.json",
+            label="attempt-bound final daily panel manifest",
+        )
+    if hashlib.sha256(staged_manifest).hexdigest() != expected_manifest_sha256:
+        raise ValueError("attempt-bound final daily panel identity differs")
+    return staged_panel_root
 
 
 def freeze_prepared_package(

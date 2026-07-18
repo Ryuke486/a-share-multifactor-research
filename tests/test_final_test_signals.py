@@ -134,7 +134,7 @@ def test_authoritative_history_failure_precedes_signal_math(
     )
     monkeypatch.setattr(
         "ashare_multifactor.final_test.signals._resolve_authorized_data",
-        lambda *_args: object(),
+        lambda *_args, **_kwargs: object(),
     )
     monkeypatch.setattr(
         "ashare_multifactor.final_test.signals.resolve_final_test_signal_inputs",

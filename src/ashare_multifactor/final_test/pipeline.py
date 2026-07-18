@@ -24,7 +24,6 @@ from ashare_multifactor.audit.publication import (
 from ashare_multifactor.audit.records import file_record, sha256_file
 from ashare_multifactor.audit.secure_tree import (
     read_frozen_tree_at,
-    write_frozen_tree_at,
 )
 from ashare_multifactor.final_test.backtest import (
     FinalTestBacktestResult,
@@ -55,6 +54,9 @@ from ashare_multifactor.final_test.interrupted_recovery import (
     recover_interrupted_execution,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import opened_directory
+from ashare_multifactor.final_test.release_input_staging import (
+    copy_release_inputs as _copy_release_inputs,
+)
 from ashare_multifactor.final_test.resume import (
     ResumePreflight,
     preflight_resume,
@@ -92,8 +94,8 @@ from ashare_multifactor.final_test.secure_attempt_staging import (
     ensure_attempt_root as _secure_ensure_attempt_root,
     entry_exists_at as _entry_exists_at,
     freeze_prepared_package as _freeze_prepared_package,
-    open_attempt_directories as _open_attempt_directories,
     release_files_identity as _release_files_identity,
+    snapshot_attempt_panel as _snapshot_attempt_panel,
     verify_attempt_manifest_records as _verify_attempt_manifest_records,
     write_attempt_manifest as _secure_write_attempt_manifest,
     write_bytes_at as _write_bytes_at,
@@ -356,14 +358,14 @@ def _execute_authorized_final_test(
             preflight=preflight,
             coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
         )
-    attempt_root = _secure_ensure_attempt_root(
+    attempt_root, attempt_directories = _secure_ensure_attempt_root(
         final_root,
         attempt_id=authorization.attempt_id,
         execution_identity=execution_identity,
     )
     datasets = attempt_root / "datasets"
     artifacts = attempt_root / "artifacts"
-    attempt_directories = _open_attempt_directories(attempt_root)
+    _assert_attempt_directory(attempt_root, attempt_directories)
     started_at = datetime.now(timezone.utc).isoformat()
     try:
         config = _load_frozen_config(code_root, data_root)
@@ -398,16 +400,28 @@ def _execute_authorized_final_test(
                 final_root, authorization
             )
         execution_manifest = dict(bound_inputs.manifest)
+        panel_resolution = resolve_final_test_data_panel(final_root)
+        panel_snapshot = _snapshot_attempt_panel(
+            panel_resolution.root,
+            expected_manifest_sha256=panel_resolution.data_manifest_sha256,
+            datasets_fd=attempt_directories.datasets_fd,
+            staged_panel_root=datasets / "final_daily_panel",
+        )
+        _assert_attempt_directory(attempt_root, attempt_directories)
         signals = build_final_test_signals(
             authorization,
             code_root=code_root,
             final_root=final_root,
+            panel_root=panel_snapshot,
+            panel_manifest_sha256=panel_resolution.data_manifest_sha256,
         )
         backtest = run_final_test_backtest(
             authorization,
             signals,
             code_root=code_root,
             final_root=final_root,
+            panel_root=panel_snapshot,
+            panel_manifest_sha256=panel_resolution.data_manifest_sha256,
         )
         _write_attempt_core(
             attempt_directories.datasets_fd,
@@ -415,6 +429,7 @@ def _execute_authorized_final_test(
             signals,
             backtest,
         )
+        _assert_attempt_directory(attempt_root, attempt_directories)
         if not backtest.publishable:
             reason = "; ".join(backtest.gate_failures) or "publishable=false"
             _write_attempt_manifest(
@@ -455,16 +470,19 @@ def _execute_authorized_final_test(
             "period_comparison.parquet",
             comparison,
         )
+        _assert_attempt_directory(attempt_root, attempt_directories)
         completed_at = datetime.now(timezone.utc).isoformat()
-        resolution = resolve_final_test_data_panel(final_root)
         _copy_release_inputs(
-            panel_root=resolution.root,
+            panel_root=panel_snapshot,
             execution_inputs=bound_inputs,
+            panel_manifest_sha256=panel_resolution.data_manifest_sha256,
+            panel_already_staged=True,
             datasets=datasets,
             artifacts=artifacts,
             datasets_fd=attempt_directories.datasets_fd,
             artifacts_fd=attempt_directories.artifacts_fd,
         )
+        _assert_attempt_directory(attempt_root, attempt_directories)
         upstream = _upstream_identity(
             data_root,
             authorization,
@@ -510,6 +528,7 @@ def _execute_authorized_final_test(
             },
         )
         _assert_attempt_directory(attempt_root, attempt_directories)
+        _assert_attempt_directory(attempt_root, attempt_directories)
         _assert_release_date_bounds(attempt_root)
         _assert_attempt_directory(attempt_root, attempt_directories)
         _write_attempt_manifest(
@@ -518,6 +537,7 @@ def _execute_authorized_final_test(
             status="publishable",
             reason="all frozen final-test publication gates passed",
         )
+        _assert_attempt_directory(attempt_root, attempt_directories)
         prepared_package = _freeze_prepared_package(
             attempt_root,
             lineage=lineage,
@@ -526,6 +546,13 @@ def _execute_authorized_final_test(
             datasets_fd=attempt_directories.datasets_fd,
             artifacts_fd=attempt_directories.artifacts_fd,
         )
+        _assert_attempt_directory(attempt_root, attempt_directories)
+        if (
+            dict(prepared_package.execution_identity) != dict(execution_identity)
+            or dict(prepared_package.lineage) != dict(lineage)
+        ):
+            raise ValueError("prepared final-test staging identity differs")
+        _verify_attempt_manifest_records(prepared_package)
         publication_identity = _prepared_staging_identity(
             prepared_package,
             preflight=preflight,
@@ -549,6 +576,7 @@ def _execute_authorized_final_test(
                 execution_identity=execution_identity,
             ),
             frozen_release_files=prepared_package.release_files,
+            current_must_be_absent=True,
         )
         append_attempt_outcome(
             registry_root,
@@ -975,6 +1003,7 @@ def _recover_prepared_staging(
             execution_identity=execution_identity,
         ),
         frozen_release_files=prepared_package.release_files,
+        current_must_be_absent=True,
     )
     append_attempt_outcome(
         registry_root,
@@ -1193,57 +1222,6 @@ def _release_manifest_metadata(
         **expected,
         "publishable": True,
     }
-
-
-def _copy_release_inputs(
-    *,
-    panel_root: Path,
-    execution_inputs: BoundExecutionInputs,
-    datasets: Path,
-    artifacts: Path,
-    datasets_fd: int | None = None,
-    artifacts_fd: int | None = None,
-) -> None:
-    if not execution_inputs.files:
-        raise ValueError("frozen execution inputs are empty")
-    with opened_directory(panel_root, label="final daily panel") as panel_fd:
-        panel_files = read_frozen_tree_at(panel_fd, label="final daily panel")
-    if datasets_fd is not None and artifacts_fd is not None:
-        write_frozen_tree_at(
-            artifacts_fd,
-            "execution_inputs",
-            execution_inputs.files,
-            resumable=False,
-            label="staged frozen execution inputs",
-        )
-        write_frozen_tree_at(
-            datasets_fd,
-            "final_daily_panel",
-            panel_files,
-            resumable=False,
-            label="staged final daily panel",
-        )
-        return
-    if datasets_fd is not None or artifacts_fd is not None:
-        raise ValueError("both attempt staging descriptors are required")
-    with opened_directory(datasets, label="attempt datasets staging") as opened_datasets:
-        with opened_directory(
-            artifacts, label="attempt artifacts staging"
-        ) as opened_artifacts:
-            write_frozen_tree_at(
-                opened_artifacts,
-                "execution_inputs",
-                execution_inputs.files,
-                resumable=False,
-                label="staged frozen execution inputs",
-            )
-            write_frozen_tree_at(
-                opened_datasets,
-                "final_daily_panel",
-                panel_files,
-                resumable=False,
-                label="staged final daily panel",
-            )
 
 
 def _bind_or_resolve_existing_execution_inputs(

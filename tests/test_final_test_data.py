@@ -730,21 +730,30 @@ def test_publishing_data_build_recovers_before_or_after_panel_rename(
     config = _config(tmp_path)
     _write_pair(config, date(2022, 1, 3))
     code_root, authorization = _authorized_context(tmp_path, config)
-    original_replace = data_extension.os.replace
+    original_publish = data_extension.atomic_rename_no_replace_at
 
-    def interrupt_panel_rename(source: Path, destination: Path) -> None:
-        if destination == config.paths.processed / "final_test/daily_panel":
+    def interrupt_panel_rename(
+        source_fd: int,
+        source: str,
+        destination_fd: int,
+        destination: str,
+    ) -> None:
+        if destination == "daily_panel":
             raise KeyboardInterrupt("hard crash before panel rename")
-        original_replace(source, destination)
+        original_publish(source_fd, source, destination_fd, destination)
 
-    monkeypatch.setattr(data_extension.os, "replace", interrupt_panel_rename)
+    monkeypatch.setattr(
+        data_extension, "atomic_rename_no_replace_at", interrupt_panel_rename
+    )
     with pytest.raises(KeyboardInterrupt, match="before panel rename"):
         _build(config, authorization, code_root)
     claim = json.loads(
         (config.paths.processed / "final_test/data-build-claim.json").read_text()
     )
     assert claim["status"] == "publishing"
-    monkeypatch.setattr(data_extension.os, "replace", original_replace)
+    monkeypatch.setattr(
+        data_extension, "atomic_rename_no_replace_at", original_publish
+    )
     calls = _forbid_discovery(monkeypatch)
 
     recovered = data_extension.recover_final_test_daily_panel(
@@ -851,16 +860,15 @@ def test_interrupted_claim_write_never_exposes_partial_claim(
     _, authorization = _authorized_context(tmp_path, config)
     final_root = tmp_path / "claim-root"
 
-    def interrupt_dump(
-        _payload: object,
-        stream: object,
-        **_kwargs: object,
-    ) -> None:
-        stream.write('{"status":')
-        stream.flush()
+    write_bytes = data_publication.write_bytes_exclusive_at
+
+    def interrupt_write(parent_fd: int, name: str, _payload: bytes) -> None:
+        write_bytes(parent_fd, name, b'{"status":')
         raise KeyboardInterrupt("hard crash while writing claim")
 
-    monkeypatch.setattr(data_publication.json, "dump", interrupt_dump)
+    monkeypatch.setattr(
+        data_publication, "write_bytes_exclusive_at", interrupt_write
+    )
 
     with pytest.raises(KeyboardInterrupt, match="while writing claim"):
         data_publication.claim_build(final_root, authorization)
@@ -880,17 +888,22 @@ def test_claim_publication_is_atomic_no_replace_under_competition(
     final_root.mkdir()
     claim_path = final_root / "data-build-claim.json"
     competitor = b'{"competitor":true}\n'
-    original_publish = data_publication.atomic_rename_no_replace
+    original_publish = data_publication.atomic_rename_no_replace_at
     calls: list[str] = []
 
-    def compete_then_publish(source: Path, destination: Path) -> None:
+    def compete_then_publish(
+        source_fd: int,
+        source: str,
+        destination_fd: int,
+        destination: str,
+    ) -> None:
         calls.append("atomic-no-replace")
-        destination.write_bytes(competitor)
-        original_publish(source, destination)
+        claim_path.write_bytes(competitor)
+        original_publish(source_fd, source, destination_fd, destination)
 
     monkeypatch.setattr(
         data_publication,
-        "atomic_rename_no_replace",
+        "atomic_rename_no_replace_at",
         compete_then_publish,
     )
 

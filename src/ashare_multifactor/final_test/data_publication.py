@@ -7,13 +7,19 @@ from pathlib import Path
 from uuid import uuid4
 
 from ashare_multifactor.final_test.data_inventory import (
-    fsync_directory,
     verify_file_identity,
     verify_final_test_data_panel,
-    write_json,
 )
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
-from ashare_multifactor.final_test.recovery_secure_fs import atomic_rename_no_replace
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    assert_directory_entry,
+    atomic_rename_no_replace_at,
+    directory_identity,
+    opened_directory,
+    opened_directory_at,
+    read_bytes_at,
+    write_bytes_exclusive_at,
+)
 
 
 @dataclass(frozen=True)
@@ -39,28 +45,40 @@ def claim_build(
         input_inventory=input_inventory,
         staging_relative_path=staging_relative_path,
     )
-    temporary = final_root / f".data-build-claim.{uuid4().hex}.tmp"
-    temporary_created = False
-    try:
-        descriptor = os.open(
-            temporary,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-            0o600,
-        )
-        temporary_created = True
-        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
-            stream.write("\n")
-            stream.flush()
-            os.fsync(stream.fileno())
-        try:
-            atomic_rename_no_replace(temporary, claim_path)
-        except FileExistsError as error:
-            raise ValueError("final-test data build is already claimed") from error
-        fsync_directory(final_root)
-    finally:
-        if temporary_created:
-            temporary.unlink(missing_ok=True)
+    temporary_name = f".data-build-claim.{uuid4().hex}.tmp"
+    claim_bytes = (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    with opened_directory(
+        final_root.parent, label="final-test processed parent"
+    ) as parent_fd:
+        with opened_directory_at(
+            parent_fd, final_root.name, label="final-test root"
+        ) as final_fd:
+            final_identity = directory_identity(final_fd)
+            try:
+                write_bytes_exclusive_at(final_fd, temporary_name, claim_bytes)
+                try:
+                    atomic_rename_no_replace_at(
+                        final_fd,
+                        temporary_name,
+                        final_fd,
+                        claim_path.name,
+                    )
+                except FileExistsError as error:
+                    raise ValueError("final-test data build is already claimed") from error
+            finally:
+                try:
+                    os.unlink(temporary_name, dir_fd=final_fd)
+                except FileNotFoundError:
+                    pass
+            assert_directory_entry(
+                parent_fd,
+                final_root.name,
+                expected=final_identity,
+                label="final-test root",
+            )
+            os.fsync(final_fd)
     return claim_path
 
 
@@ -72,7 +90,79 @@ def update_claim(
     error: BaseException | None = None,
     data_manifest: dict[str, object] | None = None,
 ) -> None:
-    current = json.loads(path.read_text(encoding="utf-8"))
+    with opened_directory(
+        path.parent.parent, label="final-test processed parent"
+    ) as parent_fd:
+        with opened_directory_at(
+            parent_fd, path.parent.name, label="final-test root"
+        ) as final_fd:
+            final_identity = directory_identity(final_fd)
+            lock_name = f".{path.name}.lock"
+            write_bytes_exclusive_at(final_fd, lock_name, b"locked\n")
+            try:
+                current_bytes = read_bytes_at(
+                    final_fd, path.name, label="final-test data claim"
+                )
+                current_metadata = os.stat(
+                    path.name, dir_fd=final_fd, follow_symlinks=False
+                )
+                payload = _updated_claim_payload(
+                    current_bytes,
+                    authorization,
+                    status=status,
+                    error=error,
+                    data_manifest=data_manifest,
+                )
+                temporary_name = f".{path.name}.{uuid4().hex}.tmp"
+                write_bytes_exclusive_at(
+                    final_fd,
+                    temporary_name,
+                    (
+                        json.dumps(
+                            payload,
+                            ensure_ascii=False,
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n"
+                    ).encode("utf-8"),
+                )
+                current_again = os.stat(
+                    path.name, dir_fd=final_fd, follow_symlinks=False
+                )
+                if (current_again.st_dev, current_again.st_ino) != (
+                    current_metadata.st_dev,
+                    current_metadata.st_ino,
+                ):
+                    raise ValueError("final-test data claim identity changed")
+                os.replace(
+                    temporary_name,
+                    path.name,
+                    src_dir_fd=final_fd,
+                    dst_dir_fd=final_fd,
+                )
+                assert_directory_entry(
+                    parent_fd,
+                    path.parent.name,
+                    expected=final_identity,
+                    label="final-test root",
+                )
+            finally:
+                try:
+                    os.unlink(lock_name, dir_fd=final_fd)
+                except FileNotFoundError:
+                    pass
+
+
+def _updated_claim_payload(
+    current_bytes: bytes,
+    authorization: FinalTestAuthorization,
+    *,
+    status: str,
+    error: BaseException | None,
+    data_manifest: dict[str, object] | None,
+) -> dict[str, object]:
+    current = json.loads(current_bytes)
     current_status = current.get("status") if isinstance(current, dict) else None
     allowed = {
         "claimed": {"publishing", "failed"},
@@ -102,7 +192,7 @@ def update_claim(
     if error is not None:
         payload["error_type"] = type(error).__name__
         payload["error"] = str(error)
-    write_json(path, payload)
+    return payload
 
 
 def resolve_final_test_data_panel(final_root: Path) -> FinalTestDataResolution:

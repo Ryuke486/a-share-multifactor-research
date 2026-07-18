@@ -5,7 +5,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 from typing import Mapping
 from uuid import uuid4
 
@@ -38,6 +37,7 @@ def publish_release(
     manifest_metadata: dict[str, object] | None = None,
     frozen_artifact_trees: Mapping[str, Mapping[str, bytes]] | None = None,
     frozen_release_files: Mapping[str, bytes] | None = None,
+    current_must_be_absent: bool = False,
     fail_before_switch: bool = False,
 ) -> PublishedRelease:
     release_files = (
@@ -89,6 +89,7 @@ def publish_release(
         os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
         dir_fd=root_fd,
     )
+    releases_identity = _descriptor_identity(releases_fd)
     temporary_fd: int | None = None
     temporary_identity: tuple[int, int] | None = None
     try:
@@ -98,6 +99,12 @@ def publish_release(
             complete_files,
             resumable=False,
             label="release temporary staging",
+        )
+        _assert_entry_identity(
+            root_fd,
+            "releases",
+            releases_identity,
+            label="release root",
         )
         temporary_fd = os.open(
             temporary.name,
@@ -109,6 +116,12 @@ def publish_release(
             temporary_fd, label="release temporary staging"
         ) != complete_files:
             raise ValueError("release temporary staging bytes differ")
+        _assert_entry_identity(
+            root_fd,
+            "releases",
+            releases_identity,
+            label="release root",
+        )
         atomic_rename_no_replace_at(releases_fd, temporary.name, final.name)
         _assert_entry_identity(
             releases_fd,
@@ -116,12 +129,25 @@ def publish_release(
             temporary_identity,
             label="release temporary staging",
         )
+        _assert_entry_identity(
+            root_fd,
+            "releases",
+            releases_identity,
+            label="release root",
+        )
         manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
         if fail_before_switch:
             raise RuntimeError("injected failure before pointer switch")
-        _write_current_at(
+        pointer = {"manifest_sha256": manifest_hash, "run_id": run_id}
+        if current_must_be_absent:
+            _write_current_at(root_fd, pointer)
+        else:
+            _replace_current_at(root_fd, pointer)
+        _assert_entry_identity(
             root_fd,
-            {"manifest_sha256": manifest_hash, "run_id": run_id},
+            "releases",
+            releases_identity,
+            label="release root",
         )
         _assert_entry_identity(
             releases_fd,
@@ -145,17 +171,6 @@ def publish_release(
     except BaseException:
         if temporary_fd is not None:
             os.close(temporary_fd)
-        try:
-            if temporary_identity is not None:
-                _assert_entry_identity(
-                    releases_fd,
-                    temporary.name,
-                    temporary_identity,
-                    label="release temporary staging",
-                )
-                shutil.rmtree(temporary, ignore_errors=True)
-        except (FileNotFoundError, ValueError):
-            pass
         os.close(releases_fd)
         os.close(root_fd)
         os.close(root_parent_fd)
@@ -209,6 +224,19 @@ def _json_payload_bytes(payload: Mapping[str, object]) -> bytes:
 
 
 def _write_current_at(root_fd: int, payload: Mapping[str, object]) -> None:
+    _materialize_current_at(root_fd, payload, replace=False)
+
+
+def _replace_current_at(root_fd: int, payload: Mapping[str, object]) -> None:
+    _materialize_current_at(root_fd, payload, replace=True)
+
+
+def _materialize_current_at(
+    root_fd: int,
+    payload: Mapping[str, object],
+    *,
+    replace: bool,
+) -> None:
     temporary = f".CURRENT.{uuid4().hex}.tmp"
     descriptor = os.open(
         temporary,
@@ -224,12 +252,21 @@ def _write_current_at(root_fd: int, payload: Mapping[str, object]) -> None:
             stream.write(_json_payload_bytes(payload))
             stream.flush()
             os.fsync(descriptor)
-        os.replace(
-            temporary,
-            "CURRENT.json",
-            src_dir_fd=root_fd,
-            dst_dir_fd=root_fd,
-        )
+        if replace:
+            os.replace(
+                temporary,
+                "CURRENT.json",
+                src_dir_fd=root_fd,
+                dst_dir_fd=root_fd,
+            )
+        else:
+            os.link(
+                temporary,
+                "CURRENT.json",
+                src_dir_fd=root_fd,
+                dst_dir_fd=root_fd,
+                follow_symlinks=False,
+            )
     finally:
         os.close(descriptor)
         try:
@@ -293,18 +330,58 @@ def restore_current(root: Path, release: PublishedRelease) -> None:
     verified = resolve_release(root, release.run_id)
     if verified.manifest_sha256 != release.manifest_sha256:
         raise ValueError("orphan release identity changed before CURRENT recovery")
-    current = root / "CURRENT.json"
-    if current.exists() or current.is_symlink():
-        raise FileExistsError("CURRENT already exists")
-    temporary = root / f".CURRENT.{uuid4().hex}.tmp"
-    _write_json(
-        temporary,
-        {"manifest_sha256": release.manifest_sha256, "run_id": release.run_id},
+    root_parent_fd = os.open(
+        root.parent,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+    )
+    root_fd = os.open(
+        root.name,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=root_parent_fd,
+    )
+    releases_fd = os.open(
+        "releases",
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=root_fd,
     )
     try:
-        os.link(temporary, current)
+        root_identity = _descriptor_identity(root_fd)
+        releases_identity = _descriptor_identity(releases_fd)
+        release_metadata = os.stat(
+            release.run_id,
+            dir_fd=releases_fd,
+            follow_symlinks=False,
+        )
+        release_identity = (release_metadata.st_dev, release_metadata.st_ino)
+        _write_current_at(
+            root_fd,
+            {
+                "manifest_sha256": release.manifest_sha256,
+                "run_id": release.run_id,
+            },
+        )
+        _assert_entry_identity(
+            root_parent_fd,
+            root.name,
+            root_identity,
+            label="publication root",
+        )
+        _assert_entry_identity(
+            root_fd,
+            "releases",
+            releases_identity,
+            label="release root",
+        )
+        _assert_entry_identity(
+            releases_fd,
+            release.run_id,
+            release_identity,
+            label="orphan release",
+        )
     finally:
-        temporary.unlink(missing_ok=True)
+        os.close(releases_fd)
+        os.close(root_fd)
+        os.close(root_parent_fd)
 
 
 def _published(root: Path, run_id: str, manifest_hash: str) -> PublishedRelease:

@@ -5,7 +5,6 @@ from datetime import date
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 
 from ashare_multifactor.audit.publication import resolve_current
@@ -32,6 +31,14 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
     FINAL_TEST_START,
     FinalTestAuthorization,
+)
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    assert_directory_entry,
+    atomic_rename_no_replace_at,
+    directory_identity,
+    open_directory_at,
+    opened_directory,
+    opened_directory_at,
 )
 
 
@@ -188,7 +195,8 @@ def _build_claimed_panel(
     temporary_processed = processed / "final_test/data-staging" / authorization.attempt_id
     if temporary_processed.is_symlink():
         raise ValueError("final-test data staging path uses a symlink")
-    shutil.rmtree(temporary_processed, ignore_errors=True)
+    if temporary_processed.exists():
+        raise FileExistsError("final-test data staging requires recovery")
     temporary_target = temporary_processed / "validation_evaluation/daily_panel"
     build_config = replace(
         config,
@@ -196,7 +204,6 @@ def _build_claimed_panel(
         validation=config.test,
     )
     published = False
-    preserve_staging = False
     try:
         manifest = build_parquet_dataset(
             build_config,
@@ -226,7 +233,7 @@ def _build_claimed_panel(
             status="publishing",
             data_manifest=data_manifest_identity,
         )
-        os.replace(temporary_target, target)
+        _publish_built_panel(temporary_target, target)
         published = True
         try:
             _update_claim(
@@ -250,11 +257,71 @@ def _build_claimed_panel(
             )
         raise
     except BaseException:
-        preserve_staging = True
         raise
-    finally:
-        if not preserve_staging:
-            shutil.rmtree(temporary_processed, ignore_errors=True)
+
+
+def _publish_built_panel(source: Path, destination: Path) -> None:
+    final_root = destination.parent
+    relative_parent = source.parent.relative_to(final_root)
+    with opened_directory(
+        final_root.parent, label="final-test processed parent"
+    ) as final_parent_fd:
+        with opened_directory_at(
+            final_parent_fd, final_root.name, label="final-test root"
+        ) as final_fd:
+            final_identity = directory_identity(final_fd)
+            descriptors: list[tuple[int, tuple[int, int], int, str]] = []
+            current_fd = final_fd
+            try:
+                for part in relative_parent.parts:
+                    parent_fd = current_fd
+                    current_fd = open_directory_at(
+                        parent_fd, part, label="final-test data staging parent"
+                    )
+                    descriptors.append(
+                        (current_fd, directory_identity(current_fd), parent_fd, part)
+                    )
+                with opened_directory_at(
+                    current_fd, source.name, label="final-test data staging"
+                ) as source_fd:
+                    source_identity = directory_identity(source_fd)
+                    atomic_rename_no_replace_at(
+                        current_fd,
+                        source.name,
+                        final_fd,
+                        destination.name,
+                    )
+                    assert_directory_entry(
+                        final_fd,
+                        destination.name,
+                        expected=source_identity,
+                        label="final-test daily panel",
+                    )
+                    assert_directory_entry(
+                        final_parent_fd,
+                        final_root.name,
+                        expected=final_identity,
+                        label="final-test root",
+                    )
+                _remove_empty_staging_ancestors(descriptors)
+            finally:
+                for descriptor, _, _, _ in reversed(descriptors):
+                    os.close(descriptor)
+
+
+def _remove_empty_staging_ancestors(
+    descriptors: list[tuple[int, tuple[int, int], int, str]],
+) -> None:
+    # Keep the shared data-staging directory; remove only the attempt-specific
+    # descendants that became empty when daily_panel was atomically published.
+    for _, identity, parent_fd, name in reversed(descriptors[1:]):
+        assert_directory_entry(
+            parent_fd,
+            name,
+            expected=identity,
+            label="final-test empty data staging directory",
+        )
+        os.rmdir(name, dir_fd=parent_fd)
 
 
 def recover_final_test_daily_panel(
@@ -372,7 +439,7 @@ def _recover_publishing_claim(
     if not target.exists():
         staging_target = _claim_staging_path(final_root, claim) / "validation_evaluation/daily_panel"
         verify_final_test_data_panel(staging_target)
-        os.replace(staging_target, target)
+        _publish_built_panel(staging_target, target)
     resolution = resolve_final_test_data_panel(final_root)
     if not resolution.requires_recovery:
         raise ValueError("publishing final-test data claim recovery state is inconsistent")

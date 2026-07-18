@@ -79,6 +79,8 @@ def run_final_test_backtest(
     *,
     code_root: Path,
     final_root: Path,
+    panel_root: Path | None = None,
+    panel_manifest_sha256: str | None = None,
 ) -> FinalTestBacktestResult:
     """Fail closed until the sealed fee and execution-input contracts are complete."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -111,7 +113,13 @@ def run_final_test_backtest(
         raise RuntimeError("verified execution inputs are unexpectedly missing")
 
     # Resolve test-period data only after every frozen fee/action preflight passes.
-    source = _resolve_authorized_data(final_root, authorization, config.test)
+    source = _resolve_authorized_data(
+        final_root,
+        authorization,
+        config.test,
+        panel_root=panel_root,
+        panel_manifest_sha256=panel_manifest_sha256,
+    )
     try:
         inputs = _resolve_verified_inputs(
             source,

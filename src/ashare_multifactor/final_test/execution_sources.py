@@ -4,7 +4,6 @@ from collections.abc import Mapping
 from io import BytesIO
 import os
 from pathlib import Path
-import shutil
 from uuid import uuid4
 
 import polars as pl
@@ -30,7 +29,6 @@ from ashare_multifactor.final_test.corporate_action_coverage import (
     validate_corporate_action_coverage,
 )
 from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
-from ashare_multifactor.final_test.data_inventory import write_json
 from ashare_multifactor.final_test.execution_contracts import (
     normalize_security_event_rows,
 )
@@ -44,7 +42,6 @@ from ashare_multifactor.final_test.gate import (
 )
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.official_query_index import (
-    copy_validated_official_query_coverage,
     validate_official_query_coverage_index,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
@@ -371,8 +368,6 @@ def generate_final_execution_sources(
         security_event_coverage_path,
         symbols=symbols,
     )
-    coverage_root = security_coverage["coverage_root"]
-    coverage_manifest_path = security_coverage["coverage_manifest_path"]
     corporate_coverage = validate_corporate_action_coverage(
         corporate_action_coverage_root,
         symbols=symbols,
@@ -389,59 +384,43 @@ def generate_final_execution_sources(
     )
     actions, events = _execution_frames(security_coverage, corporate_coverage)
     destination = final_root / "execution_input_sources"
-    temporary = final_root / f".execution-input-sources-{uuid4().hex}.tmp"
-    temporary.mkdir(parents=True)
-    try:
-        actions.write_parquet(temporary / "corporate_actions.parquet")
-        events.write_parquet(temporary / "security_events.parquet")
-        shutil.copy2(coverage_manifest_path, temporary / "security_event_coverage.json")
-        corporate_destination = temporary / "corporate_action_coverage"
-        corporate_destination.mkdir()
-        corporate_support = {
-            corporate_coverage["coverage_manifest_path"],
-            corporate_coverage["candidate_file"],
-            corporate_coverage["coverage_file"],
-            corporate_coverage["evidence_index_file"],
-            corporate_coverage["official_actions_file"],
-            corporate_coverage["diff_file"],
-            *corporate_coverage["evidence_paths"],
-        }
-        for support in sorted(corporate_support):
-            relative = support.relative_to(corporate_coverage["coverage_root"])
-            destination_support = corporate_destination / relative
-            destination_support.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(support, destination_support)
-        _copy_official_query_coverage(
-            corporate_coverage,
-            destination=corporate_destination,
-            label="corporate coverage",
-        )
-        support_paths = set(security_coverage["evidence_paths"]) | set(
-            security_coverage["coverage_paths"]
-        )
-        if isinstance(security_coverage.get("events_file"), Path):
-            support_paths.add(security_coverage["events_file"])
-        for support in sorted(support_paths):
-            relative = support.relative_to(coverage_root)
-            destination_support = temporary / relative
-            destination_support.parent.mkdir(parents=True, exist_ok=True)
-            if destination_support.exists():
-                if sha256_file(destination_support) == sha256_file(support):
-                    continue
-                raise ValueError("security-event support file path collision")
-            shutil.copy2(support, destination_support)
-        _copy_official_query_coverage(
-            security_coverage,
-            destination=temporary,
-            label="security coverage",
-        )
-        records = [
-            file_record(path, root=temporary, role="final_execution_source").to_dict()
-            for path in sorted(item for item in temporary.rglob("*") if item.is_file())
-        ]
-        write_json(
-            temporary / "source_manifest.json",
-            {
+    security_files = _freeze_verified_coverage_root(
+        security_coverage, label="security coverage"
+    )
+    security_root = security_coverage.get("coverage_root")
+    security_manifest = security_coverage.get("coverage_manifest_path")
+    if not isinstance(security_root, Path) or not isinstance(security_manifest, Path):
+        raise ValueError("verified security coverage root is invalid")
+    manifest_relative = security_manifest.relative_to(security_root).as_posix()
+    manifest_bytes = security_files.pop(manifest_relative)
+    existing_manifest = security_files.get("security_event_coverage.json")
+    if existing_manifest is not None and existing_manifest != manifest_bytes:
+        raise ValueError("security-event support file path collision")
+    security_files["security_event_coverage.json"] = manifest_bytes
+    corporate_files = _freeze_verified_coverage_root(
+        corporate_coverage, label="corporate coverage"
+    )
+    primary_files = {
+        "corporate_actions.parquet": _parquet_bytes(actions),
+        "security_events.parquet": _parquet_bytes(events),
+    }
+    if set(primary_files) & set(security_files):
+        raise ValueError("security-event support file path collision")
+    source_files = {
+        **primary_files,
+        **security_files,
+        **{
+            f"corporate_action_coverage/{name}": payload
+            for name, payload in corporate_files.items()
+        },
+    }
+    records = frozen_records(
+        source_files,
+        prefix="",
+        role="final_execution_source",
+    )
+    records.sort(key=lambda record: Path(str(record["path"])))
+    source_manifest = {
                 "attempt_id": authorization.attempt_id,
                 "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
                 "git_commit": authorization.git_commit,
@@ -471,36 +450,70 @@ def generate_final_execution_sources(
                     "official_events" if events.height else "official_zero_event_coverage"
                 ),
                 "files": records,
-            },
-        )
-        if destination.exists() or destination.is_symlink():
-            raise FileExistsError("final execution source inputs already exist")
-        os.replace(temporary, destination)
-    except BaseException:
-        shutil.rmtree(temporary, ignore_errors=True)
-        raise
+            }
+    complete_files = {
+        **source_files,
+        "source_manifest.json": (
+            json.dumps(
+                source_manifest,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8"),
+    }
+    with opened_directory(
+        final_root.parent, label="final-test parent"
+    ) as final_parent_fd:
+        with opened_directory_at(
+            final_parent_fd, final_root.name, label="final-test root"
+        ) as final_fd:
+            final_identity = directory_identity(final_fd)
+            temporary_name = f".execution-input-sources-{uuid4().hex}.tmp"
+            write_frozen_tree_at(
+                final_fd,
+                temporary_name,
+                complete_files,
+                resumable=False,
+                label="execution source staging",
+            )
+            with opened_directory_at(
+                final_fd, temporary_name, label="execution source staging"
+            ) as temporary_fd:
+                temporary_identity = directory_identity(temporary_fd)
+                if read_frozen_tree_at(
+                    temporary_fd, label="execution source staging"
+                ) != complete_files:
+                    raise ValueError("execution source staging bytes differ")
+                atomic_rename_no_replace_at(
+                    final_fd, temporary_name, destination.name
+                )
+                assert_directory_entry(
+                    final_fd,
+                    destination.name,
+                    expected=temporary_identity,
+                    label="final execution source inputs",
+                )
+                assert_directory_entry(
+                    final_parent_fd,
+                    final_root.name,
+                    expected=final_identity,
+                    label="final-test root",
+                )
     return destination
 
 
-def _copy_official_query_coverage(
-    coverage: dict[str, object],
+def _freeze_verified_coverage_root(
+    coverage: Mapping[str, object],
     *,
-    destination: Path,
     label: str,
-) -> None:
-    index = coverage.get("official_query_coverage_file")
-    scopes = coverage.get("official_query_scopes")
-    if (
-        not isinstance(index, Path)
-        or not isinstance(scopes, tuple)
-        or any(not isinstance(scope, OfficialQueryScope) for scope in scopes)
-    ):
-        raise ValueError(f"verified {label} official query coverage is invalid")
-    copy_validated_official_query_coverage(
-        index,
-        expected_scopes=scopes,
-        destination_root=destination,
-    )
+) -> dict[str, bytes]:
+    root = coverage.get("coverage_root")
+    if not isinstance(root, Path):
+        raise ValueError(f"verified {label} root is invalid")
+    with opened_directory(root, label=label) as root_fd:
+        return read_frozen_tree_at(root_fd, label=label)
 
 
 def _assert_coverage_identity(

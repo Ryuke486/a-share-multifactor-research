@@ -6,7 +6,12 @@ import subprocess
 
 import pytest
 
-from ashare_multifactor.audit.publication import publish_release, resolve_current
+from ashare_multifactor.audit.publication import (
+    publish_release,
+    resolve_current,
+    resolve_release,
+    restore_current,
+)
 from ashare_multifactor.audit import publication as publication_module
 from ashare_multifactor.audit.identity import code_identity
 
@@ -192,8 +197,51 @@ def test_publish_rejects_temporary_directory_replacement_before_rename(
             staged_datasets=datasets,
             staged_artifacts=artifacts,
             lineage={"identity": "race"},
+            current_must_be_absent=True,
         )
 
+    assert not (root / "CURRENT.json").exists()
+
+
+def test_publish_rejects_releases_directory_replacement_before_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    datasets, artifacts = _staged(tmp_path)
+    root = tmp_path / "published"
+    rename = publication_module.atomic_rename_no_replace_at
+    displaced = root / "releases.displaced"
+    swapped = False
+
+    def replace_releases_then_rename(
+        parent_fd: int,
+        source: str,
+        destination: str,
+    ) -> None:
+        nonlocal swapped
+        if not swapped:
+            (root / "releases").rename(displaced)
+            (root / "releases").mkdir()
+            swapped = True
+        rename(parent_fd, source, destination)
+
+    monkeypatch.setattr(
+        publication_module,
+        "atomic_rename_no_replace_at",
+        replace_releases_then_rename,
+    )
+
+    with pytest.raises(ValueError, match="release root identity changed"):
+        publish_release(
+            root,
+            run_id="race",
+            staged_datasets=datasets,
+            staged_artifacts=artifacts,
+            lineage={"identity": "race"},
+            current_must_be_absent=True,
+        )
+
+    assert (displaced / "race/manifest.json").is_file()
     assert not (root / "CURRENT.json").exists()
 
 
@@ -220,10 +268,89 @@ def test_publish_rejects_publication_root_replacement_before_current_switch(
             staged_datasets=datasets,
             staged_artifacts=artifacts,
             lineage={"identity": "race"},
+            current_must_be_absent=True,
         )
 
     assert (displaced / "CURRENT.json").is_file()
     assert not (root / "CURRENT.json").exists()
+
+
+def test_one_shot_current_does_not_overwrite_concurrent_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    datasets, artifacts = _staged(tmp_path)
+    root = tmp_path / "published"
+    encode = publication_module._json_payload_bytes
+    competitor = b'{"run_id":"competitor"}\n'
+    injected = False
+
+    def inject_after_temporary_open(payload: dict[str, object]) -> bytes:
+        nonlocal injected
+        encoded = encode(payload)
+        if set(payload) == {"manifest_sha256", "run_id"} and not injected:
+            injected = True
+            (root / "CURRENT.json").write_bytes(competitor)
+        return encoded
+
+    monkeypatch.setattr(
+        publication_module,
+        "_json_payload_bytes",
+        inject_after_temporary_open,
+    )
+
+    with pytest.raises(FileExistsError):
+        publish_release(
+            root,
+            run_id="one-shot",
+            staged_datasets=datasets,
+            staged_artifacts=artifacts,
+            lineage={"identity": "one-shot"},
+            current_must_be_absent=True,
+        )
+
+    assert (root / "CURRENT.json").read_bytes() == competitor
+
+
+def test_orphan_recovery_does_not_overwrite_concurrent_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    datasets, artifacts = _staged(tmp_path)
+    root = tmp_path / "published"
+    with pytest.raises(RuntimeError, match="before pointer switch"):
+        publish_release(
+            root,
+            run_id="orphan",
+            staged_datasets=datasets,
+            staged_artifacts=artifacts,
+            lineage={"identity": "orphan"},
+            current_must_be_absent=True,
+            fail_before_switch=True,
+        )
+    orphan = resolve_release(root, "orphan")
+    encode = publication_module._json_payload_bytes
+    competitor = b'{"run_id":"competitor"}\n'
+    injected = False
+
+    def inject_after_temporary_open(payload: dict[str, object]) -> bytes:
+        nonlocal injected
+        encoded = encode(payload)
+        if set(payload) == {"manifest_sha256", "run_id"} and not injected:
+            injected = True
+            (root / "CURRENT.json").write_bytes(competitor)
+        return encoded
+
+    monkeypatch.setattr(
+        publication_module,
+        "_json_payload_bytes",
+        inject_after_temporary_open,
+    )
+
+    with pytest.raises(FileExistsError):
+        restore_current(root, orphan)
+
+    assert (root / "CURRENT.json").read_bytes() == competitor
 
 
 def test_code_identity_records_dirty_diff_and_source_hashes(tmp_path: Path) -> None:

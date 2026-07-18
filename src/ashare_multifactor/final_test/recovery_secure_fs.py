@@ -235,6 +235,8 @@ def write_bytes_exclusive_at(parent_fd: int, name: str, payload: bytes) -> None:
     try:
         with os.fdopen(descriptor, "wb", closefd=False) as stream:
             stream.write(payload)
+            stream.flush()
+            os.fsync(descriptor)
     finally:
         os.close(descriptor)
 
