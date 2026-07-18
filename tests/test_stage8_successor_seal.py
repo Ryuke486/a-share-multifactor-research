@@ -44,7 +44,7 @@ def test_successor_seal_preserves_predecessor_and_binds_execution_contracts(
         protocol=load_robustness_protocol(Path("configs/robustness_protocol.yaml")),
         code_identity=_identity(),
         validation_pointer={
-            "run_id": "2acbfd8_stage7_validation_two_phase_shsz_successor",
+            "run_id": "cc4beeb_stage7_validation_incident_fix_successor",
             "manifest_sha256": "e" * 64,
         },
         market_rules_sha256="1" * 64,
