@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ from pathlib import PurePosixPath
 import shutil
 from tempfile import TemporaryDirectory
 from uuid import uuid4
+from types import MappingProxyType
 
 from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
 from ashare_multifactor.audit.secure_tree import (
@@ -35,7 +37,10 @@ from ashare_multifactor.final_test.official_query_index import (
 )
 from ashare_multifactor.final_test.preparation import FinalTestPreparation
 from ashare_multifactor.final_test.registry import validate_publication_id
-from ashare_multifactor.final_test.resume import load_bound_symbol_scope
+from ashare_multifactor.final_test.resume import (
+    load_bound_symbol_scope,
+    load_bound_symbol_scope_at,
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,7 @@ class ExecutionCoverageSnapshot:
     prepare_manifest_sha256: str
     security_event_coverage_sha256: str
     corporate_action_coverage_sha256: str
+    files: Mapping[str, bytes]
 
 
 def snapshot_execution_coverages(
@@ -66,20 +72,40 @@ def snapshot_execution_coverages(
     validate_publication_id(attempt_id)
     if preparation.attempt_id != attempt_id:
         raise ValueError("coverage snapshot attempt differs from preparation")
-    symbols = load_bound_symbol_scope(preparation)
+    symbols = (
+        load_bound_symbol_scope(preparation)
+        if final_fd is None
+        else load_bound_symbol_scope_at(final_fd, preparation)
+    )
     parent = final_root / "execution_coverage_snapshots"
     destination = parent / attempt_id
-    if parent.is_symlink() or destination.is_symlink():
-        raise ValueError("execution coverage snapshot path uses a symlink")
-    if destination.exists():
-        return _verify_snapshot(
-            destination,
-            attempt_id=attempt_id,
-            preparation=preparation,
-            symbols=symbols,
-            expected_security_sha256=expected_security_sha256,
-            expected_corporate_sha256=expected_corporate_sha256,
-        )
+    if final_fd is not None:
+        try:
+            frozen = _freeze_bound_coverage_snapshot_at(final_fd, attempt_id)
+        except FileNotFoundError:
+            frozen = None
+        if frozen is not None:
+            return _verify_snapshot_frozen(
+                destination,
+                frozen=frozen,
+                attempt_id=attempt_id,
+                preparation=preparation,
+                symbols=symbols,
+                expected_security_sha256=expected_security_sha256,
+                expected_corporate_sha256=expected_corporate_sha256,
+            )
+    if final_fd is None:
+        if parent.is_symlink() or destination.is_symlink():
+            raise ValueError("execution coverage snapshot path uses a symlink")
+        if destination.exists():
+            return _verify_snapshot(
+                destination,
+                attempt_id=attempt_id,
+                preparation=preparation,
+                symbols=symbols,
+                expected_security_sha256=expected_security_sha256,
+                expected_corporate_sha256=expected_corporate_sha256,
+            )
 
     security, corporate = validate_final_execution_coverages(
         symbols=symbols,
@@ -150,6 +176,15 @@ def snapshot_execution_coverages(
                 )
         else:
             _publish_snapshot_at(final_fd, attempt_id=attempt_id, frozen=frozen)
+            return _verify_snapshot_frozen(
+                destination,
+                frozen=frozen,
+                attempt_id=attempt_id,
+                preparation=preparation,
+                symbols=symbols,
+                expected_security_sha256=expected_security_sha256,
+                expected_corporate_sha256=expected_corporate_sha256,
+            )
     return _verify_snapshot(
         destination,
         attempt_id=attempt_id,
@@ -262,6 +297,39 @@ def freeze_bound_coverage_snapshot(
         expected_manifest_sha256=expected_manifest_sha256,
     )
     return frozen
+
+
+def freeze_bound_coverage_snapshot_at(
+    final_fd: int,
+    *,
+    attempt_id: str,
+    expected_manifest_sha256: str,
+) -> dict[str, bytes]:
+    """Return verified snapshot bytes below one held final-root descriptor."""
+    validate_publication_id(attempt_id)
+    frozen = _freeze_bound_coverage_snapshot_at(final_fd, attempt_id)
+    _verify_snapshot_bytes(
+        frozen,
+        expected_manifest_sha256=expected_manifest_sha256,
+    )
+    return frozen
+
+
+def _freeze_bound_coverage_snapshot_at(
+    final_fd: int,
+    attempt_id: str,
+) -> dict[str, bytes]:
+    with opened_directory_at(
+        final_fd,
+        "execution_coverage_snapshots",
+        label="coverage snapshot root",
+    ) as parent_fd:
+        with opened_directory_at(
+            parent_fd,
+            attempt_id,
+            label="bound coverage snapshot",
+        ) as source_fd:
+            return _read_stable_tree(source_fd)
 
 
 def _verify_snapshot_bytes(
@@ -429,6 +497,8 @@ def _verify_snapshot(
         or current_corporate != expected_corporate_sha256
     ):
         raise ValueError("coverage snapshot identity differs from executing claim")
+    with opened_directory(root, label="execution coverage snapshot") as root_fd:
+        frozen = _read_stable_tree(root_fd)
     return ExecutionCoverageSnapshot(
         root=root,
         manifest_path=manifest_path,
@@ -439,6 +509,51 @@ def _verify_snapshot(
         prepare_manifest_sha256=preparation.manifest_sha256,
         security_event_coverage_sha256=current_security,
         corporate_action_coverage_sha256=current_corporate,
+        files=MappingProxyType(frozen),
+    )
+
+
+def _verify_snapshot_frozen(
+    root: Path,
+    *,
+    frozen: Mapping[str, bytes],
+    attempt_id: str,
+    preparation: FinalTestPreparation,
+    symbols: list[str],
+    expected_security_sha256: str,
+    expected_corporate_sha256: str,
+) -> ExecutionCoverageSnapshot:
+    stable = dict(frozen)
+    with TemporaryDirectory(prefix="verify-final-coverage-snapshot-") as scratch_name:
+        scratch = Path(scratch_name).resolve()
+        with opened_directory(scratch, label="coverage snapshot verification scratch") as scratch_fd:
+            write_frozen_tree_at(
+                scratch_fd,
+                "snapshot",
+                stable,
+                resumable=False,
+                label="coverage snapshot verification",
+            )
+        verified = _verify_snapshot(
+            scratch / "snapshot",
+            attempt_id=attempt_id,
+            preparation=preparation,
+            symbols=symbols,
+            expected_security_sha256=expected_security_sha256,
+            expected_corporate_sha256=expected_corporate_sha256,
+        )
+    return ExecutionCoverageSnapshot(
+        root=root,
+        manifest_path=root / "snapshot_manifest.json",
+        manifest_sha256=verified.manifest_sha256,
+        security_event_coverage_path=root
+        / str(json.loads(stable["snapshot_manifest.json"])["security_manifest"]),
+        corporate_action_coverage_root=root / "corporate",
+        symbols=verified.symbols,
+        prepare_manifest_sha256=verified.prepare_manifest_sha256,
+        security_event_coverage_sha256=verified.security_event_coverage_sha256,
+        corporate_action_coverage_sha256=verified.corporate_action_coverage_sha256,
+        files=MappingProxyType(stable),
     )
 
 

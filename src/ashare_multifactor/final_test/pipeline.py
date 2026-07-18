@@ -415,6 +415,7 @@ def _execute_authorized_final_test(
         security_event_coverage_path=coverage_snapshot.security_event_coverage_path,
         corporate_action_coverage_root=coverage_snapshot.corporate_action_coverage_root,
         execution_identity=execution_identity,
+        coverage_snapshot_files=coverage_snapshot.files,
     )
     bind_execution_output_intent_at(
         root_binding.attempts_fd,

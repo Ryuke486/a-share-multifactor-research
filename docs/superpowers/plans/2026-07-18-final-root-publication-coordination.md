@@ -105,3 +105,30 @@
 - [x] Pass the already-bound execution inputs and registry FD through signals/backtest/report; construct lineage identities from immutable bytes and held descriptors rather than lexical paths.
 - [x] Audit every normal/recovery read after `FinalRootBinding.open` and retain lexical paths only as labels or for unrelated frozen upstream releases.
 - [x] Run focused tests, all final-test publication/recovery tests, full pytest, ruff, and `git diff --check`; append evidence and create one local commit without resealing.
+
+### Task 6: Anchor the execution-source generation chain
+
+**Files:**
+- Modify: `src/ashare_multifactor/final_test/coverage_snapshot.py`
+- Modify: `src/ashare_multifactor/final_test/execution_sources.py`
+- Modify: `src/ashare_multifactor/final_test/pipeline.py`
+- Test: `tests/test_final_test_recovery_hardening.py`
+
+**Interfaces:**
+- Consumes: `FinalRootBinding.final_fd`, the attempt-bound coverage snapshot bytes, and `resolve_final_test_data_panel_at(...)`.
+- Produces: descriptor-anchored source reuse, coverage freeze, and execution-input publication without reopening canonical `final_root`.
+
+**Binding-context audit:**
+- `snapshot_execution_coverages`: lexical destination existence/symlink checks and post-publication `_verify_snapshot(Path)`.
+- `freeze_bound_coverage_snapshot`: lexical snapshot resolve/open.
+- `build_final_execution_inputs`: lexical source/attempt root resolve and existence checks.
+- `generate_final_execution_sources`: lexical data-panel resolver despite a supplied final FD.
+- `_verify_reusable_source_root`: lexical manifest/frame/tree reads plus a second lexical data-panel resolver.
+- `_publish_execution_sources_at` and `_publish_execution_inputs_at`: already descriptor-relative; retain them as the only bound write path.
+
+- [x] Add a real `build_final_execution_inputs` ABA test that swaps A to a self-consistent B after the initial binding assertion, removes B's data-claim lock, injects B data/source markers, restores A only after the real FD publication, and proves the old chain touches B and imports B records into A.
+- [x] Make coverage snapshot existing/new verification and freeze descriptor-relative when a final FD is supplied; carry immutable snapshot bytes into later consumers.
+- [x] Split the bound execution-source path from the public unbound compatibility path; derive the complete expected source tree from immutable coverage bytes and validate/reuse it through the held final FD.
+- [x] Resolve panel identity, source existence, attempt-input existence, coverage snapshot bytes, reusable source bytes, and final input publication only through held descriptors.
+- [x] Search the complete bound executing path again for lexical final-root reads/writes and retain paths only as labels or for external frozen code/coverage releases.
+- [x] Run focused tests, final-test recovery/publication suites, full pytest, ruff, and `git diff --check`; update evidence and amend the single local commit without resealing.

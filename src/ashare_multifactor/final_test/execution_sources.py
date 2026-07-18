@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from io import BytesIO
 import os
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 import polars as pl
@@ -28,7 +29,10 @@ from ashare_multifactor.final_test.action_source_contract import (
 from ashare_multifactor.final_test.corporate_action_coverage import (
     validate_corporate_action_coverage,
 )
-from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
+from ashare_multifactor.final_test.data_publication import (
+    resolve_final_test_data_panel,
+    resolve_final_test_data_panel_at,
+)
 from ashare_multifactor.final_test.execution_contracts import (
     normalize_security_event_rows,
 )
@@ -78,13 +82,28 @@ def freeze_final_execution_parquets(
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
     execution_identity: Mapping[str, object],
+    coverage_snapshot_files: Mapping[str, bytes] | None = None,
 ) -> dict[str, bytes]:
     """Derive deterministic primary bytes only from identity-bound coverages."""
-    security, corporate = validate_final_execution_coverages(
-        symbols=symbols,
-        security_event_coverage_path=security_event_coverage_path,
-        corporate_action_coverage_root=corporate_action_coverage_root,
-    )
+    if coverage_snapshot_files is None:
+        security, corporate = validate_final_execution_coverages(
+            symbols=symbols,
+            security_event_coverage_path=security_event_coverage_path,
+            corporate_action_coverage_root=corporate_action_coverage_root,
+        )
+    else:
+        security, corporate, _security_files, _corporate_files = (
+            _validated_coverages_from_snapshot(
+                coverage_snapshot_files,
+                symbols=symbols,
+                expected_security_sha256=str(
+                    execution_identity["security_event_coverage_sha256"]
+                ),
+                expected_corporate_sha256=str(
+                    execution_identity["corporate_action_coverage_sha256"]
+                ),
+            )
+        )
     _assert_coverage_identity(
         security,
         corporate,
@@ -120,6 +139,16 @@ def build_final_execution_inputs(
     if root_binding is not None:
         root_binding.assert_bound()
     identity = assert_execution_identity_authorized(execution_identity, authorization)
+    if root_binding is not None:
+        return _build_final_execution_inputs_at(
+            authorization,
+            code_root=code_root,
+            final_root=final_root,
+            symbols=symbols,
+            identity=identity,
+            expected_parquet_bytes=expected_parquet_bytes,
+            root_binding=root_binding,
+        )
     prepare_manifest_sha256 = identity["prepare_manifest_sha256"]
     expected_security_event_coverage_sha256 = identity["security_event_coverage_sha256"]
     expected_corporate_action_coverage_sha256 = identity["corporate_action_coverage_sha256"]
@@ -238,6 +267,148 @@ def build_final_execution_inputs(
     return manifest
 
 
+def _build_final_execution_inputs_at(
+    authorization: FinalTestAuthorization,
+    *,
+    code_root: Path,
+    final_root: Path,
+    symbols: list[str],
+    identity: Mapping[str, object],
+    expected_parquet_bytes: Mapping[str, bytes] | None,
+    root_binding: FinalRootBinding,
+) -> dict[str, object]:
+    from ashare_multifactor.final_test.coverage_snapshot import (
+        freeze_bound_coverage_snapshot_at,
+    )
+
+    snapshot_files = freeze_bound_coverage_snapshot_at(
+        root_binding.final_fd,
+        attempt_id=authorization.attempt_id,
+        expected_manifest_sha256=str(identity["coverage_snapshot_manifest_sha256"]),
+    )
+    security, corporate, security_files, corporate_files = (
+        _validated_coverages_from_snapshot(
+            snapshot_files,
+            symbols=symbols,
+            expected_security_sha256=str(identity["security_event_coverage_sha256"]),
+            expected_corporate_sha256=str(identity["corporate_action_coverage_sha256"]),
+        )
+    )
+    resolution = resolve_final_test_data_panel_at(final_root, root_binding.final_fd)
+    if resolution.claim_status != "published" or resolution.requires_recovery:
+        raise ValueError("final-test data publication requires recovery")
+    contract = load_action_source_contract(
+        code_root / "configs/final_execution_sources.yaml"
+    )
+    if (
+        not symbols
+        or symbols != sorted(set(symbols))
+        or any(
+            market_for_symbol(symbol) not in contract.supported_markets
+            for symbol in symbols
+        )
+    ):
+        raise ValueError("final execution input symbols differ from preparation scope")
+    actions, events = _execution_frames(security, corporate)
+    generated_parquets = {
+        "corporate_actions.parquet": _parquet_bytes(actions),
+        "security_events.parquet": _parquet_bytes(events),
+    }
+    if expected_parquet_bytes is not None and generated_parquets != dict(
+        expected_parquet_bytes
+    ):
+        raise ValueError("deterministic execution output differs from bound intent")
+    complete_sources, source_records = _execution_source_tree(
+        authorization=authorization,
+        contract=contract,
+        data_manifest_sha256=resolution.data_manifest_sha256,
+        symbols=symbols,
+        identity=identity,
+        security_coverage=security,
+        corporate_coverage=corporate,
+        security_files=security_files,
+        corporate_files=corporate_files,
+        generated_parquets=generated_parquets,
+    )
+    try:
+        with opened_directory_at(
+            root_binding.final_fd,
+            "execution_input_sources",
+            label="final execution source inputs",
+        ) as sources_fd:
+            existing_sources = read_frozen_tree_at(
+                sources_fd,
+                label="final execution source inputs",
+            )
+    except FileNotFoundError:
+        _publish_execution_sources_at(
+            root_binding.final_fd,
+            destination_name="execution_input_sources",
+            complete_files=complete_sources,
+        )
+    else:
+        if existing_sources != complete_sources:
+            raise ValueError("reusable final execution source inventory differs")
+
+    if _attempt_input_exists_at(
+        root_binding.final_fd,
+        attempt_id=authorization.attempt_id,
+    ):
+        raise FileExistsError("final execution inputs are already bound")
+    snapshot_records = frozen_records(
+        snapshot_files,
+        prefix="coverage_snapshot",
+        role="official_coverage_snapshot",
+    )
+    manifest = _execution_input_manifest_from_bytes(
+        authorization=authorization,
+        files=generated_parquets,
+        execution_identity=identity,
+    )
+    manifest["source_contract"] = file_record(
+        code_root / "configs/final_execution_sources.yaml",
+        root=code_root,
+        role="final_execution_source_contract",
+    ).to_dict()
+    manifest["source_files"] = source_records
+    manifest["coverage_snapshot_files"] = snapshot_records
+    manifest["symbols_sha256"] = hashlib.sha256(
+        ("\n".join(symbols) + "\n").encode()
+    ).hexdigest()
+    staged_files = {
+        **generated_parquets,
+        **{
+            f"coverage_snapshot/{name}": payload
+            for name, payload in snapshot_files.items()
+        },
+        "manifest.json": (
+            json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n"
+        ).encode("utf-8"),
+    }
+    _publish_execution_inputs_at(
+        root_binding.final_fd,
+        authorization=authorization,
+        execution_id=str(identity["execution_id"]),
+        staged_files=staged_files,
+    )
+    root_binding.assert_bound()
+    return manifest
+
+
+def _attempt_input_exists_at(final_fd: int, *, attempt_id: str) -> bool:
+    try:
+        with opened_directory_at(
+            final_fd,
+            "attempt_inputs",
+            label="attempt-input root",
+        ) as parent_fd:
+            os.stat(attempt_id, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def _publish_execution_inputs_at(
     final_fd: int,
     *,
@@ -332,6 +503,152 @@ def _parquet_bytes(frame: pl.DataFrame) -> bytes:
     buffer = BytesIO()
     frame.write_parquet(buffer)
     return buffer.getvalue()
+
+
+def _validated_coverages_from_snapshot(
+    snapshot_files: Mapping[str, bytes],
+    *,
+    symbols: list[str],
+    expected_security_sha256: str,
+    expected_corporate_sha256: str,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, bytes],
+    dict[str, bytes],
+]:
+    try:
+        snapshot_manifest = json.loads(snapshot_files["snapshot_manifest.json"])
+        security_relative = Path(str(snapshot_manifest["security_manifest"]))
+    except (KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid execution coverage snapshot manifest") from error
+    if (
+        not isinstance(snapshot_manifest, dict)
+        or security_relative.is_absolute()
+        or not security_relative.parts
+        or security_relative.parts[0] != "security"
+        or ".." in security_relative.parts
+    ):
+        raise ValueError("invalid execution coverage snapshot manifest")
+    with TemporaryDirectory(prefix="bound-execution-coverage-") as scratch_name:
+        scratch = Path(scratch_name).resolve()
+        with opened_directory(scratch, label="bound execution coverage scratch") as scratch_fd:
+            write_frozen_tree_at(
+                scratch_fd,
+                "snapshot",
+                snapshot_files,
+                resumable=False,
+                label="bound execution coverage",
+            )
+        snapshot_root = scratch / "snapshot"
+        security, corporate = validate_final_execution_coverages(
+            symbols=symbols,
+            security_event_coverage_path=snapshot_root / security_relative,
+            corporate_action_coverage_root=snapshot_root / "corporate",
+        )
+        _assert_coverage_identity(
+            security,
+            corporate,
+            expected_security_event_coverage_sha256=expected_security_sha256,
+            expected_corporate_action_coverage_sha256=expected_corporate_sha256,
+        )
+        security_files = _freeze_verified_coverage_root(
+            security,
+            label="security coverage",
+        )
+        security_root = security.get("coverage_root")
+        security_manifest = security.get("coverage_manifest_path")
+        if not isinstance(security_root, Path) or not isinstance(
+            security_manifest, Path
+        ):
+            raise ValueError("verified security coverage root is invalid")
+        manifest_relative = security_manifest.relative_to(security_root).as_posix()
+        manifest_bytes = security_files.pop(manifest_relative)
+        existing_manifest = security_files.get("security_event_coverage.json")
+        if existing_manifest is not None and existing_manifest != manifest_bytes:
+            raise ValueError("security-event support file path collision")
+        security_files["security_event_coverage.json"] = manifest_bytes
+        corporate_files = _freeze_verified_coverage_root(
+            corporate,
+            label="corporate coverage",
+        )
+    return security, corporate, security_files, corporate_files
+
+
+def _execution_source_tree(
+    *,
+    authorization: FinalTestAuthorization,
+    contract: object,
+    data_manifest_sha256: str,
+    symbols: list[str],
+    identity: Mapping[str, object],
+    security_coverage: dict[str, object],
+    corporate_coverage: dict[str, object],
+    security_files: Mapping[str, bytes],
+    corporate_files: Mapping[str, bytes],
+    generated_parquets: Mapping[str, bytes],
+) -> tuple[dict[str, bytes], list[dict[str, object]]]:
+    if set(generated_parquets) & set(security_files):
+        raise ValueError("security-event support file path collision")
+    source_files = {
+        **generated_parquets,
+        **security_files,
+        **{
+            f"corporate_action_coverage/{name}": payload
+            for name, payload in corporate_files.items()
+        },
+    }
+    records = frozen_records(
+        source_files,
+        prefix="",
+        role="final_execution_source",
+    )
+    records.sort(key=lambda record: Path(str(record["path"])))
+    _actions, events = _execution_frames(security_coverage, corporate_coverage)
+    source_manifest = {
+        "attempt_id": authorization.attempt_id,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "data_manifest_sha256": data_manifest_sha256,
+        "execution_id": identity["execution_id"],
+        "coverage_snapshot_manifest_sha256": identity[
+            "coverage_snapshot_manifest_sha256"
+        ],
+        "prepare_manifest_sha256": identity["prepare_manifest_sha256"],
+        "security_event_coverage_sha256": identity[
+            "security_event_coverage_sha256"
+        ],
+        "corporate_action_coverage_sha256": identity[
+            "corporate_action_coverage_sha256"
+        ],
+        "symbols_sha256": hashlib.sha256(
+            ("\n".join(symbols) + "\n").encode()
+        ).hexdigest(),
+        "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
+        "provider": contract.provider,
+        "query_year_type": contract.query_year_type,
+        "query_years": list(contract.query_years),
+        "symbol_count": len(symbols),
+        "successful_query_count": corporate_coverage["coverage"].height,
+        "security_event_source": (
+            "official_events" if events.height else "official_zero_event_coverage"
+        ),
+        "files": records,
+    }
+    complete_files = {
+        **source_files,
+        "source_manifest.json": (
+            json.dumps(
+                source_manifest,
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n"
+        ).encode("utf-8"),
+    }
+    return complete_files, records
 
 
 def generate_final_execution_sources(

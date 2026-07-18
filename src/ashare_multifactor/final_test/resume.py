@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from io import BytesIO
 import json
 from pathlib import Path
 
@@ -32,7 +33,10 @@ from ashare_multifactor.final_test.preparation import (
     verify_preparation,
 )
 from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
-from ashare_multifactor.final_test.recovery_secure_fs import read_bytes_at
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    opened_directory_at,
+    read_bytes_at,
+)
 from ashare_multifactor.final_test.registry import (
     resolve_attempt_state_at,
     resolve_attempt_state_readonly,
@@ -195,7 +199,11 @@ def preflight_resume(
         expected_state=expected_state,
         root_binding=root_binding,
     )
-    symbols = load_bound_symbol_scope(preparation)
+    symbols = (
+        load_bound_symbol_scope(preparation)
+        if root_binding is None
+        else load_bound_symbol_scope_at(root_binding.final_fd, preparation)
+    )
     security, corporate = validate_final_execution_coverages(
         symbols=symbols,
         security_event_coverage_path=security_event_coverage_path,
@@ -362,11 +370,45 @@ def load_bound_symbol_scope(preparation: FinalTestPreparation) -> list[str]:
     """Load the sorted symbols already bound by the verified preparation."""
     try:
         frame = pl.read_parquet(preparation.symbol_scope_path)
-        if frame.columns != ["symbol"] or frame.get_column("symbol").null_count():
-            raise ValueError("invalid final-test preparation symbol scope")
-        symbols = frame.get_column("symbol").cast(pl.String).to_list()
     except pl.exceptions.PolarsError as error:
         raise ValueError("invalid final-test preparation symbol scope") from error
+    return _validated_symbol_scope(frame, preparation)
+
+
+def load_bound_symbol_scope_at(
+    final_fd: int,
+    preparation: FinalTestPreparation,
+) -> list[str]:
+    """Load the preparation symbol scope below one held final-root FD."""
+    with opened_directory_at(
+        final_fd,
+        "preparations",
+        label="final-test preparations",
+    ) as preparations_fd:
+        with opened_directory_at(
+            preparations_fd,
+            preparation.attempt_id,
+            label="final-test preparation",
+        ) as preparation_fd:
+            payload = read_bytes_at(
+                preparation_fd,
+                "symbol_scope.parquet",
+                label="final-test preparation symbol scope",
+            )
+    try:
+        frame = pl.read_parquet(BytesIO(payload))
+    except pl.exceptions.PolarsError as error:
+        raise ValueError("invalid final-test preparation symbol scope") from error
+    return _validated_symbol_scope(frame, preparation)
+
+
+def _validated_symbol_scope(
+    frame: pl.DataFrame,
+    preparation: FinalTestPreparation,
+) -> list[str]:
+    if frame.columns != ["symbol"] or frame.get_column("symbol").null_count():
+        raise ValueError("invalid final-test preparation symbol scope")
+    symbols = frame.get_column("symbol").cast(pl.String).to_list()
     symbols_sha256 = hashlib.sha256(("\n".join(symbols) + "\n").encode()).hexdigest()
     if (
         len(symbols) != preparation.symbol_count

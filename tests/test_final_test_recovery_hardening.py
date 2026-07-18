@@ -23,6 +23,7 @@ from ashare_multifactor.final_test.coverage_snapshot import (
     snapshot_execution_coverages,
 )
 from ashare_multifactor.final_test.execution_sources import build_final_execution_inputs
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
     begin_execution_recovery,
@@ -209,6 +210,183 @@ def test_real_execution_inputs_are_archived_and_retained_after_crash(
             symbols=list(snapshot.symbols),
             execution_identity=execution_identity,
         )
+
+
+def test_bound_execution_input_build_never_reads_or_locks_replacement_root(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    preflight = _preflight(prepared_attempt)
+    snapshot = _snapshot(prepared_attempt, preflight)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    panel_root = final_root / "daily_panel"
+    quality_path = panel_root / "quality_issues.json"
+    quality_path.write_text("[]\n", encoding="utf-8")
+    quality_record = {
+        "relative_path": quality_path.name,
+        "sha256": sha256_file(quality_path),
+        "size_bytes": quality_path.stat().st_size,
+    }
+    stage2_path = panel_root / "stage2_manifest.json"
+    stage2_path.write_text(
+        json.dumps({"quality_issues": quality_record}) + "\n",
+        encoding="utf-8",
+    )
+    inventory_path = panel_root / "input_files.json"
+    inventory_path.write_text('{"pairs": []}\n', encoding="utf-8")
+    data_manifest_path = panel_root / "data_manifest.json"
+    data_manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "stage2_manifest": {
+                    "relative_path": stage2_path.name,
+                    "sha256": sha256_file(stage2_path),
+                    "size_bytes": stage2_path.stat().st_size,
+                },
+                "input_files": {
+                    "relative_path": inventory_path.name,
+                    "sha256": sha256_file(inventory_path),
+                    "size_bytes": inventory_path.stat().st_size,
+                    "pair_count": 0,
+                    "file_count": 0,
+                },
+                "quality_issues": quality_record,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (final_root / "data-build-claim.json").write_text(
+        json.dumps(
+            {
+                "status": "published",
+                "data_manifest": {
+                    "relative_path": "daily_panel/data_manifest.json",
+                    "sha256": sha256_file(data_manifest_path),
+                    "size_bytes": data_manifest_path.stat().st_size,
+                },
+            },
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    identity = {
+        "execution_id": "aba-execution",
+        "attempt_id": prepared_attempt.attempt_id,
+        "sealed_protocol_sha256": preflight.authorization.sealed_protocol_sha256,
+        **_identities(preflight),
+        "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
+    }
+    kwargs = {
+        "code_root": prepared_attempt.code_root,
+        "data_root": prepared_attempt.data_root,
+        "final_root": final_root,
+        "security_event_coverage_path": snapshot.security_event_coverage_path,
+        "corporate_action_coverage_root": snapshot.corporate_action_coverage_root,
+        "symbols": list(snapshot.symbols),
+        "execution_identity": identity,
+    }
+    build_final_execution_inputs(preflight.authorization, **kwargs)
+    shutil.rmtree(final_root / "attempt_inputs" / prepared_attempt.attempt_id)
+
+    displaced = tmp_path / "bound-execution-root-a"
+    replacement = tmp_path / "bound-execution-root-b"
+    marker = "REPLACEMENT-B-EXECUTION-SOURCE"
+    replacement_before: dict[str, bytes] | None = None
+    swapped = False
+    restored = False
+    authorize = sources_module.assert_execution_identity_authorized
+    publish_inputs = sources_module._publish_execution_inputs_at
+
+    def swap_after_initial_binding_assert(*args: object, **hook_kwargs: object):
+        nonlocal replacement_before, swapped
+        result = authorize(*args, **hook_kwargs)
+        if swapped:
+            return result
+        swapped = True
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        (final_root / ".data-claim.publication.lock").unlink(missing_ok=True)
+        shutil.rmtree(
+            final_root
+            / "execution_coverage_snapshots"
+            / prepared_attempt.attempt_id
+        )
+
+        data_manifest_path = final_root / "daily_panel/data_manifest.json"
+        data_manifest = json.loads(data_manifest_path.read_text(encoding="utf-8"))
+        data_manifest["replacement_marker"] = marker
+        data_manifest_path.write_text(
+            json.dumps(data_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        claim_path = final_root / "data-build-claim.json"
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["data_manifest"]["sha256"] = sha256_file(data_manifest_path)
+        claim["data_manifest"]["size_bytes"] = data_manifest_path.stat().st_size
+        claim_path.write_text(
+            json.dumps(claim, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+        source_root = final_root / "execution_input_sources"
+        marker_path = source_root / "replacement-marker.bin"
+        marker_path.write_text(marker, encoding="utf-8")
+        source_manifest_path = source_root / "source_manifest.json"
+        source_manifest = json.loads(
+            source_manifest_path.read_text(encoding="utf-8")
+        )
+        source_manifest["data_manifest_sha256"] = sha256_file(data_manifest_path)
+        source_manifest["files"] = sources_module._source_file_records(source_root)
+        source_manifest_path.write_text(
+            json.dumps(source_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        replacement_before = _tree_bytes(final_root)
+        return result
+
+    def publish_then_restore(*args: object, **hook_kwargs: object) -> None:
+        nonlocal restored
+        publish_inputs(*args, **hook_kwargs)
+        final_root.rename(replacement)
+        displaced.rename(final_root)
+        restored = True
+
+    monkeypatch.setattr(
+        sources_module,
+        "assert_execution_identity_authorized",
+        swap_after_initial_binding_assert,
+    )
+    monkeypatch.setattr(
+        sources_module,
+        "_publish_execution_inputs_at",
+        publish_then_restore,
+    )
+
+    try:
+        with FinalRootBinding.open(final_root) as root_binding:
+            build_final_execution_inputs(
+                preflight.authorization,
+                **kwargs,
+                root_binding=root_binding,
+            )
+    finally:
+        if swapped and not restored:
+            final_root.rename(replacement)
+            displaced.rename(final_root)
+
+    assert replacement_before is not None
+    assert _tree_bytes(replacement) == replacement_before
+    bound_manifest = (
+        final_root / "attempt_inputs" / prepared_attempt.attempt_id / "manifest.json"
+    ).read_text(encoding="utf-8")
+    assert marker not in bound_manifest
 
 
 def test_execution_input_staging_resumes_only_an_exact_prefix(tmp_path: Path) -> None:
