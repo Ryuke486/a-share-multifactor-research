@@ -1,16 +1,21 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import ExitStack
 from datetime import date
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import polars as pl
 
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.data.discovery import DailyFilePair
+from ashare_multifactor.final_test.recovery_secure_fs import (
+    opened_directory_at,
+    read_bytes_at,
+)
 
 
 def build_input_inventory(
@@ -192,6 +197,81 @@ def verify_final_test_data_panel(root: Path) -> dict[str, object]:
     ):
         raise ValueError("final-test input file inventory count mismatch")
     return manifest
+
+
+def verify_final_test_data_panel_at(root_fd: int) -> dict[str, object]:
+    """Verify a final-test panel entirely below one held directory descriptor."""
+    try:
+        manifest = json.loads(
+            read_bytes_at(
+                root_fd,
+                "data_manifest.json",
+                label="final-test data manifest",
+            )
+        )
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid final-test data manifest") from error
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != "1":
+        raise ValueError("invalid final-test data manifest")
+
+    stage2_record = _required_record(manifest, "stage2_manifest")
+    inventory_record = _required_record(manifest, "input_files")
+    quality_record = _required_record(manifest, "quality_issues")
+    stage2_bytes = verify_file_identity_at(root_fd, stage2_record, "Stage-2 manifest")
+    inventory_bytes = verify_file_identity_at(root_fd, inventory_record, "input files")
+    verify_file_identity_at(root_fd, quality_record, "quality issues")
+    try:
+        stage2 = json.loads(stage2_bytes)
+        inventory = json.loads(inventory_bytes)
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid bound final-test data input") from error
+    if not isinstance(stage2, dict) or stage2.get("quality_issues") != quality_record:
+        raise ValueError("quality issues identity differs from Stage-2 manifest")
+    pairs = inventory.get("pairs") if isinstance(inventory, dict) else None
+    if not isinstance(pairs, list):
+        raise ValueError("invalid final-test input file inventory")
+    file_count = sum(
+        len(pair.get("files", []))
+        for pair in pairs
+        if isinstance(pair, dict) and isinstance(pair.get("files"), list)
+    )
+    if (
+        inventory_record.get("pair_count") != len(pairs)
+        or inventory_record.get("file_count") != file_count
+        or file_count != 2 * len(pairs)
+    ):
+        raise ValueError("final-test input file inventory count mismatch")
+    return manifest
+
+
+def verify_file_identity_at(
+    root_fd: int,
+    record: dict[str, object],
+    label: str,
+) -> bytes:
+    """Read and verify one relative file without reopening its named root."""
+    relative = record.get("relative_path")
+    if not isinstance(relative, str):
+        raise ValueError(f"invalid {label} identity path")
+    path = PurePosixPath(relative)
+    if path.is_absolute() or not path.parts or ".." in path.parts or "." in path.parts:
+        raise ValueError(f"invalid {label} identity path")
+    with ExitStack() as stack:
+        parent_fd = root_fd
+        for part in path.parts[:-1]:
+            parent_fd = stack.enter_context(
+                opened_directory_at(parent_fd, part, label=f"{label} parent")
+            )
+        try:
+            payload = read_bytes_at(parent_fd, path.name, label=label)
+        except FileNotFoundError as error:
+            raise ValueError(f"{label} identity mismatch") from error
+    if (
+        record.get("sha256") != hashlib.sha256(payload).hexdigest()
+        or record.get("size_bytes") != len(payload)
+    ):
+        raise ValueError(f"{label} identity mismatch")
+    return payload
 
 
 def verify_file_identity(root: Path, record: dict[str, object], label: str) -> Path:

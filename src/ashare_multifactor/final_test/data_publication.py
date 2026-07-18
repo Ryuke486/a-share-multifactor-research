@@ -11,8 +11,8 @@ from typing import Iterator
 from uuid import uuid4
 
 from ashare_multifactor.final_test.data_inventory import (
-    verify_file_identity,
-    verify_final_test_data_panel,
+    verify_file_identity_at,
+    verify_final_test_data_panel_at,
 )
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 from ashare_multifactor.final_test.recovery_secure_fs import (
@@ -653,34 +653,44 @@ def resolve_final_test_data_panel(final_root: Path) -> FinalTestDataResolution:
     if final_root.is_symlink() or claim_path.is_symlink():
         raise ValueError("final-test data publication path uses a symlink")
     with _opened_claim_root(final_root) as final_fd:
-        with publication_read_lock_at(final_fd, _DATA_CLAIM_PUBLICATION_LOCK):
-            try:
-                claim = json.loads(
-                    read_bytes_at(
-                        final_fd,
-                        claim_path.name,
-                        label="final-test data publication claim",
-                    )
+        return resolve_final_test_data_panel_at(final_root, final_fd)
+
+
+def resolve_final_test_data_panel_at(
+    final_root: Path,
+    final_fd: int,
+) -> FinalTestDataResolution:
+    """Resolve published data entirely below one held final-root descriptor."""
+    with publication_read_lock_at(final_fd, _DATA_CLAIM_PUBLICATION_LOCK):
+        try:
+            claim = json.loads(
+                read_bytes_at(
+                    final_fd,
+                    "data-build-claim.json",
+                    label="final-test data publication claim",
                 )
-            except (FileNotFoundError, json.JSONDecodeError) as error:
-                raise ValueError("invalid final-test data publication claim") from error
-            status = claim.get("status") if isinstance(claim, dict) else None
-            if status not in {"publishing", "published"}:
-                raise ValueError("final-test data publication is not resolvable")
-            identity = claim.get("data_manifest")
-            if not isinstance(identity, dict):
-                raise ValueError("final-test data publication lacks manifest identity")
-            manifest_path = verify_file_identity(final_root, identity, "data manifest")
-            root = final_root / "daily_panel"
-            if manifest_path != root / "data_manifest.json":
-                raise ValueError("final-test data manifest path is not canonical")
-            verify_final_test_data_panel(root)
-            return FinalTestDataResolution(
-                root=root,
-                claim_status=str(status),
-                requires_recovery=status == "publishing",
-                data_manifest_sha256=str(identity["sha256"]),
             )
+        except (FileNotFoundError, json.JSONDecodeError) as error:
+            raise ValueError("invalid final-test data publication claim") from error
+        status = claim.get("status") if isinstance(claim, dict) else None
+        if status not in {"publishing", "published"}:
+            raise ValueError("final-test data publication is not resolvable")
+        identity = claim.get("data_manifest")
+        if not isinstance(identity, dict):
+            raise ValueError("final-test data publication lacks manifest identity")
+        if identity.get("relative_path") != "daily_panel/data_manifest.json":
+            raise ValueError("final-test data manifest path is not canonical")
+        verify_file_identity_at(final_fd, identity, "data manifest")
+        with opened_directory_at(
+            final_fd, "daily_panel", label="final daily panel"
+        ) as panel_fd:
+            verify_final_test_data_panel_at(panel_fd)
+        return FinalTestDataResolution(
+            root=final_root / "daily_panel",
+            claim_status=str(status),
+            requires_recovery=status == "publishing",
+            data_manifest_sha256=str(identity["sha256"]),
+        )
 
 
 def _claim_payload(

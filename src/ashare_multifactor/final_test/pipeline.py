@@ -17,7 +17,7 @@ import polars as pl
 
 from ashare_multifactor.audit.publication import (
     PublishedRelease,
-    opened_verified_current,
+    opened_verified_current_at,
     resolve_current,
 )
 from ashare_multifactor.audit.records import file_record
@@ -38,6 +38,7 @@ from ashare_multifactor.final_test.data_publication import (
     read_data_claim_bytes,
     replace_data_claim_for_recovery,
     resolve_final_test_data_panel,
+    resolve_final_test_data_panel_at,
 )
 from ashare_multifactor.final_test.execution_sources import (
     build_final_execution_inputs,
@@ -45,8 +46,8 @@ from ashare_multifactor.final_test.execution_sources import (
 )
 from ashare_multifactor.final_test.execution_binding import (
     BoundExecutionInputs,
-    resolve_bound_execution_inputs,
-    validate_execution_input_candidate,
+    resolve_bound_execution_inputs_at,
+    validate_execution_input_candidate_at,
 )
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
@@ -67,6 +68,7 @@ from ashare_multifactor.final_test.publication_transaction import (
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
     opened_directory,
+    opened_directory_at,
     read_bytes_at,
 )
 from ashare_multifactor.final_test.release_input_staging import (
@@ -106,11 +108,12 @@ from ashare_multifactor.final_test.secure_attempt_staging import (
     ensure_attempt_root as _secure_ensure_attempt_root,
     entry_exists_at as _entry_exists_at,
     freeze_prepared_package as _freeze_prepared_package,
+    is_resumable_attempt_shell_at as _is_resumable_attempt_shell_at,
     json_bytes as _json_bytes,
     open_existing_attempt_directories as _open_existing_attempt_directories,
     replace_attempt_manifest as _replace_attempt_manifest,
     release_files_identity as _release_files_identity,
-    snapshot_attempt_panel as _snapshot_attempt_panel,
+    snapshot_attempt_panel_at as _snapshot_attempt_panel_at,
     verify_attempt_manifest_records as _verify_attempt_manifest_records,
     write_attempt_manifest as _secure_write_attempt_manifest,
     write_bytes_at as _write_bytes_at,
@@ -339,7 +342,7 @@ def _execute_authorized_final_test(
     final_root = data_root / "processed/final_test"
     registry_root = final_root / "attempts"
     root_binding.assert_bound()
-    if (final_root / "CURRENT.json").is_file():
+    if _entry_exists_fd(root_binding.final_fd, "CURRENT.json"):
         root_binding.assert_bound()
         return _recover_or_reject_current(
             final_root,
@@ -440,7 +443,11 @@ def _execute_authorized_final_test(
         root_binding=root_binding,
     )
     root_binding.assert_bound()
-    if not _is_resumable_attempt_shell(attempt_root, execution_identity):
+    if not _is_resumable_attempt_shell_at(
+        root_binding.final_fd,
+        attempt_id=authorization.attempt_id,
+        execution_identity=execution_identity,
+    ):
         recover_interrupted_execution(
             final_root,
             preflight=preflight,
@@ -480,8 +487,8 @@ def _execute_authorized_final_test(
                 root_binding=root_binding,
             )
             root_binding.assert_bound()
-            candidate = validate_execution_input_candidate(
-                final_root,
+            candidate = validate_execution_input_candidate_at(
+                root_binding.final_fd,
                 authorization,
                 execution_identity=execution_identity,
                 expected_primary_outputs=expected_primary_outputs,
@@ -492,17 +499,26 @@ def _execute_authorized_final_test(
                 identity=execution_identity,
                 manifest_sha256=candidate.manifest_sha256,
             )
-            bound_inputs = resolve_bound_execution_inputs(final_root, authorization)
+            bound_inputs = resolve_bound_execution_inputs_at(
+                root_binding.final_fd,
+                root_binding.attempts_fd,
+                authorization,
+            )
             root_binding.assert_bound()
         execution_manifest = dict(bound_inputs.manifest)
-        panel_resolution = resolve_final_test_data_panel(final_root)
-        panel_snapshot = _snapshot_attempt_panel(
+        panel_resolution = resolve_final_test_data_panel_at(
+            final_root, root_binding.final_fd
+        )
+        root_binding.assert_bound()
+        panel_snapshot = _snapshot_attempt_panel_at(
             panel_resolution.root,
+            panel_parent_fd=root_binding.final_fd,
             expected_manifest_sha256=panel_resolution.data_manifest_sha256,
             datasets_fd=attempt_directories.datasets_fd,
             staged_panel_root=datasets / "final_daily_panel",
             period=config.test,
         )
+        root_binding.assert_bound()
         _assert_attempt_directory(attempt_root, attempt_directories)
         signals = build_final_test_signals(
             authorization,
@@ -1042,7 +1058,11 @@ def _recover_or_reject_current(
         final_root, attempt_id=attempt_id, root_binding=root_binding
     ) as transaction:
         transaction.crosscheck_root(root_binding)
-        with opened_verified_current(final_root) as held:
+        with opened_verified_current_at(
+            final_root,
+            root_parent_fd=root_binding.processed_fd,
+            root_fd=root_binding.final_fd,
+        ) as held:
             transaction.crosscheck_current(held)
             release = held.release
             if release.run_id != run_id:
@@ -1056,6 +1076,7 @@ def _recover_or_reject_current(
                 held_release_files=held.files,
                 held_manifest=held.manifest,
                 transaction=transaction,
+                root_binding=root_binding,
             )
             held.assert_unchanged()
             transaction.recover_prepared(release)
@@ -1078,7 +1099,13 @@ def _recover_orphan_release(
     root_binding: FinalRootBinding,
 ) -> FinalTestPipelineResult | None:
     del registry_root
-    if not (final_root / "releases" / run_id).exists():
+    try:
+        with opened_directory_at(
+            root_binding.final_fd, "releases", label="final-test releases"
+        ) as releases_fd:
+            if not _entry_exists_fd(releases_fd, run_id):
+                return None
+    except FileNotFoundError:
         return None
     attempt_id = preflight.authorization.attempt_id
     with FinalPublicationTransaction.open(
@@ -1098,6 +1125,7 @@ def _recover_orphan_release(
                 held_release_files=release_files,
                 held_manifest=manifest,
                 transaction=transaction,
+                root_binding=root_binding,
             )
         except ValueError as error:
             raise ValueError("orphan final-test release identity differs") from error
@@ -1119,7 +1147,13 @@ def _verify_orphan_release(
     run_id: str,
     root_binding: FinalRootBinding,
 ) -> PublishedRelease | None:
-    if not (final_root / "releases" / run_id).exists():
+    try:
+        with opened_directory_at(
+            root_binding.final_fd, "releases", label="final-test releases"
+        ) as releases_fd:
+            if not _entry_exists_fd(releases_fd, run_id):
+                return None
+    except FileNotFoundError:
         return None
     attempt_id = preflight.authorization.attempt_id
     with FinalPublicationTransaction.open(
@@ -1139,6 +1173,7 @@ def _verify_orphan_release(
                 held_release_files=release_files,
                 held_manifest=manifest,
                 transaction=transaction,
+                root_binding=root_binding,
             )
         except ValueError as error:
             raise ValueError("orphan final-test release identity differs") from error
@@ -1166,6 +1201,7 @@ def _recover_prepared_staging(
             preflight=preflight,
             run_id=run_id,
             transaction=transaction,
+            root_binding=root_binding,
         )
         release = publish_release(
             transaction,
@@ -1193,6 +1229,7 @@ def _verify_complete_release_identity(
     held_release_files: Mapping[str, bytes] | None = None,
     held_manifest: Mapping[str, object] | None = None,
     transaction: FinalPublicationTransaction,
+    root_binding: FinalRootBinding,
 ) -> None:
     attempt_id = preflight.authorization.attempt_id
     attempt_root = final_root / "attempt_runs" / attempt_id
@@ -1203,6 +1240,7 @@ def _verify_complete_release_identity(
             preflight=preflight,
             run_id=run_id,
             transaction=transaction,
+            root_binding=root_binding,
         )
     )
     try:
@@ -1246,6 +1284,7 @@ def _verify_prepared_staging(
     preflight: ResumePreflight,
     run_id: str,
     transaction: FinalPublicationTransaction,
+    root_binding: FinalRootBinding,
 ) -> tuple[
     dict[str, object],
     dict[str, object],
@@ -1254,7 +1293,11 @@ def _verify_prepared_staging(
 ]:
     attempt_id = preflight.authorization.attempt_id
     final_root = attempt_root.parent.parent
-    opened_root, directories = _open_existing_attempt_directories(final_root, attempt_id=attempt_id)
+    opened_root, directories = _open_existing_attempt_directories(
+        final_root,
+        attempt_id=attempt_id,
+        root_binding=root_binding,
+    )
     try:
         datasets = read_frozen_tree_at(directories.datasets_fd, label="prepared datasets staging")
         panel_prefix = "final_daily_panel/"
@@ -1266,8 +1309,10 @@ def _verify_prepared_staging(
         package = _freeze_prepared_package(
             opened_root,
             lineage=None,
-            bound_input_files=resolve_bound_execution_inputs(
-                final_root, preflight.authorization
+            bound_input_files=resolve_bound_execution_inputs_at(
+                root_binding.final_fd,
+                root_binding.attempts_fd,
+                preflight.authorization,
             ).files,
             bound_panel_files=bound_panel_files,
             attempt_fd=directories.attempt_fd,
@@ -1413,13 +1458,23 @@ def _bind_or_resolve_existing_execution_inputs(
     expected_primary_outputs: Mapping[str, Mapping[str, object]],
     root_binding: FinalRootBinding,
 ) -> BoundExecutionInputs | None:
-    input_root = final_root / "attempt_inputs" / authorization.attempt_id
-    if input_root.is_symlink():
-        raise ValueError("execution-input root uses a symlink")
-    if not input_root.exists():
+    del final_root
+    try:
+        with opened_directory_at(
+            root_binding.final_fd,
+            "attempt_inputs",
+            label="execution-input parent",
+        ) as input_parent_fd:
+            with opened_directory_at(
+                input_parent_fd,
+                authorization.attempt_id,
+                label="execution-input root",
+            ):
+                pass
+    except FileNotFoundError:
         return None
-    candidate = validate_execution_input_candidate(
-        final_root,
+    candidate = validate_execution_input_candidate_at(
+        root_binding.final_fd,
         authorization,
         execution_identity=execution_identity,
         expected_primary_outputs=expected_primary_outputs,
@@ -1430,35 +1485,13 @@ def _bind_or_resolve_existing_execution_inputs(
         identity=execution_identity,
         manifest_sha256=candidate.manifest_sha256,
     )
-    result = resolve_bound_execution_inputs(final_root, authorization)
+    result = resolve_bound_execution_inputs_at(
+        root_binding.final_fd,
+        root_binding.attempts_fd,
+        authorization,
+    )
     root_binding.assert_bound()
     return result
-
-
-def _is_resumable_attempt_shell(
-    attempt_root: Path,
-    execution_identity: Mapping[str, object],
-) -> bool:
-    if attempt_root.is_symlink() or not attempt_root.is_dir():
-        return False
-    items = {path.name: path for path in attempt_root.iterdir()}
-    if set(items) != {"execution_identity.json", "datasets", "artifacts"}:
-        return False
-    if (
-        not items["datasets"].is_dir()
-        or items["datasets"].is_symlink()
-        or any(items["datasets"].iterdir())
-        or not items["artifacts"].is_dir()
-        or items["artifacts"].is_symlink()
-        or any(items["artifacts"].iterdir())
-        or items["execution_identity.json"].is_symlink()
-    ):
-        return False
-    try:
-        stored = json.loads(items["execution_identity.json"].read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return False
-    return stored == dict(execution_identity)
 
 
 def _assert_safe_release_tree(
@@ -1726,18 +1759,16 @@ def _upstream_identity(
     *,
     staged_root: Path,
 ) -> dict[str, object]:
-    final_root = data_root / "processed/final_test"
-    if (final_root / "data-build-claim.json").is_file():
-        resolution = resolve_final_test_data_panel(final_root)
-        final_data = [
-            file_record(path, root=data_root, role="final_test_data_input").to_dict()
-            for path in (
-                resolution.root / "data_manifest.json",
-                resolution.root / "input_files.json",
-            )
-        ]
-    else:
-        raise ValueError("final-test data identity is incomplete")
+    staged_panel = staged_root / "datasets/final_daily_panel"
+    final_data = []
+    for name in ("data_manifest.json", "input_files.json"):
+        record = file_record(
+            staged_panel / name,
+            root=staged_root,
+            role="final_test_data_input",
+        ).to_dict()
+        record["path"] = f"processed/final_test/daily_panel/{name}"
+        final_data.append(record)
     staged_inputs = [
         file_record(path, root=staged_root, role="self_contained_final_input").to_dict()
         for path in sorted(

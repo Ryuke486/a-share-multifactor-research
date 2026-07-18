@@ -354,29 +354,50 @@ def snapshot_attempt_panel(
     period: Period,
 ) -> FrozenPanelSnapshot:
     with opened_directory(panel_root.parent, label="final daily panel parent") as panel_parent_fd:
-        with opened_directory_at(
-            panel_parent_fd, panel_root.name, label="final daily panel"
-        ) as panel_fd:
-            panel_identity = directory_identity(panel_fd)
-            manifest = read_bytes_at(
-                panel_fd,
-                "data_manifest.json",
-                label="final daily panel manifest",
-            )
-            if hashlib.sha256(manifest).hexdigest() != expected_manifest_sha256:
-                raise ValueError("final daily panel manifest identity differs")
-            copy_frozen_tree_at(
-                panel_fd,
-                datasets_fd,
-                staged_panel_root.name,
-                label="attempt-bound final daily panel",
-            )
-            assert_directory_entry(
-                panel_parent_fd,
-                panel_root.name,
-                expected=panel_identity,
-                label="final daily panel",
-            )
+        snapshot = snapshot_attempt_panel_at(
+            panel_root,
+            panel_parent_fd=panel_parent_fd,
+            expected_manifest_sha256=expected_manifest_sha256,
+            datasets_fd=datasets_fd,
+            staged_panel_root=staged_panel_root,
+            period=period,
+        )
+        return snapshot
+
+
+def snapshot_attempt_panel_at(
+    panel_root: Path,
+    *,
+    panel_parent_fd: int,
+    expected_manifest_sha256: str,
+    datasets_fd: int,
+    staged_panel_root: Path,
+    period: Period,
+) -> FrozenPanelSnapshot:
+    """Snapshot a panel through its already-bound parent descriptor."""
+    with opened_directory_at(
+        panel_parent_fd, panel_root.name, label="final daily panel"
+    ) as panel_fd:
+        panel_identity = directory_identity(panel_fd)
+        manifest = read_bytes_at(
+            panel_fd,
+            "data_manifest.json",
+            label="final daily panel manifest",
+        )
+        if hashlib.sha256(manifest).hexdigest() != expected_manifest_sha256:
+            raise ValueError("final daily panel manifest identity differs")
+        copy_frozen_tree_at(
+            panel_fd,
+            datasets_fd,
+            staged_panel_root.name,
+            label="attempt-bound final daily panel",
+        )
+        assert_directory_entry(
+            panel_parent_fd,
+            panel_root.name,
+            expected=panel_identity,
+            label="final daily panel",
+        )
     snapshot = bind_panel_snapshot(
         staged_panel_root,
         datasets_fd=datasets_fd,
@@ -488,6 +509,27 @@ def entry_exists_at(directory_fd: int, name: str) -> bool:
     except FileNotFoundError:
         return False
     return True
+
+
+def is_resumable_attempt_shell_at(
+    final_fd: int,
+    *,
+    attempt_id: str,
+    execution_identity: Mapping[str, object],
+) -> bool:
+    """Inspect an attempt shell without reopening the named final-test root."""
+    try:
+        with opened_directory_at(
+            final_fd, "attempt_runs", label="attempt-runs root"
+        ) as parent_fd:
+            with opened_directory_at(
+                parent_fd, attempt_id, label="attempt staging root"
+            ) as attempt_fd:
+                return _is_resumable_attempt_shell_at(
+                    attempt_fd, execution_identity
+                )
+    except (FileNotFoundError, ValueError):
+        return False
 
 
 def json_bytes(payload: Mapping[str, object]) -> bytes:

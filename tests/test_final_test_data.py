@@ -529,6 +529,45 @@ def test_data_manifest_binds_stage_two_manifest_inventory_and_quality(
         verify_final_test_data_panel(root)
 
 
+def test_bound_data_resolver_never_reads_or_locks_replacement_root(
+    tmp_path: Path,
+) -> None:
+    from ashare_multifactor.final_test.data_publication import (
+        resolve_final_test_data_panel_at,
+    )
+    from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    _build(config, authorization, code_root)
+    final_root = config.paths.processed / "final_test"
+    displaced = tmp_path / "bound-final-root-a"
+
+    with FinalRootBinding.open(final_root) as binding:
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        (final_root / ".data-claim.publication.lock").unlink(missing_ok=True)
+        before = {
+            path.relative_to(final_root).as_posix(): path.read_bytes()
+            for path in final_root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+
+        resolution = resolve_final_test_data_panel_at(final_root, binding.final_fd)
+
+        after = {
+            path.relative_to(final_root).as_posix(): path.read_bytes()
+            for path in final_root.rglob("*")
+            if path.is_file() and not path.is_symlink()
+        }
+        assert resolution.data_manifest_sha256 == sha256_file(
+            displaced / "daily_panel/data_manifest.json"
+        )
+        assert after == before
+        assert not (final_root / ".data-claim.publication.lock").exists()
+
+
 def test_post_publish_claim_failure_retains_resolvable_publishing_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

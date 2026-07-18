@@ -29,6 +29,7 @@ from ashare_multifactor.final_test.action_source_contract import (
     build_execution_input_manifest,
 )
 from ashare_multifactor.final_test import pipeline as pipeline_module
+from ashare_multifactor.final_test import data_publication as data_publication_module
 from ashare_multifactor.final_test import secure_attempt_staging as staging_module
 from ashare_multifactor.final_test import coverage_snapshot as coverage_module
 from ashare_multifactor.final_test import interrupted_recovery as recovery_module
@@ -350,6 +351,10 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
         "build_final_report": report,
         "_copy_release_inputs": copy_inputs,
         "resolve_final_test_data_panel": lambda final_root: SimpleNamespace(
+            root=final_root / "daily_panel",
+            data_manifest_sha256=sha256_file(final_root / "daily_panel/data_manifest.json"),
+        ),
+        "resolve_final_test_data_panel_at": lambda final_root, _final_fd: SimpleNamespace(
             root=final_root / "daily_panel",
             data_manifest_sha256=sha256_file(final_root / "daily_panel/data_manifest.json"),
         ),
@@ -3038,7 +3043,11 @@ def test_interrupted_recovery_never_touches_replacement_tree(
         return recover(*args, **kwargs)
 
     monkeypatch.setattr(pipeline_module, "recover_interrupted_execution", replace_then_recover)
-    monkeypatch.setattr(pipeline_module, "_is_resumable_attempt_shell", lambda *_: False)
+    monkeypatch.setattr(
+        pipeline_module,
+        "_is_resumable_attempt_shell_at",
+        lambda *_args, **_kwargs: False,
+    )
     with pytest.raises(ValueError, match="identity changed|descriptor chain"):
         pipeline_module.resume_final_test_release(
             code_root=prepared_attempt.code_root,
@@ -3051,6 +3060,225 @@ def test_interrupted_recovery_never_touches_replacement_tree(
         )
 
     assert not (final_root / "interrupted_runs").exists()
+
+
+def _namespace_inventory(root: Path) -> tuple[set[str], dict[str, bytes]]:
+    entries = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+    }
+    files = {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file() and not path.is_symlink()
+    }
+    return entries, files
+
+
+def _remove_replacement_publication_locks(root: Path) -> None:
+    for relative in (
+        ".CURRENT.publication.lock",
+        ".data-claim.publication.lock",
+    ):
+        try:
+            (root / relative).unlink()
+        except FileNotFoundError:
+            pass
+
+
+def test_normal_bound_data_resolver_never_reads_or_locks_replacement_root(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    data_manifest = final_root / "daily_panel/data_manifest.json"
+    (final_root / "data-build-claim.json").write_text(
+        json.dumps(
+            {
+                "status": "published",
+                "data_manifest": {
+                    "relative_path": "daily_panel/data_manifest.json",
+                    "sha256": sha256_file(data_manifest),
+                    "size_bytes": data_manifest.stat().st_size,
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    displaced = tmp_path / "normal-bound-root-a"
+    replacement_before: tuple[set[str], dict[str, bytes]] | None = None
+    replaced = False
+
+    def replace_before_data_resolution() -> None:
+        nonlocal replaced, replacement_before
+        if replaced:
+            return
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        _remove_replacement_publication_locks(final_root)
+        claim_path = final_root / "data-build-claim.json"
+        claim = json.loads(claim_path.read_text(encoding="utf-8"))
+        claim["status"] = "failed"
+        claim_path.write_text(json.dumps(claim) + "\n", encoding="utf-8")
+        replacement_before = _namespace_inventory(final_root)
+        replaced = True
+
+    def resolve_path(*args: object, **kwargs: object):
+        replace_before_data_resolution()
+        return data_publication_module.resolve_final_test_data_panel(
+            *args, **kwargs
+        )
+
+    monkeypatch.setattr(
+        pipeline_module, "resolve_final_test_data_panel", resolve_path
+    )
+    if hasattr(pipeline_module, "resolve_final_test_data_panel_at"):
+
+        def resolve_at(*args: object, **kwargs: object):
+            del args, kwargs
+            replace_before_data_resolution()
+            return SimpleNamespace(
+                root=displaced / "daily_panel",
+                data_manifest_sha256=sha256_file(
+                    displaced / "daily_panel/data_manifest.json"
+                ),
+            )
+
+        monkeypatch.setattr(
+            pipeline_module, "resolve_final_test_data_panel_at", resolve_at
+        )
+
+    with pytest.raises(
+        ValueError, match="final-test root.*identity|namespace"
+    ) as caught:
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    assert replacement_before is not None, str(caught.value)
+    assert _namespace_inventory(final_root) == replacement_before
+    assert not (final_root / ".data-claim.publication.lock").exists()
+    assert not (
+        displaced
+        / "attempts"
+        / f"{prepared_attempt.attempt_id}.outcome.json"
+    ).exists()
+
+
+@pytest.mark.parametrize("recovery_mode", ["prepared", "orphan", "current"])
+def test_bound_recovery_resolvers_never_read_or_lock_replacement_root(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    recovery_mode: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+    if recovery_mode == "prepared":
+
+        def interrupt(*_args: object, **_kwargs: object):
+            raise KeyboardInterrupt("after prepared validation")
+    elif recovery_mode == "orphan":
+
+        def interrupt(*args: object, **kwargs: object):
+            return publish(*args, **kwargs, fail_before_switch=True)
+    else:
+
+        def interrupt(*args: object, **kwargs: object):
+            publish(*args, **kwargs)
+            raise KeyboardInterrupt("after CURRENT")
+
+    monkeypatch.setattr(pipeline_module, "publish_release", interrupt)
+    with pytest.raises((KeyboardInterrupt, RuntimeError)):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    displaced = tmp_path / f"{recovery_mode}-bound-root-a"
+    replacement_before: tuple[set[str], dict[str, bytes]] | None = None
+    replaced = False
+
+    def replace_root() -> None:
+        nonlocal replaced, replacement_before
+        if replaced:
+            return
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        _remove_replacement_publication_locks(final_root)
+        if recovery_mode in {"prepared", "orphan"}:
+            manifest = (
+                final_root
+                / "attempt_inputs"
+                / prepared_attempt.attempt_id
+                / "manifest.json"
+            )
+            manifest.write_bytes(b"{invalid replacement manifest")
+        replacement_before = _namespace_inventory(final_root)
+        replaced = True
+    if recovery_mode in {"prepared", "orphan"}:
+        verify = pipeline_module._verify_prepared_staging
+
+        def verify_after_replacement(*args: object, **kwargs: object):
+            replace_root()
+            return verify(*args, **kwargs)
+
+        monkeypatch.setattr(
+            pipeline_module,
+            "_verify_prepared_staging",
+            verify_after_replacement,
+        )
+    else:
+        crosscheck = pipeline_module.FinalPublicationTransaction.crosscheck_root
+
+        def crosscheck_before_current(
+            transaction: object, binding: object
+        ) -> None:
+            crosscheck(transaction, binding)
+            replace_root()
+
+        monkeypatch.setattr(
+            pipeline_module.FinalPublicationTransaction,
+            "crosscheck_root",
+            crosscheck_before_current,
+        )
+
+    with pytest.raises(
+        ValueError, match="identity changed|namespace|descriptor chain"
+    ) as caught:
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    assert "claimed final-test root namespace identity changed" in str(caught.value)
+    assert replacement_before is not None
+    assert _namespace_inventory(final_root) == replacement_before
+    assert not (final_root / ".CURRENT.publication.lock").exists()
+    assert not (final_root / ".data-claim.publication.lock").exists()
+    outcome = displaced / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json"
+    assert not outcome.exists()
 
 
 @pytest.mark.parametrize("replacement", ["attempts", "final_test", "processed", "data_root"])

@@ -534,17 +534,39 @@ def opened_verified_current(root: Path) -> Iterator[HeldPublishedRelease]:
             os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
             dir_fd=root_parent_fd,
         )
-        with publication_read_lock_at(root_fd, _CURRENT_PUBLICATION_LOCK):
-            with _opened_verified_current_locked(
-                root,
-                root_parent_fd=root_parent_fd,
-                root_fd=root_fd,
-            ) as held:
-                yield held
+        with opened_verified_current_at(
+            root,
+            root_parent_fd=root_parent_fd,
+            root_fd=root_fd,
+        ) as held:
+            yield held
     finally:
         if root_fd is not None:
             os.close(root_fd)
         os.close(root_parent_fd)
+
+
+@contextmanager
+def opened_verified_current_at(
+    root: Path,
+    *,
+    root_parent_fd: int,
+    root_fd: int,
+) -> Iterator[HeldPublishedRelease]:
+    """Verify CURRENT below caller-held descriptors without reopening its root."""
+    held_parent_fd = os.dup(root_parent_fd)
+    held_root_fd = os.dup(root_fd)
+    try:
+        with publication_read_lock_at(held_root_fd, _CURRENT_PUBLICATION_LOCK):
+            with _opened_verified_current_locked(
+                root,
+                root_parent_fd=held_parent_fd,
+                root_fd=held_root_fd,
+            ) as held:
+                yield held
+    finally:
+        os.close(held_root_fd)
+        os.close(held_parent_fd)
 
 
 @contextmanager

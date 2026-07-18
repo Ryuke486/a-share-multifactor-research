@@ -63,3 +63,24 @@
 - [x] Run full pytest, full ruff, and `git diff --check`.
 - [x] Append exact test evidence and the local commit to the remediation report.
 - [x] Commit only the reviewed remediation files and confirm tracked worktree cleanliness.
+
+### Task 4: Bound resolver closure after independent final review
+
+**Files:**
+- Modify: `src/ashare_multifactor/audit/publication.py`
+- Modify: `src/ashare_multifactor/final_test/data_inventory.py`
+- Modify: `src/ashare_multifactor/final_test/data_publication.py`
+- Modify: `src/ashare_multifactor/final_test/pipeline.py`
+- Modify: `src/ashare_multifactor/final_test/secure_attempt_staging.py`
+- Test: `tests/test_final_test_data.py`
+- Test: `tests/test_final_test_pipeline.py`
+
+**Interfaces:**
+- Produces: `opened_verified_current_at(root, root_parent_fd, root_fd)` and `resolve_final_test_data_panel_at(final_root, final_fd)`.
+- Consumes: the existing `FinalRootBinding.final_fd`, `.attempts_fd`, `open_existing_attempt_directories(..., root_binding=...)`, and `resolve_bound_execution_inputs_at(...)`.
+
+- [x] Add normal/prepared/orphan/CURRENT recovery tests that replace canonical `final_test` with B, remove B lock files, and record both A/B inventories.
+- [x] Confirm the old Path resolvers create a lock or other entry in B and never silently write B-derived failure/success into A.
+- [x] Route every post-claim CURRENT, data-panel, attempt-directory, and execution-input read through caller-held descriptors.
+- [x] Run the four-mode focused tests, all final-test recovery/publication tests, full pytest, ruff, and diff checks.
+- [x] Append exact evidence to the ignored remediation report and create one local commit without resealing.
