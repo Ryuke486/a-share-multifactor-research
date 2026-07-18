@@ -527,6 +527,7 @@ def _execute_authorized_final_test(
             final_root=final_root,
             panel_snapshot=panel_snapshot,
             registry_fd=root_binding.attempts_fd,
+            root_binding=root_binding,
         )
         backtest = run_final_test_backtest(
             authorization,
@@ -536,6 +537,7 @@ def _execute_authorized_final_test(
             panel_snapshot=panel_snapshot,
             execution_inputs=bound_inputs,
             registry_fd=root_binding.attempts_fd,
+            root_binding=root_binding,
         )
         _write_attempt_core(
             attempt_directories.datasets_fd,

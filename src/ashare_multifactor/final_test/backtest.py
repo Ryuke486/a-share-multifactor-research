@@ -26,8 +26,10 @@ from ashare_multifactor.final_test.execution_contracts import (
 from ashare_multifactor.final_test.execution_binding import (
     BoundExecutionInputs,
     resolve_bound_execution_inputs,
+    resolve_bound_execution_inputs_at,
     verify_bound_execution_inputs_at,
 )
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
     FINAL_TEST_START,
@@ -84,6 +86,7 @@ def run_final_test_backtest(
     panel_snapshot: FrozenPanelSnapshot | None = None,
     execution_inputs: BoundExecutionInputs | None = None,
     registry_fd: int | None = None,
+    root_binding: FinalRootBinding | None = None,
 ) -> FinalTestBacktestResult:
     """Fail closed until the sealed fee and execution-input contracts are complete."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -93,8 +96,18 @@ def run_final_test_backtest(
     if not isinstance(signals, FinalTestSignals):
         raise TypeError("signals must be FinalTestSignals from Task 3")
     code_root = code_root.resolve()
-    final_root = final_root.resolve()
-    config = _load_frozen_config(code_root, final_root.parent.parent)
+    if root_binding is None:
+        final_root = final_root.resolve()
+        data_root = final_root.parent.parent
+    else:
+        root_binding.assert_bound()
+        if final_root.absolute() != root_binding.final_root.absolute():
+            raise ValueError("held final-test root differs from backtest root")
+        if registry_fd is not None and registry_fd != root_binding.attempts_fd:
+            raise ValueError("backtest registry descriptor differs from held final-test root")
+        registry_fd = root_binding.attempts_fd
+        data_root = root_binding.final_root.parent.parent
+    config = _load_frozen_config(code_root, data_root)
     _validate_final_targets(
         signals.target_weights, supported_markets=config.supported_markets
     )
@@ -114,9 +127,16 @@ def run_final_test_backtest(
     verified_execution_inputs = execution_inputs
     if verified_execution_inputs is None:
         try:
-            verified_execution_inputs = resolve_bound_execution_inputs(
-                final_root, authorization
-            )
+            if root_binding is None:
+                verified_execution_inputs = resolve_bound_execution_inputs(
+                    final_root, authorization
+                )
+            else:
+                verified_execution_inputs = resolve_bound_execution_inputs_at(
+                    root_binding.final_fd,
+                    root_binding.attempts_fd,
+                    authorization,
+                )
         except (FileNotFoundError, TypeError, ValueError) as error:
             failures.append(str(error))
     else:
@@ -140,6 +160,7 @@ def run_final_test_backtest(
         authorization,
         config.test,
         panel_snapshot=panel_snapshot,
+        root_binding=root_binding,
     )
     try:
         inputs = _resolve_verified_inputs(
@@ -147,7 +168,7 @@ def run_final_test_backtest(
             signals,
             authorization=authorization,
             code_root=code_root,
-            final_root=final_root,
+            final_root=(root_binding.final_root if root_binding is not None else final_root),
             supported_markets=config.supported_markets,
             verified_execution_inputs=verified_execution_inputs,
         )

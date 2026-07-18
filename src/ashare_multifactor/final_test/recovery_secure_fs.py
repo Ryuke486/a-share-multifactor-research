@@ -172,6 +172,17 @@ def no_follow_flag() -> int:
     return value
 
 
+def descriptor_path(descriptor: int) -> Path:
+    """Return a path alias for one already-open descriptor.
+
+    This is only for APIs which accept a path spelling but never traverse a
+    child of that spelling.  Namespace-sensitive filesystem work must still
+    use the ``*_at`` primitives above.
+    """
+    proc = Path("/proc/self/fd")
+    return (proc if proc.exists() else Path("/dev/fd")) / str(descriptor)
+
+
 def directory_identity(descriptor: int) -> tuple[int, int]:
     metadata = os.fstat(descriptor)
     if not stat.S_ISDIR(metadata.st_mode):

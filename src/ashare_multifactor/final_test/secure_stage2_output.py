@@ -8,7 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 from uuid import uuid4
 
 import polars as pl
@@ -22,6 +22,9 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     open_directory_path,
     write_bytes_exclusive_at,
 )
+
+if TYPE_CHECKING:
+    from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 
 
 @dataclass
@@ -40,11 +43,18 @@ class Stage2Directories:
     attempt_identity: tuple[int, int]
     validation_identity: tuple[int, int]
     final_name: str
+    processed_name: str
     attempt_name: str
     data_root_name: str
+    root_binding: FinalRootBinding | None = None
     ancestors_removed: bool = False
 
     def assert_bound(self) -> None:
+        if self.root_binding is not None:
+            self.root_binding.crosscheck(
+                processed_fd=self.processed_fd,
+                final_identity=self.final_identity,
+            )
         assert_directory_entry(
             self.data_root_parent_fd,
             self.data_root_name,
@@ -53,7 +63,7 @@ class Stage2Directories:
         )
         assert_directory_entry(
             self.data_root_fd,
-            "processed",
+            self.processed_name,
             expected=self.processed_identity,
             label="final-test processed root",
         )
@@ -100,46 +110,73 @@ class Stage2Directories:
 
 @contextmanager
 def opened_stage2_directories(
-    final_root: Path, attempt_id: str
+    final_root: Path,
+    attempt_id: str,
+    *,
+    root_binding: FinalRootBinding | None = None,
 ) -> Iterator[Stage2Directories]:
     with _opened_stage2_directories(
-        final_root, attempt_id, require_empty=True
+        final_root,
+        attempt_id,
+        require_empty=True,
+        root_binding=root_binding,
     ) as directories:
         yield directories
 
 
 @contextmanager
 def opened_existing_stage2_directories(
-    final_root: Path, attempt_id: str
+    final_root: Path,
+    attempt_id: str,
+    *,
+    root_binding: FinalRootBinding | None = None,
 ) -> Iterator[Stage2Directories]:
     with _opened_stage2_directories(
-        final_root, attempt_id, require_empty=False
+        final_root,
+        attempt_id,
+        require_empty=False,
+        root_binding=root_binding,
     ) as directories:
         yield directories
 
 
 @contextmanager
 def _opened_stage2_directories(
-    final_root: Path, attempt_id: str, *, require_empty: bool
+    final_root: Path,
+    attempt_id: str,
+    *,
+    require_empty: bool,
+    root_binding: FinalRootBinding | None,
 ) -> Iterator[Stage2Directories]:
     data_root = final_root.parent.parent
-    data_root_parent_fd = open_directory_path(
-        data_root.parent, label="final-test data-root parent"
-    )
+    if root_binding is not None:
+        if final_root.absolute() != root_binding.final_root.absolute():
+            raise ValueError("held final-test root differs from Stage-2 root")
+        root_binding.assert_bound()
+        data_root_parent_fd = os.dup(root_binding.data_parent_fd)
+    else:
+        data_root_parent_fd = open_directory_path(
+            data_root.parent, label="final-test data-root parent"
+        )
     data_root_fd: int | None = None
     processed_fd: int | None = None
     final_fd: int | None = None
     descriptors: list[int] = []
     try:
-        data_root_fd = open_directory_at(
-            data_root_parent_fd, data_root.name, label="final-test data root"
-        )
-        processed_fd = open_directory_at(
-            data_root_fd, "processed", label="final-test processed root"
-        )
-        final_fd = open_directory_at(
-            processed_fd, final_root.name, label="final-test root"
-        )
+        if root_binding is None:
+            data_root_fd = open_directory_at(
+                data_root_parent_fd, data_root.name, label="final-test data root"
+            )
+            processed_fd = open_directory_at(
+                data_root_fd, final_root.parent.name, label="final-test processed root"
+            )
+            final_fd = open_directory_at(
+                processed_fd, final_root.name, label="final-test root"
+            )
+        else:
+            data_root_fd = os.dup(root_binding.data_fd)
+            processed_fd = os.dup(root_binding.processed_fd)
+            final_fd = os.dup(root_binding.final_fd)
         current_fd = final_fd
         for part in ("data-staging", attempt_id, "validation_evaluation"):
             if require_empty:
@@ -172,8 +209,10 @@ def _opened_stage2_directories(
             attempt_identity=directory_identity(attempt_fd),
             validation_identity=directory_identity(validation_fd),
             final_name=final_root.name,
+            processed_name=final_root.parent.name,
             attempt_name=attempt_id,
             data_root_name=data_root.name,
+            root_binding=root_binding,
         )
         directories_value.assert_bound()
         yield directories_value

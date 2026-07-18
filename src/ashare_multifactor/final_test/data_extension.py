@@ -28,6 +28,7 @@ from ashare_multifactor.final_test.data_publication import (
     read_data_claim_bytes,
     read_data_claim_bytes_at,
     resolve_final_test_data_panel,
+    resolve_final_test_data_panel_at,
     update_claim as _update_claim_path,
     update_claim_at as _update_claim_at,
 )
@@ -45,6 +46,7 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     assert_directory_entry,
     atomic_rename_no_replace_at,
     directory_identity,
+    descriptor_path,
     open_directory_at,
     opened_directory,
     opened_directory_at,
@@ -115,9 +117,14 @@ def build_final_test_daily_panel(
     if (config.test.start, config.test.end) != sealed_period:
         raise ValueError("configured test period differs from the sealed final-test period")
 
-    final_root, target = _validate_target_paths(config)
+    final_root, target = _validate_target_paths(config, root_binding=root_binding)
     _assert_root_binding(root_binding)
-    _verify_authorization(config, authorization, code_root)
+    _verify_authorization(
+        config,
+        authorization,
+        code_root,
+        registry_fd=(root_binding.attempts_fd if root_binding is not None else None),
+    )
     claim_path = final_root / "data-build-claim.json"
     claim_exists = (
         claim_path.exists() or claim_path.is_symlink()
@@ -127,7 +134,7 @@ def build_final_test_daily_panel(
     if claim_exists:
         raise ValueError("final-test data build is already claimed")
     inventory_root = final_root / "data-build-inputs"
-    if inventory_root.is_symlink():
+    if root_binding is None and inventory_root.is_symlink():
         raise ValueError("final-test bound input inventory path uses a symlink")
     inventory_fd: int | None = None
     if root_binding is None:
@@ -333,24 +340,33 @@ def _build_claimed_panel(
 ) -> BuildManifest:
     processed = config.paths.processed
     temporary_processed = processed / "final_test/data-staging" / authorization.attempt_id
-    if temporary_processed.is_symlink():
-        raise ValueError("final-test data staging path uses a symlink")
-    if temporary_processed.exists() and not _is_empty_stage2_shell(temporary_processed):
-        raise FileExistsError("final-test data staging requires recovery")
-    temporary_target = temporary_processed / "validation_evaluation/daily_panel"
-    build_config = replace(
-        config,
-        paths=replace(config.paths, processed=temporary_processed),
-        validation=config.test,
-    )
+    if root_binding is None:
+        if temporary_processed.is_symlink():
+            raise ValueError("final-test data staging path uses a symlink")
+        if temporary_processed.exists() and not _is_empty_stage2_shell(temporary_processed):
+            raise FileExistsError("final-test data staging requires recovery")
     published = False
     bound_panel: FrozenPanelSnapshot | None = None
     try:
         with opened_stage2_directories(
-            target.parent, authorization.attempt_id
+            target.parent,
+            authorization.attempt_id,
+            root_binding=root_binding,
         ) as stage2_directories:
             _crosscheck_stage2_root(root_binding, stage2_directories)
             _assert_claim_inventory_at(stage2_directories.final_fd, authorization, inventory)
+            if root_binding is None:
+                temporary_target = temporary_processed / "validation_evaluation/daily_panel"
+            else:
+                temporary_processed = descriptor_path(stage2_directories.attempt_fd)
+                temporary_target = (
+                    temporary_processed / "validation_evaluation/daily_panel"
+                )
+            build_config = replace(
+                config,
+                paths=replace(config.paths, processed=temporary_processed),
+                validation=config.test,
+            )
             with SecureStage2Output(
                 stage2_directories.validation_fd, temporary_target.name
             ) as secure_output:
@@ -374,8 +390,13 @@ def _build_claimed_panel(
                 target_parent_fd=stage2_directories.validation_fd,
             )
             stage2_directories.assert_bound()
-            _validate_target_paths(config)
-            if target.exists() or target.is_symlink():
+            _validate_target_paths(config, root_binding=root_binding)
+            target_exists = (
+                target.exists() or target.is_symlink()
+                if root_binding is None
+                else _entry_exists(stage2_directories.final_fd, target.name)
+            )
+            if target_exists:
                 raise FileExistsError(f"final-test daily panel already exists: {target}")
             _update_claim(
                 claim_path,
@@ -717,7 +738,12 @@ def recover_final_test_daily_panel(
     """Recover the same claim and exact bound inputs without new discovery."""
     if (start, end) != (FINAL_TEST_START, FINAL_TEST_END):
         raise ValueError("build dates must equal the exact final-test period")
-    _verify_authorization(config, authorization, code_root)
+    _verify_authorization(
+        config,
+        authorization,
+        code_root,
+        registry_fd=(root_binding.attempts_fd if root_binding is not None else None),
+    )
     final_root = config.paths.processed / "final_test"
     _assert_root_binding(root_binding)
     target = final_root / "daily_panel"
@@ -736,7 +762,7 @@ def recover_final_test_daily_panel(
     if status == "failed":
         raise ValueError("final-test data claim is failed and cannot be recovered")
     if status == "published":
-        resolution = resolve_final_test_data_panel(final_root)
+        resolution = _resolve_data_panel(final_root, root_binding=root_binding)
         _assert_root_binding(root_binding)
         return resolution
     if status == "publishing":
@@ -755,7 +781,7 @@ def recover_final_test_daily_panel(
             period=Period(start, end),
             root_binding=root_binding,
         )
-        resolution = resolve_final_test_data_panel(final_root)
+        resolution = _resolve_data_panel(final_root, root_binding=root_binding)
         _assert_root_binding(root_binding)
         return resolution
     if status != "claimed":
@@ -766,9 +792,12 @@ def recover_final_test_daily_panel(
         else _load_claim_inventory_at(root_binding.final_fd, claim)
     )
     pairs = load_bound_input_pairs(config, inventory, start=start, end=end)
-    staging = _claim_staging_path(final_root, claim)
-    if staging.exists() and staging != final_root / "data-staging" / authorization.attempt_id:
-        raise ValueError("final-test data staging identity differs")
+    if root_binding is None:
+        staging = _claim_staging_path(final_root, claim)
+        if staging.exists() and staging != final_root / "data-staging" / authorization.attempt_id:
+            raise ValueError("final-test data staging identity differs")
+    else:
+        _assert_claim_staging_relative_path(claim, authorization)
     _build_claimed_panel(
         config,
         authorization,
@@ -780,7 +809,7 @@ def recover_final_test_daily_panel(
         pairs=pairs,
         root_binding=root_binding,
     )
-    resolution = resolve_final_test_data_panel(final_root)
+    resolution = _resolve_data_panel(final_root, root_binding=root_binding)
     _assert_root_binding(root_binding)
     return resolution
 
@@ -891,14 +920,29 @@ def _recover_publishing_claim(
     if not isinstance(expected_manifest_sha256, str):
         raise ValueError("publishing claim lacks bound data manifest identity")
     with opened_existing_stage2_directories(
-        final_root, authorization.attempt_id
+        final_root,
+        authorization.attempt_id,
+        root_binding=root_binding,
     ) as stage2_directories:
         _crosscheck_stage2_root(root_binding, stage2_directories)
         _assert_claim_inventory_at(stage2_directories.final_fd, authorization, inventory)
-        if not target.exists():
-            staging_target = (
-                _claim_staging_path(final_root, claim) / "validation_evaluation/daily_panel"
+        target_exists = (
+            target.exists() if root_binding is None else _entry_exists(
+                stage2_directories.final_fd, target.name
             )
+        )
+        if not target_exists:
+            if root_binding is None:
+                staging_target = (
+                    _claim_staging_path(final_root, claim)
+                    / "validation_evaluation/daily_panel"
+                )
+            else:
+                _assert_claim_staging_relative_path(claim, authorization)
+                staging_target = (
+                    descriptor_path(stage2_directories.attempt_fd)
+                    / "validation_evaluation/daily_panel"
+                )
             snapshot = bind_panel_snapshot(
                 staging_target,
                 datasets_fd=stage2_directories.validation_fd,
@@ -926,7 +970,7 @@ def _recover_publishing_claim(
             stage2_directories.assert_bound()
             _crosscheck_stage2_root(root_binding, stage2_directories)
             stage2_directories.assert_published(snapshot.root_identity)
-            resolution = resolve_final_test_data_panel(final_root)
+            resolution = _resolve_data_panel(final_root, root_binding=root_binding)
             if not resolution.requires_recovery:
                 raise ValueError("publishing final-test data claim recovery state is inconsistent")
             _update_claim(
@@ -952,6 +996,28 @@ def _recover_publishing_claim(
 def _assert_root_binding(root_binding: FinalRootBinding | None) -> None:
     if root_binding is not None:
         root_binding.assert_bound()
+
+
+def _resolve_data_panel(
+    final_root: Path,
+    *,
+    root_binding: FinalRootBinding | None,
+) -> FinalTestDataResolution:
+    if root_binding is None:
+        return resolve_final_test_data_panel(final_root)
+    root_binding.assert_bound()
+    resolution = resolve_final_test_data_panel_at(final_root, root_binding.final_fd)
+    root_binding.assert_bound()
+    return resolution
+
+
+def _assert_claim_staging_relative_path(
+    claim: dict[str, object], authorization: FinalTestAuthorization
+) -> None:
+    relative = claim.get("staging_relative_path")
+    expected = f"data-staging/{authorization.attempt_id}"
+    if relative != expected:
+        raise ValueError("final-test data staging identity differs")
 
 
 def _crosscheck_stage2_root(
@@ -1070,10 +1136,28 @@ def _verify_authorization(
         raise ValueError("canonical final-test attempt record differs from authorization")
 
 
-def _validate_target_paths(config: ResearchConfig) -> tuple[Path, Path]:
+def _validate_target_paths(
+    config: ResearchConfig,
+    *,
+    root_binding: FinalRootBinding | None = None,
+) -> tuple[Path, Path]:
     processed = config.paths.processed
     final_root = processed / "final_test"
     target = final_root / "daily_panel"
+    if root_binding is not None:
+        root_binding.assert_bound()
+        configured_final = Path(os.path.abspath(processed)) / "final_test"
+        if configured_final != root_binding.final_root.absolute():
+            raise ValueError("configured processed path differs from held final-test root")
+        for raw in (
+            config.paths.raw_unadjusted.resolve(),
+            config.paths.raw_backward_adjusted.resolve(),
+        ):
+            if _paths_overlap(root_binding.final_root.absolute(), raw):
+                raise ValueError("final-test output path overlaps raw input")
+        if _entry_exists(root_binding.final_fd, "daily_panel"):
+            raise FileExistsError(f"final-test daily panel already exists: {target}")
+        return root_binding.final_root, root_binding.final_root / "daily_panel"
     if processed.is_symlink() or final_root.is_symlink() or target.is_symlink():
         raise ValueError("final-test output path uses a symlink alias")
     processed_resolved = processed.resolve()

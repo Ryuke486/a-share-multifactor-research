@@ -193,9 +193,12 @@ def _complete_preparation(
     root_binding.assert_bound()
     config = _load_frozen_config(code_root, data_root)
     root_binding.assert_bound()
-    _assert_final_root(config, final_root)
+    _assert_final_root(config, final_root, root_binding=root_binding)
     preparation_root = final_root / "preparations" / authorization.attempt_id
-    _assert_new_preparation_root(preparation_root)
+    _assert_new_preparation_root(
+        preparation_root,
+        final_fd=root_binding.final_fd,
+    )
     resolution = _resolve_or_build_data_panel(
         config,
         authorization,
@@ -204,8 +207,7 @@ def _complete_preparation(
         root_binding=root_binding,
     )
     root_binding.assert_bound()
-    source = validate_panel_source(resolution.root, Period(FINAL_TEST_START, FINAL_TEST_END))
-    symbols = _symbols_from_verified_panel(source)
+    symbols = _symbols_from_verified_panel_at(root_binding.final_fd)
     root_binding.assert_bound()
     result = _publish_preparation(
         final_root,
@@ -215,9 +217,9 @@ def _complete_preparation(
         root_binding=root_binding,
     )
     root_binding.assert_bound()
-    _verify_preparation_files(
+    _verify_preparation_files_at(
         final_root,
-        preparation_root=result.root,
+        final_fd=root_binding.final_fd,
         authorization=authorization,
         resolution=resolution,
     )
@@ -260,8 +262,7 @@ def _recover_preparation(
         )
     elif state["state"] != "preparing":
         raise ValueError("final-test attempt cannot resume preparation from its state")
-    root = final_root / "preparations" / authorization.attempt_id
-    if not root.exists() and not root.is_symlink():
+    if not _preparation_exists_at(root_binding.final_fd, authorization.attempt_id):
         return _complete_preparation(
             final_root,
             authorization=authorization,
@@ -269,14 +270,19 @@ def _recover_preparation(
             data_root=data_root,
             root_binding=root_binding,
         )
-    resolution = resolve_final_test_data_panel(final_root)
+    resolution = resolve_final_test_data_panel_at(final_root, root_binding.final_fd)
     root_binding.assert_bound()
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication is not ready for preparation")
-    _assert_data_claim_identity(final_root / "data-build-claim.json", authorization, resolution)
-    result = _verify_preparation_files(
+    _assert_data_claim_identity(
+        final_root / "data-build-claim.json",
+        authorization,
+        resolution,
+        final_fd=root_binding.final_fd,
+    )
+    result = _verify_preparation_files_at(
         final_root,
-        preparation_root=root,
+        final_fd=root_binding.final_fd,
         authorization=authorization,
         resolution=resolution,
     )
@@ -418,7 +424,7 @@ def _resolve_or_build_data_panel(
     root_binding: FinalRootBinding,
 ) -> FinalTestDataResolution:
     claim_path = final_root / "data-build-claim.json"
-    if claim_path.exists() or claim_path.is_symlink():
+    if _entry_exists_at(root_binding.final_fd, claim_path.name):
         resolution = recover_final_test_daily_panel(
             config,
             authorization,
@@ -437,7 +443,7 @@ def _resolve_or_build_data_panel(
             root_binding=root_binding,
         )
         root_binding.assert_bound()
-        resolution = resolve_final_test_data_panel(final_root)
+        resolution = resolve_final_test_data_panel_at(final_root, root_binding.final_fd)
         root_binding.assert_bound()
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication is not ready for preparation")
@@ -879,17 +885,52 @@ def _assert_registered_identity(
         raise ValueError("final-test preparation authorization identity differs")
 
 
-def _assert_final_root(config: ResearchConfig, final_root: Path) -> None:
+def _assert_final_root(
+    config: ResearchConfig,
+    final_root: Path,
+    *,
+    root_binding: FinalRootBinding | None = None,
+) -> None:
     expected = config.paths.processed / "final_test"
+    if root_binding is not None:
+        root_binding.assert_bound()
+        if expected.absolute() != root_binding.final_root.absolute():
+            raise ValueError("configured processed path differs from final-test data root")
+        return
     if expected.resolve() != final_root.resolve():
         raise ValueError("configured processed path differs from final-test data root")
     if any(path.is_symlink() for path in (config.paths.processed, final_root)):
         raise ValueError("final-test preparation path uses a symlink")
 
 
-def _assert_new_preparation_root(root: Path) -> None:
+def _assert_new_preparation_root(root: Path, *, final_fd: int | None = None) -> None:
+    if final_fd is not None:
+        if _preparation_exists_at(final_fd, root.name):
+            raise FileExistsError(f"final-test preparation already exists: {root}")
+        return
     if root.exists() or root.is_symlink():
         raise FileExistsError(f"final-test preparation already exists: {root}")
+
+
+def _entry_exists_at(directory_fd: int, name: str) -> bool:
+    try:
+        os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _preparation_exists_at(final_fd: int, attempt_id: str) -> bool:
+    try:
+        preparations_fd = open_directory_at(
+            final_fd, "preparations", label="final-test preparations"
+        )
+    except FileNotFoundError:
+        return False
+    try:
+        return _entry_exists_at(preparations_fd, attempt_id)
+    finally:
+        os.close(preparations_fd)
 
 
 def _symbols_digest(symbols: list[str]) -> str:

@@ -31,6 +31,7 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.panel_binding import FrozenPanelSnapshot
 from ashare_multifactor.final_test.signal_inputs import (
     resolve_final_test_signal_inputs,
@@ -59,6 +60,7 @@ def build_final_test_signals(
     final_root: Path,
     panel_snapshot: FrozenPanelSnapshot | None = None,
     registry_fd: int | None = None,
+    root_binding: FinalRootBinding | None = None,
 ) -> FinalTestSignals:
     """Extend the single sealed Stage-8 candidate through the final-test period."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -66,8 +68,18 @@ def build_final_test_signals(
     if authorization.test_period != (FINAL_TEST_START, FINAL_TEST_END):
         raise ValueError("authorization period differs from the sealed final-test period")
     code_root = code_root.resolve()
-    final_root = final_root.resolve()
-    config = _load_frozen_config(code_root, final_root.parent.parent)
+    if root_binding is None:
+        final_root = final_root.resolve()
+        data_root = final_root.parent.parent
+    else:
+        root_binding.assert_bound()
+        if final_root.absolute() != root_binding.final_root.absolute():
+            raise ValueError("held final-test root differs from signal root")
+        if registry_fd is not None and registry_fd != root_binding.attempts_fd:
+            raise ValueError("signal registry descriptor differs from held final-test root")
+        registry_fd = root_binding.attempts_fd
+        data_root = root_binding.final_root.parent.parent
+    config = _load_frozen_config(code_root, data_root)
     if final_root != config.paths.processed / "final_test":
         raise ValueError("final-test data root is not canonical")
     if registry_fd is None:
@@ -92,11 +104,12 @@ def build_final_test_signals(
         authorization,
         config.test,
         panel_snapshot=panel_snapshot,
+        root_binding=root_binding,
     )
     inputs = resolve_final_test_signal_inputs(
         config,
         authorization,
-        data_root=final_root.parent.parent,
+        data_root=data_root,
     )
     final_daily = pl.scan_parquet(source.files).collect()
     _assert_date_bounds(final_daily, config.test, "final-test daily panel")
@@ -190,7 +203,14 @@ def _resolve_authorized_data(
     period: Period,
     *,
     panel_snapshot: FrozenPanelSnapshot | None = None,
+    root_binding: FinalRootBinding | None = None,
 ):
+    if root_binding is not None:
+        root_binding.assert_bound()
+        if final_root.absolute() != root_binding.final_root.absolute():
+            raise ValueError("held final-test root differs from data source")
+        if panel_snapshot is None:
+            raise ValueError("bound final-test signals require an anonymous panel snapshot")
     if panel_snapshot is not None:
         panel_snapshot.assert_bound()
         if not panel_snapshot.anonymous_frozen:

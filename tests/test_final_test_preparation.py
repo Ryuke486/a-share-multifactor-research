@@ -131,8 +131,21 @@ def _patch_prepare_dependencies(
         ),
     )
     monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation.resolve_final_test_data_panel_at",
+        lambda _root, _final_fd: SimpleNamespace(
+            root=panel_root,
+            claim_status="published",
+            requires_recovery=False,
+            data_manifest_sha256=manifest_sha256,
+        ),
+    )
+    monkeypatch.setattr(
         "ashare_multifactor.final_test.preparation.validate_panel_source",
         lambda _root, _period: source,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.preparation._symbols_from_verified_panel_at",
+        lambda _final_fd: preparation_module._symbols_from_verified_panel(source),
     )
 
 

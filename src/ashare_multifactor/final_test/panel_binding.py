@@ -11,7 +11,7 @@ from pathlib import Path
 import stat
 
 from ashare_multifactor.config import Period
-from ashare_multifactor.data.manifest import DailyPanelSource, validate_panel_source
+from ashare_multifactor.data.manifest import DailyPanelSource, validate_panel_source_at
 from ashare_multifactor.final_test.recovery_secure_fs import (
     directory_identity,
     no_follow_flag,
@@ -143,11 +143,20 @@ def bind_panel_snapshot(
         source: DailyPanelSource | None = None
         partition_relatives: tuple[str, ...] = ()
         if "manifest.json" in by_relative:
-            validated = validate_panel_source(root, period)
+            validated = validate_panel_source_at(root_fd, period)
             _verify_source_against_held_files(validated, by_relative)
+            partitions = validated.manifest.get("partitions")
+            if not isinstance(partitions, list):
+                raise ValueError("attempt-bound final daily panel manifest is invalid")
             partition_relatives = tuple(
-                path.relative_to(root).as_posix() for path in validated.files
+                sorted(
+                    str(partition["relative_path"])
+                    for partition in partitions
+                    if isinstance(partition, dict)
+                )
             )
+            if len(partition_relatives) != len(validated.files):
+                raise ValueError("attempt-bound final daily panel partitions are invalid")
             held_partitions = tuple(
                 _descriptor_path(by_relative[path].descriptor)
                 for path in partition_relatives
