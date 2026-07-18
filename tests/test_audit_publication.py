@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Event, get_ident
 
 import pytest
 
@@ -24,6 +26,60 @@ def _staged(tmp_path: Path) -> tuple[Path, Path]:
     (datasets / "target_weights.parquet").write_bytes(b"weights")
     (artifacts / "report.md").write_text("report", encoding="utf-8")
     return datasets, artifacts
+
+
+def test_current_resolver_waits_until_installed_pointer_is_postverified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "published"
+    datasets, artifacts = _staged(tmp_path / "first")
+    publish_release(
+        root,
+        run_id="first",
+        staged_datasets=datasets,
+        staged_artifacts=artifacts,
+        lineage={"identity": "first"},
+    )
+    second_datasets, second_artifacts = _staged(tmp_path / "second")
+    installed = Event()
+    release_writer = Event()
+    writer_thread: dict[str, int] = {}
+    original_open = publication_module.os.open
+
+    def pause_postverify(path: object, *args: object, **kwargs: object) -> int:
+        if (
+            path == "CURRENT.json"
+            and get_ident() == writer_thread.get("id")
+            and not installed.is_set()
+        ):
+            installed.set()
+            if not release_writer.wait(timeout=5):
+                raise TimeoutError("test did not release CURRENT writer")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(publication_module.os, "open", pause_postverify)
+
+    def publish_second() -> object:
+        writer_thread["id"] = get_ident()
+        return publish_release(
+            root,
+            run_id="second",
+            staged_datasets=second_datasets,
+            staged_artifacts=second_artifacts,
+            lineage={"identity": "second"},
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        writer = executor.submit(publish_second)
+        assert installed.wait(timeout=5)
+        resolver = executor.submit(resolve_current, root)
+        try:
+            with pytest.raises(TimeoutError):
+                resolver.result(timeout=0.2)
+        finally:
+            release_writer.set()
+        assert writer.result(timeout=5).run_id == "second"
+        assert resolver.result(timeout=5).run_id == "second"
 
 
 def test_failed_release_does_not_change_current_pointer(tmp_path: Path) -> None:
@@ -153,9 +209,7 @@ def test_publish_rejects_artifacts_parent_replacement_during_frozen_write(
             staged_datasets=datasets,
             staged_artifacts=artifacts,
             lineage={"identity": "race"},
-            frozen_artifact_trees={
-                "execution_inputs": {"manifest.json": b"frozen"}
-            },
+            frozen_artifact_trees={"execution_inputs": {"manifest.json": b"frozen"}},
         )
 
     assert not (root / "releases/race").exists()
@@ -424,9 +478,7 @@ def test_current_pointer_rejects_temporary_file_substitution(
             current_must_be_absent=current_must_be_absent,
         )
 
-    assert not (root / "CURRENT.json").exists() or (
-        root / "CURRENT.json"
-    ).read_bytes() != forged
+    assert not (root / "CURRENT.json").exists() or (root / "CURRENT.json").read_bytes() != forged
 
 
 def test_code_identity_records_dirty_diff_and_source_hashes(tmp_path: Path) -> None:

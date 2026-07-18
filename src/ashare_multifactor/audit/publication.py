@@ -14,6 +14,13 @@ from ashare_multifactor.audit.secure_tree import (
     read_frozen_tree_at,
     write_frozen_tree_at,
 )
+from ashare_multifactor.audit.publication_lock import (
+    publication_read_lock_at,
+    publication_write_lock_at,
+)
+
+
+_CURRENT_PUBLICATION_LOCK = ".CURRENT.publication.lock"
 
 
 @dataclass(frozen=True)
@@ -95,13 +102,9 @@ def publish_release(
     for name, files in sorted(dict(frozen_artifact_trees or {}).items()):
         prefix = f"artifacts/{name}/"
         release_files = {
-            path: payload
-            for path, payload in release_files.items()
-            if not path.startswith(prefix)
+            path: payload for path, payload in release_files.items() if not path.startswith(prefix)
         }
-        release_files.update(
-            {f"{prefix}{path}": payload for path, payload in files.items()}
-        )
+        release_files.update({f"{prefix}{path}": payload for path, payload in files.items()})
     records = _release_records(release_files)
     manifest_bytes = _json_payload_bytes(
         {"files": records, "run_id": run_id, **(manifest_metadata or {})}
@@ -155,9 +158,7 @@ def publish_release(
             dir_fd=releases_fd,
         )
         temporary_identity = _descriptor_identity(temporary_fd)
-        if read_frozen_tree_at(
-            temporary_fd, label="release temporary staging"
-        ) != complete_files:
+        if read_frozen_tree_at(temporary_fd, label="release temporary staging") != complete_files:
             raise ValueError("release temporary staging bytes differ")
         _assert_entry_identity(
             root_fd,
@@ -244,9 +245,7 @@ def publish_release_at(
     complete_files = {**release_files, "manifest.json": manifest_bytes}
     root_identity = _descriptor_identity(root_fd)
     releases_identity = _descriptor_identity(releases_fd)
-    _assert_entry_identity(
-        root_parent_fd, root.name, root_identity, label="publication root"
-    )
+    _assert_entry_identity(root_parent_fd, root.name, root_identity, label="publication root")
     _assert_entry_identity(root_fd, "releases", releases_identity, label="release root")
     try:
         os.stat(run_id, dir_fd=releases_fd, follow_symlinks=False)
@@ -270,20 +269,12 @@ def publish_release_at(
             dir_fd=releases_fd,
         )
         temporary_identity = _descriptor_identity(temporary_fd)
-        if read_frozen_tree_at(
-            temporary_fd, label="release temporary staging"
-        ) != complete_files:
+        if read_frozen_tree_at(temporary_fd, label="release temporary staging") != complete_files:
             raise ValueError("release temporary staging bytes differ")
-        _assert_entry_identity(
-            root_parent_fd, root.name, root_identity, label="publication root"
-        )
-        _assert_entry_identity(
-            root_fd, "releases", releases_identity, label="release root"
-        )
+        _assert_entry_identity(root_parent_fd, root.name, root_identity, label="publication root")
+        _assert_entry_identity(root_fd, "releases", releases_identity, label="release root")
         atomic_rename_no_replace_at(releases_fd, temporary_name, run_id)
-        _assert_entry_identity(
-            releases_fd, run_id, temporary_identity, label="published release"
-        )
+        _assert_entry_identity(releases_fd, run_id, temporary_identity, label="published release")
         manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
         if fail_before_switch:
             raise RuntimeError("injected failure before pointer switch")
@@ -292,15 +283,9 @@ def publish_release_at(
             _write_current_at(root_fd, pointer)
         else:
             _replace_current_at(root_fd, pointer)
-        _assert_entry_identity(
-            root_parent_fd, root.name, root_identity, label="publication root"
-        )
-        _assert_entry_identity(
-            root_fd, "releases", releases_identity, label="release root"
-        )
-        _assert_entry_identity(
-            releases_fd, run_id, temporary_identity, label="published release"
-        )
+        _assert_entry_identity(root_parent_fd, root.name, root_identity, label="publication root")
+        _assert_entry_identity(root_fd, "releases", releases_identity, label="release root")
+        _assert_entry_identity(releases_fd, run_id, temporary_identity, label="published release")
         return _published(
             root,
             run_id,
@@ -327,9 +312,7 @@ def resolve_release_package_at(
     )
     try:
         identity = _descriptor_identity(release_fd)
-        manifest_hash, files, manifest = _verify_release_at(
-            release_fd, run_id=run_id
-        )
+        manifest_hash, files, manifest = _verify_release_at(release_fd, run_id=run_id)
         _assert_entry_identity(releases_fd, run_id, identity, label="release")
         return (
             _published(root, run_id, manifest_hash, directory_identity=identity),
@@ -363,9 +346,7 @@ def restore_current_at(
             root_fd,
             {"run_id": release.run_id, "manifest_sha256": manifest_hash},
         )
-        _assert_entry_identity(
-            releases_fd, release.run_id, identity, label="orphan release"
-        )
+        _assert_entry_identity(releases_fd, release.run_id, identity, label="orphan release")
     finally:
         os.close(release_fd)
 
@@ -411,9 +392,9 @@ def _release_records(files: Mapping[str, bytes]) -> list[dict[str, object]]:
 
 
 def _json_payload_bytes(payload: Mapping[str, object]) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
 
 
 def _write_current_at(root_fd: int, payload: Mapping[str, object]) -> None:
@@ -430,13 +411,20 @@ def _materialize_current_at(
     *,
     replace: bool,
 ) -> None:
+    with publication_write_lock_at(root_fd, _CURRENT_PUBLICATION_LOCK):
+        _materialize_current_locked_at(root_fd, payload, replace=replace)
+
+
+def _materialize_current_locked_at(
+    root_fd: int,
+    payload: Mapping[str, object],
+    *,
+    replace: bool,
+) -> None:
     temporary = f".CURRENT.{uuid4().hex}.tmp"
     descriptor = os.open(
         temporary,
-        os.O_WRONLY
-        | os.O_CREAT
-        | os.O_EXCL
-        | getattr(os, "O_NOFOLLOW"),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW"),
         0o600,
         dir_fd=root_fd,
     )
@@ -518,9 +506,7 @@ def _assert_file_entry_identity(
         raise ValueError(f"{label} identity changed")
 
 
-def _unlink_if_identity(
-    parent_fd: int, name: str, expected: tuple[int, int] | None
-) -> None:
+def _unlink_if_identity(parent_fd: int, name: str, expected: tuple[int, int] | None) -> None:
     if expected is None:
         return
     try:
@@ -532,21 +518,55 @@ def _unlink_if_identity(
 
 
 def resolve_current(root: Path) -> PublishedRelease:
-    pointer = json.loads((root / "CURRENT.json").read_text(encoding="utf-8"))
-    published = resolve_release(root, pointer["run_id"])
-    if published.manifest_sha256 != pointer["manifest_sha256"]:
-        raise ValueError("manifest digest mismatch")
-    return published
+    with opened_verified_current(root) as held:
+        return held.release
 
 
 @contextmanager
 def opened_verified_current(root: Path) -> Iterator[HeldPublishedRelease]:
-    root_parent_fd = os.open(root.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"))
-    root_fd = os.open(root.name, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=root_parent_fd)
-    releases_fd = os.open("releases", os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=root_fd)
-    current_fd = os.open("CURRENT.json", os.O_RDONLY | getattr(os, "O_NOFOLLOW"), dir_fd=root_fd)
+    root_parent_fd = os.open(
+        root.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW")
+    )
+    root_fd: int | None = None
+    try:
+        root_fd = os.open(
+            root.name,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            dir_fd=root_parent_fd,
+        )
+        with publication_read_lock_at(root_fd, _CURRENT_PUBLICATION_LOCK):
+            with _opened_verified_current_locked(
+                root,
+                root_parent_fd=root_parent_fd,
+                root_fd=root_fd,
+            ) as held:
+                yield held
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
+        os.close(root_parent_fd)
+
+
+@contextmanager
+def _opened_verified_current_locked(
+    root: Path,
+    *,
+    root_parent_fd: int,
+    root_fd: int,
+) -> Iterator[HeldPublishedRelease]:
+    releases_fd = os.open(
+        "releases",
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=root_fd,
+    )
+    current_fd: int | None = None
     release_fd: int | None = None
     try:
+        current_fd = os.open(
+            "CURRENT.json",
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            dir_fd=root_fd,
+        )
         root_identity = _descriptor_identity(root_fd)
         releases_identity = _descriptor_identity(releases_fd)
         current_identity = _descriptor_identity(current_fd)
@@ -555,7 +575,11 @@ def opened_verified_current(root: Path) -> Iterator[HeldPublishedRelease]:
         if not isinstance(pointer, dict) or set(pointer) != {"run_id", "manifest_sha256"}:
             raise ValueError("CURRENT pointer identity differs")
         run_id = str(pointer["run_id"])
-        release_fd = os.open(run_id, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=releases_fd)
+        release_fd = os.open(
+            run_id,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            dir_fd=releases_fd,
+        )
         release_identity = _descriptor_identity(release_fd)
         manifest_hash, files, manifest = _verify_release_at(
             release_fd,
@@ -582,17 +606,24 @@ def opened_verified_current(root: Path) -> Iterator[HeldPublishedRelease]:
     finally:
         if release_fd is not None:
             os.close(release_fd)
-        os.close(current_fd)
+        if current_fd is not None:
+            os.close(current_fd)
         os.close(releases_fd)
-        os.close(root_fd)
-        os.close(root_parent_fd)
 
 
 def resolve_release(root: Path, run_id: str) -> PublishedRelease:
     """Resolve and fully verify one release without consulting CURRENT."""
     root_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"))
-    releases_fd = os.open("releases", os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=root_fd)
-    release_fd = os.open(run_id, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"), dir_fd=releases_fd)
+    releases_fd = os.open(
+        "releases",
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=root_fd,
+    )
+    release_fd = os.open(
+        run_id,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=releases_fd,
+    )
     try:
         identity = _descriptor_identity(release_fd)
         manifest_hash, _, _ = _verify_release_at(release_fd, run_id=run_id)
@@ -629,10 +660,7 @@ def restore_current(root: Path, release: PublishedRelease) -> None:
         root_identity = _descriptor_identity(root_fd)
         releases_identity = _descriptor_identity(releases_fd)
         release_identity = _descriptor_identity(release_fd)
-        if (
-            release.directory_identity is None
-            or release_identity != release.directory_identity
-        ):
+        if release.directory_identity is None or release_identity != release.directory_identity:
             raise ValueError("orphan release identity changed before CURRENT recovery")
         manifest_hash, _, _ = _verify_release_at(
             release_fd,
@@ -691,13 +719,9 @@ def _verify_release_at(
     records = manifest.get("files")
     if not isinstance(records, list):
         raise ValueError("release manifest identity mismatch")
-    expected_records = {
-        str(record["path"]): record for record in _release_records(complete)
-    }
+    expected_records = {str(record["path"]): record for record in _release_records(complete)}
     actual_records = {
-        str(record.get("path")): record
-        for record in records
-        if isinstance(record, dict)
+        str(record.get("path")): record for record in records if isinstance(record, dict)
     }
     if set(actual_records) != set(expected_records) or len(records) != len(actual_records):
         raise ValueError("release manifest identity mismatch")

@@ -26,6 +26,8 @@ from ashare_multifactor.final_test.data_inventory import (
 )
 from ashare_multifactor.final_test.data_publication import (
     FinalTestDataResolution,
+    read_data_claim,
+    read_data_claim_at,
     resolve_final_test_data_panel,
 )
 from ashare_multifactor.final_test.gate import (
@@ -89,9 +91,7 @@ def prepare_final_test(
     actual_attempt_id = attempt_id or uuid4().hex
     registry_root.mkdir(parents=True, exist_ok=True)
     with FinalRootBinding.open(final_root) as root_binding:
-        with claim_attempt_preparation_at(
-            root_binding.attempts_fd, attempt_id=actual_attempt_id
-        ):
+        with claim_attempt_preparation_at(root_binding.attempts_fd, attempt_id=actual_attempt_id):
             root_binding.assert_bound()
             try:
                 return _prepare_final_test_bound(
@@ -105,9 +105,7 @@ def prepare_final_test(
             except Exception as error:
                 if not isinstance(error, FinalRootNamespaceChanged):
                     root_binding.assert_bound()
-                    _record_preparation_failure(
-                        root_binding.attempts_fd, actual_attempt_id, error
-                    )
+                    _record_preparation_failure(root_binding.attempts_fd, actual_attempt_id, error)
                 raise
 
 
@@ -202,9 +200,7 @@ def _complete_preparation(
         root_binding=root_binding,
     )
     root_binding.assert_bound()
-    source = validate_panel_source(
-        resolution.root, Period(FINAL_TEST_START, FINAL_TEST_END)
-    )
+    source = validate_panel_source(resolution.root, Period(FINAL_TEST_START, FINAL_TEST_END))
     symbols = _symbols_from_verified_panel(source)
     root_binding.assert_bound()
     result = _publish_preparation(
@@ -241,9 +237,7 @@ def _recover_preparation(
     data_root: Path,
     root_binding: FinalRootBinding,
 ) -> FinalTestPreparation:
-    state = resolve_attempt_state_at(
-        root_binding.attempts_fd, authorization.attempt_id
-    )
+    state = resolve_attempt_state_at(root_binding.attempts_fd, authorization.attempt_id)
     root_binding.assert_bound()
     if state["state"] == "awaiting_official_evidence":
         result = verify_preparation(
@@ -275,9 +269,7 @@ def _recover_preparation(
     root_binding.assert_bound()
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication is not ready for preparation")
-    _assert_data_claim_identity(
-        final_root / "data-build-claim.json", authorization, resolution
-    )
+    _assert_data_claim_identity(final_root / "data-build-claim.json", authorization, resolution)
     result = _verify_preparation_files(
         final_root,
         preparation_root=root,
@@ -444,9 +436,7 @@ def _resolve_or_build_data_panel(
     return resolution
 
 
-def _record_preparation_failure(
-    registry_fd: int, attempt_id: str, error: Exception
-) -> None:
+def _record_preparation_failure(registry_fd: int, attempt_id: str, error: Exception) -> None:
     entries = set(os.listdir(registry_fd))
     if f"{attempt_id}.json" not in entries or f"{attempt_id}.outcome.json" in entries:
         return
@@ -465,17 +455,7 @@ def _assert_data_claim_identity(
     resolution: FinalTestDataResolution,
     final_fd: int | None = None,
 ) -> None:
-    try:
-        claim_bytes = (
-            claim_path.read_bytes()
-            if final_fd is None
-            else read_bytes_at(
-                final_fd, claim_path.name, label="final-test data publication claim"
-            )
-        )
-        claim = json.loads(claim_bytes)
-    except (FileNotFoundError, json.JSONDecodeError) as error:
-        raise ValueError("invalid final-test data publication claim") from error
+    claim = read_data_claim(claim_path.parent) if final_fd is None else read_data_claim_at(final_fd)
     expected = {
         "attempt_id": authorization.attempt_id,
         "approval_id": authorization.approval_id,
@@ -497,9 +477,11 @@ def _assert_data_claim_identity(
 
 
 def _symbols_from_verified_panel(source: SimpleNamespace) -> list[str]:
-    frame = pl.scan_parquet(list(source.files)).select(
-        pl.col("date").cast(pl.Date), pl.col("symbol").cast(pl.String).str.zfill(6)
-    ).collect()
+    frame = (
+        pl.scan_parquet(list(source.files))
+        .select(pl.col("date").cast(pl.Date), pl.col("symbol").cast(pl.String).str.zfill(6))
+        .collect()
+    )
     if frame.is_empty():
         raise ValueError("final-test daily panel is empty")
     minimum = frame.get_column("date").min()
@@ -519,8 +501,7 @@ def _symbols_from_verified_panel(source: SimpleNamespace) -> list[str]:
     ]
     if unsupported:
         raise ValueError(
-            "final-test panel contains unsupported market symbols: "
-            + ", ".join(unsupported[:10])
+            "final-test panel contains unsupported market symbols: " + ", ".join(unsupported[:10])
         )
     return symbols
 
@@ -569,9 +550,7 @@ def _publish_preparation(
             parent_fd, temporary_name, label="final-test temporary preparation"
         )
         scope_buffer = BytesIO()
-        pl.DataFrame(
-            {"symbol": symbols}, schema={"symbol": pl.String}
-        ).write_parquet(scope_buffer)
+        pl.DataFrame({"symbol": symbols}, schema={"symbol": pl.String}).write_parquet(scope_buffer)
         scope_bytes = scope_buffer.getvalue()
         write_bytes_exclusive_at(temporary_fd, "symbol_scope.parquet", scope_bytes)
         scope_record = {
@@ -592,10 +571,7 @@ def _publish_preparation(
             )
         finally:
             os.close(daily_panel_fd)
-        if (
-            hashlib.sha256(data_manifest_bytes).hexdigest()
-            != resolution.data_manifest_sha256
-        ):
+        if hashlib.sha256(data_manifest_bytes).hexdigest() != resolution.data_manifest_sha256:
             raise ValueError("final-test preparation data manifest identity differs")
         manifest = {
             "schema_version": _SCHEMA_VERSION,
@@ -622,9 +598,7 @@ def _publish_preparation(
         manifest_bytes = (
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
-        write_bytes_exclusive_at(
-            temporary_fd, "prepare_manifest.json", manifest_bytes
-        )
+        write_bytes_exclusive_at(temporary_fd, "prepare_manifest.json", manifest_bytes)
         atomic_rename_no_replace_at(
             parent_fd,
             temporary_name,
@@ -682,9 +656,7 @@ def _verify_preparation_files(
     if data_path != resolution.root / "data_manifest.json":
         raise ValueError("preparation data manifest path is not canonical")
     scope = _verify_symbol_scope(preparation_root, manifest["symbol_scope"])
-    source = validate_panel_source(
-        resolution.root, Period(FINAL_TEST_START, FINAL_TEST_END)
-    )
+    source = validate_panel_source(resolution.root, Period(FINAL_TEST_START, FINAL_TEST_END))
     if scope[3] != _symbols_from_verified_panel(source):
         raise ValueError("revalidated final-test panel symbol scope differs")
     return FinalTestPreparation(
@@ -722,8 +694,7 @@ def _validate_preparation_manifest(
         manifest["schema_version"] != _SCHEMA_VERSION
         or manifest["attempt_id"] != authorization.attempt_id
         or manifest["approval_id"] != authorization.approval_id
-        or manifest["period"]
-        != [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()]
+        or manifest["period"] != [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()]
         or manifest["supported_markets"] != list(_SUPPORTED_MARKETS)
         or manifest["state"] != "awaiting_official_evidence"
         or not isinstance(manifest["created_at"], str)

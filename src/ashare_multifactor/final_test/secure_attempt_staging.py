@@ -20,6 +20,7 @@ from ashare_multifactor.audit.secure_tree import (
     read_frozen_tree_at,
 )
 from ashare_multifactor.config import Period
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.panel_binding import (
     FrozenPanelSnapshot,
     bind_panel_snapshot,
@@ -78,14 +79,16 @@ def ensure_attempt_root(
     *,
     attempt_id: str,
     execution_identity: Mapping[str, object],
+    root_binding: FinalRootBinding | None = None,
 ) -> tuple[Path, AttemptDirectories]:
     destination = final_root / "attempt_runs" / attempt_id
-    root_parent_fd = open_directory_path(
-        final_root.parent, label="final-test processed root"
-    )
-    final_fd = open_directory_at(
-        root_parent_fd, final_root.name, label="final-test root"
-    )
+    if root_binding is None:
+        root_parent_fd = open_directory_path(final_root.parent, label="final-test processed root")
+        final_fd = open_directory_at(root_parent_fd, final_root.name, label="final-test root")
+    else:
+        root_binding.assert_bound()
+        root_parent_fd = os.dup(root_binding.processed_fd)
+        final_fd = os.dup(root_binding.final_fd)
     parent_fd: int | None = None
     attempt_fd: int | None = None
     try:
@@ -93,13 +96,9 @@ def ensure_attempt_root(
             os.mkdir("attempt_runs", mode=0o700, dir_fd=final_fd)
         except FileExistsError:
             pass
-        parent_fd = open_directory_at(
-            final_fd, "attempt_runs", label="attempt-runs root"
-        )
+        parent_fd = open_directory_at(final_fd, "attempt_runs", label="attempt-runs root")
         if entry_exists_at(parent_fd, attempt_id):
-            attempt_fd = open_directory_at(
-                parent_fd, attempt_id, label="attempt staging root"
-            )
+            attempt_fd = open_directory_at(parent_fd, attempt_id, label="attempt staging root")
             if not _is_resumable_attempt_shell_at(attempt_fd, execution_identity):
                 raise ValueError("final-test attempt shell is not safely resumable")
             return destination, _directories_from_open_fds(
@@ -110,9 +109,7 @@ def ensure_attempt_root(
             os.mkdir(temporary_name, mode=0o700, dir_fd=parent_fd)
         except FileExistsError:
             pass
-        attempt_fd = open_directory_at(
-            parent_fd, temporary_name, label="attempt initializer"
-        )
+        attempt_fd = open_directory_at(parent_fd, temporary_name, label="attempt initializer")
         for name in ("datasets", "artifacts"):
             try:
                 os.mkdir(name, mode=0o700, dir_fd=attempt_fd)
@@ -162,12 +159,8 @@ def _directories_from_open_fds(
     datasets_fd: int | None = None
     artifacts_fd: int | None = None
     try:
-        datasets_fd = open_directory_at(
-            attempt_fd, "datasets", label="attempt datasets staging"
-        )
-        artifacts_fd = open_directory_at(
-            attempt_fd, "artifacts", label="attempt artifacts staging"
-        )
+        datasets_fd = open_directory_at(attempt_fd, "datasets", label="attempt datasets staging")
+        artifacts_fd = open_directory_at(attempt_fd, "artifacts", label="attempt artifacts staging")
         return AttemptDirectories(
             root_parent_fd=root_parent_fd,
             root_fd=root_fd,
@@ -188,9 +181,7 @@ def _directories_from_open_fds(
         raise
 
 
-def assert_attempt_directory(
-    attempt_root: Path, directories: AttemptDirectories
-) -> None:
+def assert_attempt_directory(attempt_root: Path, directories: AttemptDirectories) -> None:
     assert_directory_entry(
         directories.root_parent_fd,
         attempt_root.parent.parent.name,
@@ -224,21 +215,28 @@ def assert_attempt_directory(
 
 
 def open_existing_attempt_directories(
-    final_root: Path, *, attempt_id: str
+    final_root: Path,
+    *,
+    attempt_id: str,
+    root_binding: FinalRootBinding | None = None,
 ) -> tuple[Path, AttemptDirectories]:
-    root_parent_fd = open_directory_path(
-        final_root.parent, label="final-test processed root"
-    )
+    if root_binding is None:
+        root_parent_fd = open_directory_path(final_root.parent, label="final-test processed root")
+    else:
+        root_binding.assert_bound()
+        root_parent_fd = os.dup(root_binding.processed_fd)
     root_fd: int | None = None
     parent_fd: int | None = None
     attempt_fd: int | None = None
     try:
-        root_fd = open_directory_at(root_parent_fd, final_root.name, label="final-test root")
+        root_fd = (
+            open_directory_at(root_parent_fd, final_root.name, label="final-test root")
+            if root_binding is None
+            else os.dup(root_binding.final_fd)
+        )
         parent_fd = open_directory_at(root_fd, "attempt_runs", label="attempt-runs root")
         attempt_fd = open_directory_at(parent_fd, attempt_id, label="attempt staging root")
-        directories = _directories_from_open_fds(
-            root_parent_fd, root_fd, parent_fd, attempt_fd
-        )
+        directories = _directories_from_open_fds(root_parent_fd, root_fd, parent_fd, attempt_fd)
         attempt_root = final_root / "attempt_runs" / attempt_id
         assert_attempt_directory(attempt_root, directories)
         return attempt_root, directories
@@ -247,6 +245,8 @@ def open_existing_attempt_directories(
             if descriptor is not None:
                 os.close(descriptor)
         raise
+
+
 def write_frame_at(directory_fd: int, name: str, frame: pl.DataFrame) -> None:
     buffer = BytesIO()
     frame.write_parquet(buffer)
@@ -257,9 +257,7 @@ def write_bytes_at(directory_fd: int, name: str, payload: bytes) -> None:
     write_bytes_exclusive_at(directory_fd, name, payload)
 
 
-def write_json_at(
-    directory_fd: int, name: str, payload: Mapping[str, object]
-) -> None:
+def write_json_at(directory_fd: int, name: str, payload: Mapping[str, object]) -> None:
     write_bytes_exclusive_at(directory_fd, name, json_bytes(payload))
 
 
@@ -300,30 +298,22 @@ def replace_attempt_manifest(
     current = read_bytes_at(
         attempt_fd, "attempt_manifest.json", label="attempt manifest transition"
     )
-    current_metadata = os.stat(
-        "attempt_manifest.json", dir_fd=attempt_fd, follow_symlinks=False
-    )
+    current_metadata = os.stat("attempt_manifest.json", dir_fd=attempt_fd, follow_symlinks=False)
     if current != expected_bytes:
         raise ValueError("attempt manifest transition identity differs")
     temporary_name = f".attempt_manifest.{uuid4().hex}.tmp"
     write_bytes_exclusive_at(attempt_fd, temporary_name, replacement_bytes)
-    temporary_metadata = os.stat(
-        temporary_name, dir_fd=attempt_fd, follow_symlinks=False
-    )
+    temporary_metadata = os.stat(temporary_name, dir_fd=attempt_fd, follow_symlinks=False)
     try:
-        current_again = os.stat(
-            "attempt_manifest.json", dir_fd=attempt_fd, follow_symlinks=False
-        )
-        if (
-            (current_again.st_dev, current_again.st_ino)
-            != (current_metadata.st_dev, current_metadata.st_ino)
-            or read_bytes_at(
-                attempt_fd,
-                "attempt_manifest.json",
-                label="attempt manifest transition",
-            )
-            != expected_bytes
-        ):
+        current_again = os.stat("attempt_manifest.json", dir_fd=attempt_fd, follow_symlinks=False)
+        if (current_again.st_dev, current_again.st_ino) != (
+            current_metadata.st_dev,
+            current_metadata.st_ino,
+        ) or read_bytes_at(
+            attempt_fd,
+            "attempt_manifest.json",
+            label="attempt manifest transition",
+        ) != expected_bytes:
             raise ValueError("attempt manifest transition identity differs")
         os.replace(
             temporary_name,
@@ -331,26 +321,21 @@ def replace_attempt_manifest(
             src_dir_fd=attempt_fd,
             dst_dir_fd=attempt_fd,
         )
-        installed = os.stat(
-            "attempt_manifest.json", dir_fd=attempt_fd, follow_symlinks=False
-        )
+        installed = os.stat("attempt_manifest.json", dir_fd=attempt_fd, follow_symlinks=False)
         installed_bytes = read_bytes_at(
             attempt_fd,
             "attempt_manifest.json",
             label="attempt manifest transition",
         )
-        if (
-            (installed.st_dev, installed.st_ino)
-            != (temporary_metadata.st_dev, temporary_metadata.st_ino)
-            or installed_bytes != replacement_bytes
-        ):
+        if (installed.st_dev, installed.st_ino) != (
+            temporary_metadata.st_dev,
+            temporary_metadata.st_ino,
+        ) or installed_bytes != replacement_bytes:
             try:
                 os.unlink("attempt_manifest.json", dir_fd=attempt_fd)
             except FileNotFoundError:
                 pass
-            write_bytes_exclusive_at(
-                attempt_fd, "attempt_manifest.json", expected_bytes
-            )
+            write_bytes_exclusive_at(attempt_fd, "attempt_manifest.json", expected_bytes)
             raise ValueError("attempt manifest transition identity differs")
         os.fsync(attempt_fd)
     finally:
@@ -368,9 +353,7 @@ def snapshot_attempt_panel(
     staged_panel_root: Path,
     period: Period,
 ) -> FrozenPanelSnapshot:
-    with opened_directory(
-        panel_root.parent, label="final daily panel parent"
-    ) as panel_parent_fd:
+    with opened_directory(panel_root.parent, label="final daily panel parent") as panel_parent_fd:
         with opened_directory_at(
             panel_parent_fd, panel_root.name, label="final daily panel"
         ) as panel_fd:
@@ -423,12 +406,8 @@ def freeze_prepared_package(
     if attempt_fd is not None:
         if datasets_fd is None or artifacts_fd is None:
             raise ValueError("complete prepared staging descriptors are required")
-        datasets = read_frozen_tree_at(
-            datasets_fd, label="prepared datasets staging"
-        )
-        artifacts = read_frozen_tree_at(
-            artifacts_fd, label="prepared artifacts staging"
-        )
+        datasets = read_frozen_tree_at(datasets_fd, label="prepared datasets staging")
+        artifacts = read_frozen_tree_at(artifacts_fd, label="prepared artifacts staging")
         execution_identity_bytes = read_bytes_at(
             attempt_fd,
             "execution_identity.json",
@@ -457,9 +436,7 @@ def freeze_prepared_package(
                         "size_bytes": len(payload),
                     }
                 )
-            attempt_manifest_bytes = json_bytes(
-                {**attempt_manifest_metadata, "files": records}
-            )
+            attempt_manifest_bytes = json_bytes({**attempt_manifest_metadata, "files": records})
         return _build_frozen_prepared_package(
             datasets=datasets,
             artifacts=artifacts,
@@ -489,26 +466,19 @@ def release_files_identity(files: Mapping[str, bytes]) -> dict[str, object]:
 def verify_attempt_manifest_records(package: FrozenPreparedPackage) -> None:
     records = package.attempt_manifest.get("files")
     expected_files = {
-        path: payload
-        for path, payload in package.release_files.items()
-        if path != "lineage.json"
+        path: payload for path, payload in package.release_files.items() if path != "lineage.json"
     }
     expected_files["execution_identity.json"] = package.execution_identity_bytes
     if not isinstance(records, list) or len(records) != len(expected_files):
         raise ValueError("prepared final-test staging identity differs")
-    by_path = {
-        str(record.get("path")): record
-        for record in records
-        if isinstance(record, dict)
-    }
+    by_path = {str(record.get("path")): record for record in records if isinstance(record, dict)}
     if set(by_path) != set(expected_files):
         raise ValueError("prepared final-test staging identity differs")
     for path, payload in expected_files.items():
         record = by_path[path]
-        if (
-            record.get("sha256") != hashlib.sha256(payload).hexdigest()
-            or record.get("size_bytes") != len(payload)
-        ):
+        if record.get("sha256") != hashlib.sha256(payload).hexdigest() or record.get(
+            "size_bytes"
+        ) != len(payload):
             raise ValueError("prepared final-test staging identity differs")
 
 
@@ -589,14 +559,10 @@ def _build_frozen_prepared_package(
         attempt_manifest = json.loads(attempt_manifest_bytes)
     except json.JSONDecodeError as error:
         raise ValueError("prepared final-test staging identity is incomplete") from error
-    if not isinstance(execution_identity, dict) or not isinstance(
-        attempt_manifest, dict
-    ):
+    if not isinstance(execution_identity, dict) or not isinstance(attempt_manifest, dict):
         raise ValueError("prepared final-test staging identity differs")
     lineage_bytes = (
-        json_bytes(lineage)
-        if lineage is not None
-        else artifacts.get("lineage_preview.json")
+        json_bytes(lineage) if lineage is not None else artifacts.get("lineage_preview.json")
     )
     if lineage_bytes is None:
         raise ValueError("prepared final-test lineage is missing")
@@ -629,11 +595,7 @@ def _assert_bound_panel_files(
 ) -> None:
     prefixes = ("final_daily_panel/", "datasets/final_daily_panel/")
     materialized = {
-        next(
-            path.removeprefix(prefix)
-            for prefix in prefixes
-            if path.startswith(prefix)
-        ): payload
+        next(path.removeprefix(prefix) for prefix in prefixes if path.startswith(prefix)): payload
         for path, payload in datasets.items()
         if path.startswith(prefixes)
     }

@@ -6,6 +6,8 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from threading import Event, get_ident
 
 import polars as pl
 import pytest
@@ -236,14 +238,13 @@ def test_final_test_builder_reuses_canonical_schema_and_manifest_without_mutatin
     assert manifest.min_date == days[0]
     assert manifest.max_date == days[-1]
     assert manifest.years == (2022, 2023, 2024, 2025)
-    assert panel.select("date", "symbol").rows() == [
-        (day, "000001") for day in days
-    ]
+    assert panel.select("date", "symbol").rows() == [(day, "000001") for day in days]
     assert saved == manifest.to_dict()
     assert saved["quality_issues"]["records"] == 0
-    assert saved["quality_issues"]["sha256"] == hashlib.sha256(
-        (root / "quality_issues.json").read_bytes()
-    ).hexdigest()
+    assert (
+        saved["quality_issues"]["sha256"]
+        == hashlib.sha256((root / "quality_issues.json").read_bytes()).hexdigest()
+    )
     for partition in saved["partitions"]:
         path = root / partition["relative_path"]
         assert partition["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
@@ -252,9 +253,7 @@ def test_final_test_builder_reuses_canonical_schema_and_manifest_without_mutatin
     inventory = json.loads((root / "input_files.json").read_text(encoding="utf-8"))
     assert inventory["schema_version"] == "1"
     assert inventory["period"] == ["2022-01-01", "2025-12-31"]
-    assert [pair["trade_date"] for pair in inventory["pairs"]] == [
-        day.isoformat() for day in days
-    ]
+    assert [pair["trade_date"] for pair in inventory["pairs"]] == [day.isoformat() for day in days]
     files = [item for pair in inventory["pairs"] for item in pair["files"]]
     assert len(files) == 8
     assert {item["role"] for item in files} == {
@@ -265,9 +264,7 @@ def test_final_test_builder_reuses_canonical_schema_and_manifest_without_mutatin
     assert all(item["rows"] == 1 for item in files)
     assert all(item["size_bytes"] > 0 for item in files)
     assert all(len(item["sha256"]) == 64 for item in files)
-    claim = json.loads(
-        (config.paths.processed / "final_test/data-build-claim.json").read_text()
-    )
+    claim = json.loads((config.paths.processed / "final_test/data-build-claim.json").read_text())
     assert claim["attempt_id"] == authorization.attempt_id
     assert claim["robustness_manifest_sha256"] == authorization.robustness_manifest_sha256
     assert claim["robustness_lineage_sha256"] == authorization.robustness_lineage_sha256
@@ -288,8 +285,7 @@ def test_final_test_builder_excludes_bse_before_publishing_panel(
     raw_lines = raw_path.read_text(encoding="utf-8").splitlines()
     adjusted_lines = adjusted_path.read_text(encoding="utf-8").splitlines()
     raw_path.write_text(
-        "\n".join([raw_lines[0], raw_lines[1], raw_lines[1].replace("000001", "920001", 1)])
-        + "\n",
+        "\n".join([raw_lines[0], raw_lines[1], raw_lines[1].replace("000001", "920001", 1)]) + "\n",
         encoding="utf-8",
     )
     adjusted_path.write_text(
@@ -317,9 +313,7 @@ def test_final_test_builder_excludes_bse_before_publishing_panel(
             "code": "outside_supported_markets_excluded",
             "count": 1,
             "date": day.isoformat(),
-            "message": (
-                "rows outside the configured supported market scope were excluded"
-            ),
+            "message": ("rows outside the configured supported market scope were excluded"),
             "severity": "warning",
             "supported_markets": ["sh", "sz"],
         }
@@ -336,9 +330,7 @@ def test_final_test_builder_keeps_stage_seven_quality_policy(
     adj_path = next(config.paths.raw_backward_adjusted.glob("*.csv"))
     raw = raw_path.read_text(encoding="utf-8").splitlines()
     adjusted = adj_path.read_text(encoding="utf-8").splitlines()
-    bad_raw = raw[1].replace("000001", "000002", 1).replace(
-        "10.5,9.8,10.2", "9.0,9.8,10.2", 1
-    )
+    bad_raw = raw[1].replace("000001", "000002", 1).replace("10.5,9.8,10.2", "9.0,9.8,10.2", 1)
     bad_adjusted = adjusted[1].replace("000001", "000002", 1)
     raw_path.write_text("\n".join([raw[0], bad_raw, raw[1]]) + "\n", encoding="utf-8")
     adj_path.write_text(
@@ -485,9 +477,7 @@ def test_build_failure_is_retained_in_claim_record(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no paired daily files"):
         _build(config, authorization, code_root)
 
-    claim = json.loads(
-        (config.paths.processed / "final_test/data-build-claim.json").read_text()
-    )
+    claim = json.loads((config.paths.processed / "final_test/data-build-claim.json").read_text())
     assert claim["attempt_id"] == authorization.attempt_id
     assert claim["status"] == "failed"
     assert claim["error_type"] == "ValueError"
@@ -526,9 +516,10 @@ def test_data_manifest_binds_stage_two_manifest_inventory_and_quality(
         "file_count": 2,
     }
     assert data_manifest["quality_issues"]["relative_path"] == "quality_issues.json"
-    assert data_manifest["quality_issues"]["sha256"] == hashlib.sha256(
-        quality.read_bytes()
-    ).hexdigest()
+    assert (
+        data_manifest["quality_issues"]["sha256"]
+        == hashlib.sha256(quality.read_bytes()).hexdigest()
+    )
 
     inventory.write_text(
         inventory.read_text(encoding="utf-8") + " ",
@@ -567,9 +558,70 @@ def test_post_publish_claim_failure_retains_resolvable_publishing_state(
     assert resolved.root == final_root / "daily_panel"
     assert resolved.claim_status == "publishing"
     assert resolved.requires_recovery is True
-    assert data_extension.verify_final_test_data_panel(resolved.root)[
-        "schema_version"
-    ] == "1"
+    assert data_extension.verify_final_test_data_panel(resolved.root)["schema_version"] == "1"
+
+
+def test_data_resolver_waits_until_installed_claim_is_postverified(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ashare_multifactor.final_test import data_extension, data_publication
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    original_update = data_extension._update_claim
+
+    def fail_published(*args: object, status: str, **kwargs: object) -> None:
+        if status == "published":
+            raise OSError("leave a valid publishing claim")
+        original_update(*args, status=status, **kwargs)
+
+    monkeypatch.setattr(data_extension, "_update_claim", fail_published)
+    with pytest.raises(RuntimeError, match="requires recovery"):
+        _build(config, authorization, code_root)
+
+    final_root = config.paths.processed / "final_test"
+    claim_path = final_root / "data-build-claim.json"
+    claim = json.loads(claim_path.read_text())
+    installed = Event()
+    release_writer = Event()
+    writer_thread: dict[str, int] = {}
+    original_read = data_publication.read_bytes_at
+
+    def pause_postverify(*args: object, **kwargs: object) -> bytes:
+        payload = original_read(*args, **kwargs)
+        if (
+            get_ident() == writer_thread.get("id")
+            and json.loads(payload).get("status") == "published"
+            and not installed.is_set()
+        ):
+            installed.set()
+            if not release_writer.wait(timeout=5):
+                raise TimeoutError("test did not release claim writer")
+        return payload
+
+    monkeypatch.setattr(data_publication, "read_bytes_at", pause_postverify)
+
+    def publish_claim() -> None:
+        writer_thread["id"] = get_ident()
+        data_publication.update_claim(
+            claim_path,
+            authorization,
+            status="published",
+            data_manifest=claim["data_manifest"],
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        writer = executor.submit(publish_claim)
+        assert installed.wait(timeout=5)
+        resolver = executor.submit(data_publication.resolve_final_test_data_panel, final_root)
+        try:
+            with pytest.raises(TimeoutError):
+                resolver.result(timeout=0.2)
+        finally:
+            release_writer.set()
+        writer.result(timeout=5)
+        assert resolver.result(timeout=5).claim_status == "published"
 
 
 def test_claimed_data_build_recovers_from_bound_inventory_without_rediscovery(
@@ -595,9 +647,7 @@ def test_claimed_data_build_recovers_from_bound_inventory_without_rediscovery(
     claim_path = config.paths.processed / "final_test/data-build-claim.json"
     claim = json.loads(claim_path.read_text(encoding="utf-8"))
     assert claim["status"] == "claimed"
-    assert claim["input_inventory"]["relative_path"].startswith(
-        "data-build-inputs/"
-    )
+    assert claim["input_inventory"]["relative_path"].startswith("data-build-inputs/")
     calls = _forbid_discovery(monkeypatch)
     monkeypatch.setattr(
         data_extension,
@@ -642,9 +692,7 @@ def test_orphan_inventory_before_claim_recovers_without_rediscovery(
     inventory = final_root / f"data-build-inputs/{authorization.attempt_id}.json"
     assert inventory.is_file()
     inventory_payload = json.loads(inventory.read_text(encoding="utf-8"))
-    assert inventory_payload["authorization_identity"]["attempt_id"] == (
-        authorization.attempt_id
-    )
+    assert inventory_payload["authorization_identity"]["attempt_id"] == (authorization.attempt_id)
     assert not (final_root / "data-build-claim.json").exists()
     inventory_bytes = inventory.read_bytes()
     monkeypatch.setattr(data_extension, "_claim_build", original_claim)
@@ -654,9 +702,7 @@ def test_orphan_inventory_before_claim_recovers_without_rediscovery(
 
     assert calls == []
     assert inventory.read_bytes() == inventory_bytes
-    assert json.loads((final_root / "data-build-claim.json").read_text())["status"] == (
-        "published"
-    )
+    assert json.loads((final_root / "data-build-claim.json").read_text())["status"] == ("published")
 
 
 def test_claim_rejects_inventory_replaced_after_in_memory_binding(
@@ -720,9 +766,7 @@ def test_orphan_inventory_mismatch_fails_closed_without_overwrite_or_discovery(
     monkeypatch.setattr(data_extension, "_claim_build", original_claim)
 
     final_root = config.paths.processed / "final_test"
-    inventory_path = (
-        final_root / f"data-build-inputs/{authorization.attempt_id}.json"
-    )
+    inventory_path = final_root / f"data-build-inputs/{authorization.attempt_id}.json"
     inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
     first_file = inventory["pairs"][0]["files"][0]
     if drift == "attempt":
@@ -773,18 +817,12 @@ def test_publishing_data_build_recovers_before_or_after_panel_rename(
             raise KeyboardInterrupt("hard crash before panel rename")
         original_publish(source_fd, source, destination_fd, destination)
 
-    monkeypatch.setattr(
-        data_extension, "atomic_rename_no_replace_at", interrupt_panel_rename
-    )
+    monkeypatch.setattr(data_extension, "atomic_rename_no_replace_at", interrupt_panel_rename)
     with pytest.raises(KeyboardInterrupt, match="before panel rename"):
         _build(config, authorization, code_root)
-    claim = json.loads(
-        (config.paths.processed / "final_test/data-build-claim.json").read_text()
-    )
+    claim = json.loads((config.paths.processed / "final_test/data-build-claim.json").read_text())
     assert claim["status"] == "publishing"
-    monkeypatch.setattr(
-        data_extension, "atomic_rename_no_replace_at", original_publish
-    )
+    monkeypatch.setattr(data_extension, "atomic_rename_no_replace_at", original_publish)
     calls = _forbid_discovery(monkeypatch)
 
     recovered = data_extension.recover_final_test_daily_panel(
@@ -854,9 +892,7 @@ def test_publishing_recovery_rejects_staging_replaced_after_binding(
             raise KeyboardInterrupt("hard crash before panel rename")
         original_rename(source_fd, source, destination_fd, destination)
 
-    monkeypatch.setattr(
-        data_extension, "atomic_rename_no_replace_at", interrupt_panel_rename
-    )
+    monkeypatch.setattr(data_extension, "atomic_rename_no_replace_at", interrupt_panel_rename)
     with pytest.raises(KeyboardInterrupt):
         _build(config, authorization, code_root)
 
@@ -934,9 +970,7 @@ def test_data_build_rejects_stage2_parent_replaced_with_self_consistent_tree(
         shutil.copytree(displaced, parent)
         return result
 
-    monkeypatch.setattr(
-        data_extension, "build_parquet_dataset", build_then_replace_parent
-    )
+    monkeypatch.setattr(data_extension, "build_parquet_dataset", build_then_replace_parent)
 
     with pytest.raises(ValueError, match="output parent.*identity|staging.*identity"):
         _build(config, authorization, code_root)
@@ -1073,9 +1107,7 @@ def test_interrupted_claim_write_never_exposes_partial_claim(
         write_bytes(parent_fd, name, b'{"status":')
         raise KeyboardInterrupt("hard crash while writing claim")
 
-    monkeypatch.setattr(
-        data_publication, "write_bytes_exclusive_at", interrupt_write
-    )
+    monkeypatch.setattr(data_publication, "write_bytes_exclusive_at", interrupt_write)
 
     with pytest.raises(KeyboardInterrupt, match="while writing claim"):
         data_publication.claim_build(final_root, authorization)
@@ -1142,9 +1174,7 @@ def test_initial_claim_rejects_temporary_file_substitution(
         data_publication.os.unlink(source, dir_fd=source_fd)
         descriptor = data_publication.os.open(
             source,
-            data_publication.os.O_WRONLY
-            | data_publication.os.O_CREAT
-            | data_publication.os.O_EXCL,
+            data_publication.os.O_WRONLY | data_publication.os.O_CREAT | data_publication.os.O_EXCL,
             0o600,
             dir_fd=source_fd,
         )
@@ -1152,9 +1182,7 @@ def test_initial_claim_rejects_temporary_file_substitution(
             stream.write(forged)
         original_publish(source_fd, source, destination_fd, destination)
 
-    monkeypatch.setattr(
-        data_publication, "atomic_rename_no_replace_at", substitute_then_publish
-    )
+    monkeypatch.setattr(data_publication, "atomic_rename_no_replace_at", substitute_then_publish)
 
     with pytest.raises(ValueError, match="claim.*identity|claim.*bytes"):
         data_publication.claim_build(final_root, authorization)
@@ -1179,9 +1207,7 @@ def test_claim_transition_rejects_temporary_file_substitution(
         data_publication.os.unlink(source, dir_fd=source_fd)
         descriptor = data_publication.os.open(
             source,
-            data_publication.os.O_WRONLY
-            | data_publication.os.O_CREAT
-            | data_publication.os.O_EXCL,
+            data_publication.os.O_WRONLY | data_publication.os.O_CREAT | data_publication.os.O_EXCL,
             0o600,
             dir_fd=source_fd,
         )

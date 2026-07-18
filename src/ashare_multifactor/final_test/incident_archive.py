@@ -375,6 +375,7 @@ def _validate_complete_evidence(
         "data-build-claim.json",
         "data-build-inputs",
         "data-staging",
+        ".data-claim.publication.lock",
         "preparations",
         _MANIFEST,
     }

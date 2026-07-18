@@ -41,7 +41,22 @@ class RecoveryAnchors:
 
 
 @contextmanager
-def opened_final_root(final_root: Path) -> Iterator[tuple[int, tuple[int, int]]]:
+def opened_final_root(
+    final_root: Path,
+    *,
+    bound_final_fd: int | None = None,
+    expected_identity: tuple[int, int] | None = None,
+) -> Iterator[tuple[int, tuple[int, int]]]:
+    if bound_final_fd is not None:
+        descriptor = os.dup(bound_final_fd)
+        try:
+            identity = directory_identity(descriptor)
+            if expected_identity is not None and identity != expected_identity:
+                raise ValueError("final-test root descriptor chain differs")
+            yield descriptor, identity
+        finally:
+            os.close(descriptor)
+        return
     try:
         canonical = final_root.resolve(strict=True)
     except OSError as error:

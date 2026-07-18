@@ -26,8 +26,11 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
 )
 from ashare_multifactor.final_test.registry import (
     resolve_execution_binding,
+    resolve_execution_binding_at,
     resolve_execution_input_manifest_hash,
+    resolve_execution_input_manifest_hash_at,
     resolve_execution_output_intent,
+    resolve_execution_output_intent_at,
 )
 
 
@@ -49,19 +52,36 @@ def resolve_bound_execution_inputs(
 ) -> BoundExecutionInputs:
     """Read the registry-bound input tree once through no-follow descriptors."""
     identity = assert_execution_identity_authorized(
-        resolve_execution_binding(
-            final_root / "attempts", attempt_id=authorization.attempt_id
-        ),
+        resolve_execution_binding(final_root / "attempts", attempt_id=authorization.attempt_id),
         authorization,
     )
     expected_hash = resolve_execution_input_manifest_hash(
         final_root / "attempts", identity=identity
     )
-    expected_outputs = resolve_execution_output_intent(
-        final_root / "attempts", identity=identity
-    )
+    expected_outputs = resolve_execution_output_intent(final_root / "attempts", identity=identity)
     return validate_execution_input_candidate(
         final_root,
+        authorization,
+        execution_identity=identity,
+        expected_manifest_sha256=expected_hash,
+        expected_primary_outputs=expected_outputs,
+    )
+
+
+def resolve_bound_execution_inputs_at(
+    final_fd: int,
+    registry_fd: int,
+    authorization: FinalTestAuthorization,
+) -> BoundExecutionInputs:
+    """Resolve immutable inputs entirely inside anchored final-root descriptors."""
+    identity = assert_execution_identity_authorized(
+        resolve_execution_binding_at(registry_fd, attempt_id=authorization.attempt_id),
+        authorization,
+    )
+    expected_hash = resolve_execution_input_manifest_hash_at(registry_fd, identity=identity)
+    expected_outputs = resolve_execution_output_intent_at(registry_fd, identity=identity)
+    return validate_execution_input_candidate_at(
+        final_fd,
         authorization,
         execution_identity=identity,
         expected_manifest_sha256=expected_hash,
@@ -78,9 +98,7 @@ def validate_execution_input_candidate(
     expected_manifest_sha256: str | None = None,
 ) -> BoundExecutionInputs:
     """Validate complete canonical inputs, including before the hash append."""
-    identity = assert_execution_identity_authorized(
-        execution_identity, authorization
-    )
+    identity = assert_execution_identity_authorized(execution_identity, authorization)
     if final_root.is_symlink():
         raise ValueError("final-test root uses a symlink")
     root = final_root.resolve()
@@ -103,14 +121,63 @@ def validate_execution_input_candidate(
             ) as input_fd:
                 tree = _read_stable_tree(input_fd)
 
+    return _validate_execution_input_tree(
+        tree,
+        authorization=authorization,
+        identity=identity,
+        expected_manifest_sha256=expected_manifest_sha256,
+        expected_primary_outputs=expected_primary_outputs,
+    )
+
+
+def validate_execution_input_candidate_at(
+    final_fd: int,
+    authorization: FinalTestAuthorization,
+    *,
+    execution_identity: Mapping[str, object],
+    expected_primary_outputs: Mapping[str, Mapping[str, object]],
+    expected_manifest_sha256: str | None = None,
+) -> BoundExecutionInputs:
+    identity = assert_execution_identity_authorized(execution_identity, authorization)
+    stored_identity = _read_nested_json(
+        final_fd,
+        ("attempt_runs", authorization.attempt_id),
+        "execution_identity.json",
+        label="execution identity",
+    )
+    if stored_identity != identity:
+        raise ValueError("execution identity differs from registry binding")
+    with opened_directory_at(
+        final_fd, "attempt_inputs", label="execution-input parent"
+    ) as parent_fd:
+        with opened_directory_at(
+            parent_fd,
+            authorization.attempt_id,
+            label="execution-input root",
+        ) as input_fd:
+            tree = _read_stable_tree(input_fd)
+    return _validate_execution_input_tree(
+        tree,
+        authorization=authorization,
+        identity=identity,
+        expected_manifest_sha256=expected_manifest_sha256,
+        expected_primary_outputs=expected_primary_outputs,
+    )
+
+
+def _validate_execution_input_tree(
+    tree: Mapping[str, bytes],
+    *,
+    authorization: FinalTestAuthorization,
+    identity: Mapping[str, object],
+    expected_manifest_sha256: str | None,
+    expected_primary_outputs: Mapping[str, Mapping[str, object]],
+) -> BoundExecutionInputs:
     manifest_bytes = tree.get("manifest.json")
     if manifest_bytes is None:
         raise ValueError("execution-input manifest is missing")
     manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
-    if (
-        expected_manifest_sha256 is not None
-        and manifest_sha256 != expected_manifest_sha256
-    ):
+    if expected_manifest_sha256 is not None and manifest_sha256 != expected_manifest_sha256:
         raise ValueError("execution-input manifest differs from registry binding")
     try:
         payload = json.loads(manifest_bytes)
@@ -145,9 +212,7 @@ def _read_nested_json(
         for name in directories:
             descriptor = os.open(
                 name,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY")
-                | getattr(os, "O_NOFOLLOW"),
+                os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
                 dir_fd=current,
             )
             descriptors.append(descriptor)
@@ -253,8 +318,7 @@ def _verify_manifest_payload(
         data = tree[path]
         if (
             expected_output.get("size_bytes") != len(data)
-            or expected_output.get("sha256")
-            != hashlib.sha256(data).hexdigest()
+            or expected_output.get("sha256") != hashlib.sha256(data).hexdigest()
         ):
             raise ValueError("deterministic execution output differs from bound intent")
     coverage = _records_by_path(
@@ -264,8 +328,7 @@ def _verify_manifest_payload(
     if not coverage:
         raise ValueError("execution-input coverage snapshot inventory is missing")
     if any(
-        not PurePosixPath(path).parts
-        or PurePosixPath(path).parts[0] != "coverage_snapshot"
+        not PurePosixPath(path).parts or PurePosixPath(path).parts[0] != "coverage_snapshot"
         for path in coverage
     ):
         raise ValueError("execution-input coverage snapshot path is unsafe")
@@ -291,12 +354,8 @@ def _verify_manifest_payload(
     snapshot_expected = {
         "attempt_id": identity["attempt_id"],
         "prepare_manifest_sha256": identity["prepare_manifest_sha256"],
-        "security_event_coverage_sha256": identity[
-            "security_event_coverage_sha256"
-        ],
-        "corporate_action_coverage_sha256": identity[
-            "corporate_action_coverage_sha256"
-        ],
+        "security_event_coverage_sha256": identity["security_event_coverage_sha256"],
+        "corporate_action_coverage_sha256": identity["corporate_action_coverage_sha256"],
     }
     if not isinstance(snapshot, dict) or any(
         snapshot.get(key) != value for key, value in snapshot_expected.items()

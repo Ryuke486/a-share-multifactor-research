@@ -25,6 +25,13 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     read_bytes_at,
     write_bytes_exclusive_at,
 )
+from ashare_multifactor.audit.publication_lock import (
+    publication_read_lock_at,
+    publication_write_lock_at,
+)
+
+
+_DATA_CLAIM_PUBLICATION_LOCK = ".data-claim.publication.lock"
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,123 @@ class FinalTestDataResolution:
     claim_status: str
     requires_recovery: bool
     data_manifest_sha256: str
+
+
+def read_data_claim_at(final_fd: int) -> dict[str, object]:
+    """Read one claim while excluding an unverified installation window."""
+    try:
+        claim = json.loads(read_data_claim_bytes_at(final_fd))
+    except json.JSONDecodeError as error:
+        raise ValueError("invalid final-test data publication claim") from error
+    if not isinstance(claim, dict):
+        raise ValueError("invalid final-test data publication claim")
+    return claim
+
+
+def read_data_claim_bytes_at(final_fd: int) -> bytes:
+    with publication_read_lock_at(final_fd, _DATA_CLAIM_PUBLICATION_LOCK):
+        try:
+            return read_bytes_at(
+                final_fd,
+                "data-build-claim.json",
+                label="final-test data publication claim",
+            )
+        except FileNotFoundError as error:
+            raise ValueError("invalid final-test data publication claim") from error
+
+
+def read_data_claim(final_root: Path) -> dict[str, object]:
+    with _opened_claim_root(final_root) as final_fd:
+        claim = read_data_claim_at(final_fd)
+        return claim
+
+
+def read_data_claim_bytes(final_root: Path) -> bytes:
+    with _opened_claim_root(final_root) as final_fd:
+        claim = read_data_claim_bytes_at(final_fd)
+        return claim
+
+
+@contextmanager
+def _opened_claim_root(final_root: Path) -> Iterator[int]:
+    descriptor = open_directory_path(final_root, label="final-test root")
+    try:
+        identity = directory_identity(descriptor)
+        metadata = os.stat(final_root, follow_symlinks=False)
+        if (metadata.st_dev, metadata.st_ino) != identity:
+            raise ValueError("final-test root identity changed")
+        yield descriptor
+        metadata = os.stat(final_root, follow_symlinks=False)
+        if (metadata.st_dev, metadata.st_ino) != identity:
+            raise ValueError("final-test root identity changed")
+    finally:
+        os.close(descriptor)
+
+
+def replace_data_claim_for_recovery(
+    final_root: Path,
+    *,
+    expected_current_bytes: bytes,
+    payload: dict[str, object],
+) -> bytes:
+    """Install a recovery claim without exposing its unverified replacement."""
+    installed = _claim_bytes(payload)
+    with _opened_publication_root(final_root) as directories:
+        with publication_write_lock_at(directories.final_fd, _DATA_CLAIM_PUBLICATION_LOCK):
+            current = read_bytes_at(
+                directories.final_fd,
+                "data-build-claim.json",
+                label="final-test data publication claim",
+            )
+            if current != expected_current_bytes:
+                raise ValueError("final-test data claim changed before recovery")
+            temporary = f".data-build-claim.recovery.{uuid4().hex}.tmp"
+            try:
+                write_bytes_exclusive_at(directories.final_fd, temporary, installed)
+                temporary_metadata = os.stat(
+                    temporary,
+                    dir_fd=directories.final_fd,
+                    follow_symlinks=False,
+                )
+                os.replace(
+                    temporary,
+                    "data-build-claim.json",
+                    src_dir_fd=directories.final_fd,
+                    dst_dir_fd=directories.final_fd,
+                )
+                installed_metadata = os.stat(
+                    "data-build-claim.json",
+                    dir_fd=directories.final_fd,
+                    follow_symlinks=False,
+                )
+                installed_bytes = read_bytes_at(
+                    directories.final_fd,
+                    "data-build-claim.json",
+                    label="final-test data publication claim",
+                )
+                if (installed_metadata.st_dev, installed_metadata.st_ino) != (
+                    temporary_metadata.st_dev,
+                    temporary_metadata.st_ino,
+                ) or installed_bytes != installed:
+                    _unlink_if_identity(
+                        directories.final_fd,
+                        "data-build-claim.json",
+                        installed_metadata,
+                    )
+                    write_bytes_exclusive_at(
+                        directories.final_fd,
+                        "data-build-claim.json",
+                        expected_current_bytes,
+                    )
+                    raise ValueError("final-test data claim identity or bytes changed")
+                os.fsync(directories.final_fd)
+            finally:
+                try:
+                    os.unlink(temporary, dir_fd=directories.final_fd)
+                except FileNotFoundError:
+                    pass
+            directories.assert_bound()
+    return installed
 
 
 @dataclass
@@ -72,22 +196,16 @@ class _PublicationRoot:
 @contextmanager
 def _opened_publication_root(final_root: Path) -> Iterator[_PublicationRoot]:
     data_root = final_root.parent.parent
-    data_parent_fd = open_directory_path(
-        data_root.parent, label="final-test data-root parent"
-    )
+    data_parent_fd = open_directory_path(data_root.parent, label="final-test data-root parent")
     data_fd: int | None = None
     processed_fd: int | None = None
     final_fd: int | None = None
     try:
-        data_fd = open_directory_at(
-            data_parent_fd, data_root.name, label="final-test data root"
-        )
+        data_fd = open_directory_at(data_parent_fd, data_root.name, label="final-test data root")
         processed_fd = open_directory_at(
             data_fd, final_root.parent.name, label="final-test processed root"
         )
-        final_fd = open_directory_at(
-            processed_fd, final_root.name, label="final-test root"
-        )
+        final_fd = open_directory_at(processed_fd, final_root.name, label="final-test root")
         directories = _PublicationRoot(
             data_parent_fd=data_parent_fd,
             data_fd=data_fd,
@@ -128,9 +246,9 @@ def claim_build(
         staging_relative_path=staging_relative_path,
     )
     temporary_name = f".data-build-claim.{uuid4().hex}.tmp"
-    claim_bytes = (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    claim_bytes = (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
     if final_fd is not None:
         _install_claim_at(
             final_fd,
@@ -163,13 +281,31 @@ def _install_claim_at(
     input_inventory: dict[str, object] | None,
     bound_inventory_bytes: bytes | None,
 ) -> None:
+    with publication_write_lock_at(final_fd, _DATA_CLAIM_PUBLICATION_LOCK):
+        _install_claim_locked_at(
+            final_fd,
+            claim_path=claim_path,
+            claim_bytes=claim_bytes,
+            temporary_name=temporary_name,
+            input_inventory=input_inventory,
+            bound_inventory_bytes=bound_inventory_bytes,
+        )
+
+
+def _install_claim_locked_at(
+    final_fd: int,
+    *,
+    claim_path: Path,
+    claim_bytes: bytes,
+    temporary_name: str,
+    input_inventory: dict[str, object] | None,
+    bound_inventory_bytes: bytes | None,
+) -> None:
     if bound_inventory_bytes is not None:
         _assert_bound_inventory_at(final_fd, input_inventory, bound_inventory_bytes)
     try:
         write_bytes_exclusive_at(final_fd, temporary_name, claim_bytes)
-        temporary_metadata = os.stat(
-            temporary_name, dir_fd=final_fd, follow_symlinks=False
-        )
+        temporary_metadata = os.stat(temporary_name, dir_fd=final_fd, follow_symlinks=False)
         try:
             atomic_rename_no_replace_at(
                 final_fd,
@@ -179,17 +315,12 @@ def _install_claim_at(
             )
         except FileExistsError as error:
             raise ValueError("final-test data build is already claimed") from error
-        installed_metadata = os.stat(
-            claim_path.name, dir_fd=final_fd, follow_symlinks=False
-        )
-        installed_bytes = read_bytes_at(
-            final_fd, claim_path.name, label="final-test data claim"
-        )
-        if (
-            (installed_metadata.st_dev, installed_metadata.st_ino)
-            != (temporary_metadata.st_dev, temporary_metadata.st_ino)
-            or installed_bytes != claim_bytes
-        ):
+        installed_metadata = os.stat(claim_path.name, dir_fd=final_fd, follow_symlinks=False)
+        installed_bytes = read_bytes_at(final_fd, claim_path.name, label="final-test data claim")
+        if (installed_metadata.st_dev, installed_metadata.st_ino) != (
+            temporary_metadata.st_dev,
+            temporary_metadata.st_ino,
+        ) or installed_bytes != claim_bytes:
             _unlink_if_identity(final_fd, claim_path.name, installed_metadata)
             raise ValueError("final-test data claim identity or bytes changed")
     finally:
@@ -221,9 +352,7 @@ def _assert_bound_inventory_at(
     with opened_directory_at(
         final_fd, parts[0], label="final-test bound input inventory root"
     ) as inventory_fd:
-        actual = read_bytes_at(
-            inventory_fd, parts[1], label="final-test bound input inventory"
-        )
+        actual = read_bytes_at(inventory_fd, parts[1], label="final-test bound input inventory")
     if (
         actual != expected_bytes
         or record.get("sha256") != hashlib.sha256(expected_bytes).hexdigest()
@@ -261,13 +390,29 @@ def update_claim_at(
     error: BaseException | None = None,
     data_manifest: dict[str, object] | None = None,
 ) -> None:
+    with publication_write_lock_at(final_fd, _DATA_CLAIM_PUBLICATION_LOCK):
+        _update_claim_locked_at(
+            final_fd,
+            claim_name,
+            authorization,
+            status=status,
+            error=error,
+            data_manifest=data_manifest,
+        )
+
+
+def _update_claim_locked_at(
+    final_fd: int,
+    claim_name: str,
+    authorization: FinalTestAuthorization,
+    *,
+    status: str,
+    error: BaseException | None = None,
+    data_manifest: dict[str, object] | None = None,
+) -> None:
     lock_name = f".{claim_name}.lock"
-    current_bytes = read_bytes_at(
-        final_fd, claim_name, label="final-test data claim"
-    )
-    current_metadata = os.stat(
-        claim_name, dir_fd=final_fd, follow_symlinks=False
-    )
+    current_bytes = read_bytes_at(final_fd, claim_name, label="final-test data claim")
+    current_metadata = os.stat(claim_name, dir_fd=final_fd, follow_symlinks=False)
     try:
         payload = _updated_claim_payload(
             current_bytes,
@@ -321,18 +466,12 @@ def update_claim_at(
         except FileNotFoundError:
             pass
         write_bytes_exclusive_at(final_fd, temporary_name, expected_bytes)
-        temporary_metadata = os.stat(
-            temporary_name, dir_fd=final_fd, follow_symlinks=False
-        )
-        current_again = os.stat(
-            claim_name, dir_fd=final_fd, follow_symlinks=False
-        )
+        temporary_metadata = os.stat(temporary_name, dir_fd=final_fd, follow_symlinks=False)
+        current_again = os.stat(claim_name, dir_fd=final_fd, follow_symlinks=False)
         if (current_again.st_dev, current_again.st_ino) != (
             current_metadata.st_dev,
             current_metadata.st_ino,
-        ) or read_bytes_at(
-            final_fd, claim_name, label="final-test data claim"
-        ) != current_bytes:
+        ) or read_bytes_at(final_fd, claim_name, label="final-test data claim") != current_bytes:
             raise ValueError("final-test data claim identity changed")
         os.replace(
             temporary_name,
@@ -340,17 +479,12 @@ def update_claim_at(
             src_dir_fd=final_fd,
             dst_dir_fd=final_fd,
         )
-        installed_metadata = os.stat(
-            claim_name, dir_fd=final_fd, follow_symlinks=False
-        )
-        installed_bytes = read_bytes_at(
-            final_fd, claim_name, label="final-test data claim"
-        )
-        if (
-            (installed_metadata.st_dev, installed_metadata.st_ino)
-            != (temporary_metadata.st_dev, temporary_metadata.st_ino)
-            or installed_bytes != expected_bytes
-        ):
+        installed_metadata = os.stat(claim_name, dir_fd=final_fd, follow_symlinks=False)
+        installed_bytes = read_bytes_at(final_fd, claim_name, label="final-test data claim")
+        if (installed_metadata.st_dev, installed_metadata.st_ino) != (
+            temporary_metadata.st_dev,
+            temporary_metadata.st_ino,
+        ) or installed_bytes != expected_bytes:
             _unlink_if_identity(final_fd, claim_name, installed_metadata)
             write_bytes_exclusive_at(final_fd, claim_name, current_bytes)
             raise ValueError("final-test data claim identity or bytes changed")
@@ -400,8 +534,7 @@ def _recover_claim_transaction(
         or not temporary_name.startswith(f".{claim_name}.")
         or not temporary_name.endswith(".tmp")
         or "/" in temporary_name
-        or transaction.get("new_sha256")
-        != hashlib.sha256(recorded_new).hexdigest()
+        or transaction.get("new_sha256") != hashlib.sha256(recorded_new).hexdigest()
     ):
         raise ValueError("final-test data claim transaction identity differs")
     try:
@@ -440,9 +573,9 @@ def _claim_transaction_exists(final_fd: int, lock_name: str) -> bool:
 
 
 def _claim_bytes(payload: dict[str, object]) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
 
 
 def _updated_claim_payload(
@@ -461,9 +594,7 @@ def _updated_claim_payload(
         "publishing": {"published", "failed"},
     }
     if status not in allowed.get(str(current_status), set()):
-        raise ValueError(
-            f"invalid final-test data claim transition: {current_status}->{status}"
-        )
+        raise ValueError(f"invalid final-test data claim transition: {current_status}->{status}")
     if data_manifest is None and isinstance(current, dict):
         existing_identity = current.get("data_manifest")
         if isinstance(existing_identity, dict):
@@ -493,9 +624,7 @@ def _assert_claim_authorization_identity(
     if not isinstance(current, dict):
         raise ValueError("final-test data claim authorization identity differs")
     expected = _claim_payload(authorization, status=str(current.get("status")))
-    if any(
-        current.get(key) != value for key, value in expected.items()
-    ):
+    if any(current.get(key) != value for key, value in expected.items()):
         raise ValueError("final-test data claim authorization identity differs")
     allowed = {
         *expected,
@@ -523,27 +652,35 @@ def resolve_final_test_data_panel(final_root: Path) -> FinalTestDataResolution:
     claim_path = final_root / "data-build-claim.json"
     if final_root.is_symlink() or claim_path.is_symlink():
         raise ValueError("final-test data publication path uses a symlink")
-    try:
-        claim = json.loads(claim_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
-        raise ValueError("invalid final-test data publication claim") from error
-    status = claim.get("status") if isinstance(claim, dict) else None
-    if status not in {"publishing", "published"}:
-        raise ValueError("final-test data publication is not resolvable")
-    identity = claim.get("data_manifest")
-    if not isinstance(identity, dict):
-        raise ValueError("final-test data publication lacks manifest identity")
-    manifest_path = verify_file_identity(final_root, identity, "data manifest")
-    root = final_root / "daily_panel"
-    if manifest_path != root / "data_manifest.json":
-        raise ValueError("final-test data manifest path is not canonical")
-    verify_final_test_data_panel(root)
-    return FinalTestDataResolution(
-        root=root,
-        claim_status=str(status),
-        requires_recovery=status == "publishing",
-        data_manifest_sha256=str(identity["sha256"]),
-    )
+    with _opened_claim_root(final_root) as final_fd:
+        with publication_read_lock_at(final_fd, _DATA_CLAIM_PUBLICATION_LOCK):
+            try:
+                claim = json.loads(
+                    read_bytes_at(
+                        final_fd,
+                        claim_path.name,
+                        label="final-test data publication claim",
+                    )
+                )
+            except (FileNotFoundError, json.JSONDecodeError) as error:
+                raise ValueError("invalid final-test data publication claim") from error
+            status = claim.get("status") if isinstance(claim, dict) else None
+            if status not in {"publishing", "published"}:
+                raise ValueError("final-test data publication is not resolvable")
+            identity = claim.get("data_manifest")
+            if not isinstance(identity, dict):
+                raise ValueError("final-test data publication lacks manifest identity")
+            manifest_path = verify_file_identity(final_root, identity, "data manifest")
+            root = final_root / "daily_panel"
+            if manifest_path != root / "data_manifest.json":
+                raise ValueError("final-test data manifest path is not canonical")
+            verify_final_test_data_panel(root)
+            return FinalTestDataResolution(
+                root=root,
+                claim_status=str(status),
+                requires_recovery=status == "publishing",
+                data_manifest_sha256=str(identity["sha256"]),
+            )
 
 
 def _claim_payload(

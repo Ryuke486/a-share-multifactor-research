@@ -25,6 +25,8 @@ from ashare_multifactor.final_test.data_inventory import (
 from ashare_multifactor.final_test.data_publication import (
     FinalTestDataResolution,
     claim_build as _claim_build,
+    read_data_claim_bytes,
+    read_data_claim_bytes_at,
     resolve_final_test_data_panel,
     update_claim as _update_claim_path,
     update_claim_at as _update_claim_at,
@@ -190,27 +192,21 @@ def build_final_test_daily_panel(
             claim_path = _claim_build(
                 final_root,
                 authorization,
-                final_fd=(
-                    root_binding.final_fd if root_binding is not None else None
-                ),
+                final_fd=(root_binding.final_fd if root_binding is not None else None),
             )
             _update_claim(
                 claim_path,
                 authorization,
                 status="failed",
                 error=error,
-                final_fd=(
-                    root_binding.final_fd if root_binding is not None else None
-                ),
+                final_fd=(root_binding.final_fd if root_binding is not None else None),
             )
             raise
         inventory_bytes = _json_bytes(inventory)
         if inventory_fd is None:
             _write_json(inventory_path, inventory)
         else:
-            write_bytes_exclusive_at(
-                inventory_fd, inventory_path.name, inventory_bytes
-            )
+            write_bytes_exclusive_at(inventory_fd, inventory_path.name, inventory_bytes)
         pairs = load_bound_input_pairs(
             config,
             inventory,
@@ -291,10 +287,8 @@ def _load_orphan_input_inventory_bytes(
         raise ValueError("orphan final-test input inventory is invalid") from error
     if (
         not isinstance(inventory, dict)
-        or set(inventory)
-        != {"schema_version", "period", "pairs", "authorization_identity"}
-        or inventory.get("authorization_identity")
-        != _authorization_identity(authorization)
+        or set(inventory) != {"schema_version", "period", "pairs", "authorization_identity"}
+        or inventory.get("authorization_identity") != _authorization_identity(authorization)
     ):
         raise ValueError("orphan final-test input inventory identity differs")
     pairs = load_bound_input_pairs(config, inventory, start=start, end=end)
@@ -341,9 +335,7 @@ def _build_claimed_panel(
     temporary_processed = processed / "final_test/data-staging" / authorization.attempt_id
     if temporary_processed.is_symlink():
         raise ValueError("final-test data staging path uses a symlink")
-    if temporary_processed.exists() and not _is_empty_stage2_shell(
-        temporary_processed
-    ):
+    if temporary_processed.exists() and not _is_empty_stage2_shell(temporary_processed):
         raise FileExistsError("final-test data staging requires recovery")
     temporary_target = temporary_processed / "validation_evaluation/daily_panel"
     build_config = replace(
@@ -358,9 +350,7 @@ def _build_claimed_panel(
             target.parent, authorization.attempt_id
         ) as stage2_directories:
             _crosscheck_stage2_root(root_binding, stage2_directories)
-            _assert_claim_inventory_at(
-                stage2_directories.final_fd, authorization, inventory
-            )
+            _assert_claim_inventory_at(stage2_directories.final_fd, authorization, inventory)
             with SecureStage2Output(
                 stage2_directories.validation_fd, temporary_target.name
             ) as secure_output:
@@ -394,9 +384,7 @@ def _build_claimed_panel(
                 data_manifest=data_manifest_identity,
                 final_fd=stage2_directories.final_fd,
             )
-            _assert_claim_inventory_at(
-                stage2_directories.final_fd, authorization, inventory
-            )
+            _assert_claim_inventory_at(stage2_directories.final_fd, authorization, inventory)
             stage2_directories.assert_bound()
             bound_panel_files = bound_panel.read_frozen_files()
             _publish_built_panel(
@@ -418,9 +406,7 @@ def _build_claimed_panel(
                     data_manifest=data_manifest_identity,
                     final_fd=stage2_directories.final_fd,
                 )
-                _assert_claim_inventory_at(
-                    stage2_directories.final_fd, authorization, inventory
-                )
+                _assert_claim_inventory_at(stage2_directories.final_fd, authorization, inventory)
                 stage2_directories.assert_bound()
                 _crosscheck_stage2_root(root_binding, stage2_directories)
                 stage2_directories.assert_published(bound_panel.root_identity)
@@ -437,9 +423,7 @@ def _build_claimed_panel(
                 authorization,
                 status="failed",
                 error=error,
-                final_fd=(
-                    root_binding.final_fd if root_binding is not None else None
-                ),
+                final_fd=(root_binding.final_fd if root_binding is not None else None),
             )
         raise
     except BaseException:
@@ -454,11 +438,8 @@ def _assert_claim_inventory_at(
     authorization: FinalTestAuthorization,
     inventory: dict[str, object],
 ) -> None:
-    claim_bytes = read_bytes_at(
-        final_fd, "data-build-claim.json", label="final-test data claim"
-    )
     try:
-        claim = json.loads(claim_bytes)
+        claim = json.loads(read_data_claim_bytes_at(final_fd))
     except json.JSONDecodeError as error:
         raise ValueError("invalid final-test data publication claim") from error
     expected_authorization = {
@@ -483,9 +464,7 @@ def _assert_claim_inventory_at(
     with opened_directory_at(
         final_fd, parts[0], label="final-test bound input inventory root"
     ) as inventory_fd:
-        actual = read_bytes_at(
-            inventory_fd, parts[1], label="final-test bound input inventory"
-        )
+        actual = read_bytes_at(inventory_fd, parts[1], label="final-test bound input inventory")
     expected = _json_bytes(inventory)
     if (
         actual != expected
@@ -515,20 +494,14 @@ def _bind_built_panel(
     with opened_directory_at(
         target_parent_fd, target.name, label="final-test built panel"
     ) as target_fd:
-        stage2_bytes = read_bytes_at(
-            target_fd, "manifest.json", label="Stage-2 manifest"
-        )
+        stage2_bytes = read_bytes_at(target_fd, "manifest.json", label="Stage-2 manifest")
         if json.loads(stage2_bytes) != manifest.to_dict():
             raise ValueError("Stage-2 output identity changed after build")
         inventory_bytes = _json_bytes(inventory)
         write_bytes_exclusive_at(target_fd, "input_files.json", inventory_bytes)
-        data_manifest = _data_manifest_from_bytes(
-            stage2_bytes, inventory_bytes, inventory
-        )
+        data_manifest = _data_manifest_from_bytes(stage2_bytes, inventory_bytes, inventory)
         data_manifest_bytes = _json_bytes(data_manifest)
-        write_bytes_exclusive_at(
-            target_fd, "data_manifest.json", data_manifest_bytes
-        )
+        write_bytes_exclusive_at(target_fd, "data_manifest.json", data_manifest_bytes)
     snapshot = bind_panel_snapshot(
         target,
         datasets_fd=target_parent_fd,
@@ -578,9 +551,9 @@ def _bytes_identity(payload: bytes, relative_path: str) -> dict[str, object]:
 
 
 def _json_bytes(payload: object) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
 
 
 def _publish_built_panel(
@@ -599,16 +572,11 @@ def _publish_built_panel(
             source_parent_fd, source.name, label="final-test data staging"
         ) as source_fd:
             source_identity = directory_identity(source_fd)
-            if (
-                expected_source_identity is not None
-                and source_identity != expected_source_identity
-            ):
+            if expected_source_identity is not None and source_identity != expected_source_identity:
                 raise ValueError("final-test data staging identity changed")
             if (
                 expected_source_files is not None
-                and read_frozen_tree_at(
-                    source_fd, label="bound Stage-2 publication source"
-                )
+                and read_frozen_tree_at(source_fd, label="bound Stage-2 publication source")
                 != expected_source_files
             ):
                 raise ValueError("final-test data staging bytes changed")
@@ -626,9 +594,7 @@ def _publish_built_panel(
             )
             if (
                 expected_source_files is not None
-                and read_frozen_tree_at(
-                    source_fd, label="published Stage-2 panel"
-                )
+                and read_frozen_tree_at(source_fd, label="published Stage-2 panel")
                 != expected_source_files
             ):
                 rejected_name = f".rejected-daily-panel-{uuid4().hex}"
@@ -677,9 +643,7 @@ def _publish_built_panel(
                         raise ValueError("final-test data staging identity changed")
                     if (
                         expected_source_files is not None
-                        and read_frozen_tree_at(
-                            source_fd, label="bound Stage-2 publication source"
-                        )
+                        and read_frozen_tree_at(source_fd, label="bound Stage-2 publication source")
                         != expected_source_files
                     ):
                         raise ValueError("final-test data staging bytes changed")
@@ -697,9 +661,7 @@ def _publish_built_panel(
                     )
                     if (
                         expected_source_files is not None
-                        and read_frozen_tree_at(
-                            source_fd, label="published Stage-2 panel"
-                        )
+                        and read_frozen_tree_at(source_fd, label="published Stage-2 panel")
                         != expected_source_files
                     ):
                         rejected_name = f".rejected-daily-panel-{uuid4().hex}"
@@ -715,9 +677,7 @@ def _publish_built_panel(
                             expected=source_identity,
                             label="rejected Stage-2 panel",
                         )
-                        raise ValueError(
-                            "final-test data staging bytes changed during publish"
-                        )
+                        raise ValueError("final-test data staging bytes changed during publish")
                     assert_directory_entry(
                         final_parent_fd,
                         final_root.name,
@@ -762,17 +722,14 @@ def recover_final_test_daily_panel(
     _assert_root_binding(root_binding)
     target = final_root / "daily_panel"
     claim_path = final_root / "data-build-claim.json"
-    claim = (
-        _load_claim_for_authorization(claim_path, authorization)
+    claim_payload = (
+        read_data_claim_bytes(final_root)
         if root_binding is None
-        else _load_claim_for_authorization_bytes(
-            read_bytes_at(
-                root_binding.final_fd,
-                claim_path.name,
-                label="final-test data publication claim",
-            ),
-            authorization,
-        )
+        else read_data_claim_bytes_at(root_binding.final_fd)
+    )
+    claim = _load_claim_for_authorization_bytes(
+        claim_payload,
+        authorization,
     )
     _assert_root_binding(root_binding)
     status = claim.get("status")
@@ -862,9 +819,7 @@ def _load_claim_for_authorization_bytes(
     return claim
 
 
-def _load_claim_inventory(
-    final_root: Path, claim: dict[str, object]
-) -> dict[str, object]:
+def _load_claim_inventory(final_root: Path, claim: dict[str, object]) -> dict[str, object]:
     record = claim.get("input_inventory")
     if not isinstance(record, dict):
         raise ValueError("final-test data claim lacks bound input inventory")
@@ -878,9 +833,7 @@ def _load_claim_inventory(
     return inventory
 
 
-def _load_claim_inventory_at(
-    final_fd: int, claim: dict[str, object]
-) -> dict[str, object]:
+def _load_claim_inventory_at(final_fd: int, claim: dict[str, object]) -> dict[str, object]:
     record = claim.get("input_inventory")
     if not isinstance(record, dict):
         raise ValueError("final-test data claim lacks bound input inventory")
@@ -888,18 +841,13 @@ def _load_claim_inventory_at(
     parts = Path(str(relative)).parts
     if len(parts) != 2 or parts[0] != "data-build-inputs":
         raise ValueError("final-test data claim lacks bound input inventory")
-    inventory_fd = open_directory_at(
-        final_fd, parts[0], label="final-test bound input inventory"
-    )
+    inventory_fd = open_directory_at(final_fd, parts[0], label="final-test bound input inventory")
     try:
-        payload = read_bytes_at(
-            inventory_fd, parts[1], label="final-test bound input inventory"
-        )
+        payload = read_bytes_at(inventory_fd, parts[1], label="final-test bound input inventory")
     finally:
         os.close(inventory_fd)
-    if (
-        hashlib.sha256(payload).hexdigest() != record.get("sha256")
-        or len(payload) != record.get("size_bytes")
+    if hashlib.sha256(payload).hexdigest() != record.get("sha256") or len(payload) != record.get(
+        "size_bytes"
     ):
         raise ValueError("bound input inventory identity differs")
     try:
@@ -938,9 +886,7 @@ def _recover_publishing_claim(
 ) -> None:
     manifest_record = claim.get("data_manifest")
     expected_manifest_sha256 = (
-        manifest_record.get("sha256")
-        if isinstance(manifest_record, dict)
-        else None
+        manifest_record.get("sha256") if isinstance(manifest_record, dict) else None
     )
     if not isinstance(expected_manifest_sha256, str):
         raise ValueError("publishing claim lacks bound data manifest identity")
@@ -948,13 +894,10 @@ def _recover_publishing_claim(
         final_root, authorization.attempt_id
     ) as stage2_directories:
         _crosscheck_stage2_root(root_binding, stage2_directories)
-        _assert_claim_inventory_at(
-            stage2_directories.final_fd, authorization, inventory
-        )
+        _assert_claim_inventory_at(stage2_directories.final_fd, authorization, inventory)
         if not target.exists():
             staging_target = (
-                _claim_staging_path(final_root, claim)
-                / "validation_evaluation/daily_panel"
+                _claim_staging_path(final_root, claim) / "validation_evaluation/daily_panel"
             )
             snapshot = bind_panel_snapshot(
                 staging_target,
@@ -985,9 +928,7 @@ def _recover_publishing_claim(
             stage2_directories.assert_published(snapshot.root_identity)
             resolution = resolve_final_test_data_panel(final_root)
             if not resolution.requires_recovery:
-                raise ValueError(
-                    "publishing final-test data claim recovery state is inconsistent"
-                )
+                raise ValueError("publishing final-test data claim recovery state is inconsistent")
             _update_claim(
                 claim_path,
                 authorization,
@@ -999,9 +940,7 @@ def _recover_publishing_claim(
                 ),
                 final_fd=stage2_directories.final_fd,
             )
-            _assert_claim_inventory_at(
-                stage2_directories.final_fd, authorization, inventory
-            )
+            _assert_claim_inventory_at(stage2_directories.final_fd, authorization, inventory)
             snapshot.read_frozen_files()
             stage2_directories.assert_bound()
             _crosscheck_stage2_root(root_binding, stage2_directories)
@@ -1078,9 +1017,7 @@ def _verify_authorization(
         raise ValueError("current robustness identity differs from final-test authorization")
     try:
         sealed = json.loads(
-            (robustness.artifacts / "sealed_test_protocol.json").read_text(
-                encoding="utf-8"
-            )
+            (robustness.artifacts / "sealed_test_protocol.json").read_text(encoding="utf-8")
         )
     except (FileNotFoundError, json.JSONDecodeError) as error:
         raise ValueError("invalid current sealed final-test protocol") from error

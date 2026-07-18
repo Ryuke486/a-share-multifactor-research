@@ -59,45 +59,62 @@ class FinalPublicationTransaction:
     artifacts_identity: tuple[int, int]
 
     @classmethod
-    def open(cls, final_root: Path, *, attempt_id: str) -> FinalPublicationTransaction:
+    def open(
+        cls,
+        final_root: Path,
+        *,
+        attempt_id: str,
+        root_binding: FinalRootBinding | None = None,
+    ) -> FinalPublicationTransaction:
         data_root = final_root.parent.parent
         descriptors: list[int] = []
         try:
-            data_root_parent_fd = open_directory_path(
-                data_root.parent, label="final-test data-root parent"
-            )
-            descriptors.append(data_root_parent_fd)
-            data_root_fd = open_directory_at(
-                data_root_parent_fd, data_root.name, label="final-test data root"
-            )
-            descriptors.append(data_root_fd)
-            processed_fd = open_directory_at(
-                data_root_fd, "processed", label="final-test processed root"
-            )
-            descriptors.append(processed_fd)
-            final_fd = open_directory_at(
-                processed_fd, "final_test", label="final-test root"
-            )
-            descriptors.append(final_fd)
-            attempts_fd = open_directory_at(
-                final_fd, "attempts", label="final-test registry"
-            )
-            descriptors.append(attempts_fd)
+            if root_binding is None:
+                data_root_parent_fd = open_directory_path(
+                    data_root.parent, label="final-test data-root parent"
+                )
+                descriptors.append(data_root_parent_fd)
+                data_root_fd = open_directory_at(
+                    data_root_parent_fd,
+                    data_root.name,
+                    label="final-test data root",
+                )
+                descriptors.append(data_root_fd)
+                processed_fd = open_directory_at(
+                    data_root_fd, "processed", label="final-test processed root"
+                )
+                descriptors.append(processed_fd)
+                final_fd = open_directory_at(processed_fd, "final_test", label="final-test root")
+                descriptors.append(final_fd)
+                attempts_fd = open_directory_at(final_fd, "attempts", label="final-test registry")
+                descriptors.append(attempts_fd)
+            else:
+                root_binding.assert_bound()
+                data_root_parent_fd = os.dup(root_binding.data_parent_fd)
+                data_root_fd = os.dup(root_binding.data_fd)
+                processed_fd = os.dup(root_binding.processed_fd)
+                final_fd = os.dup(root_binding.final_fd)
+                attempts_fd = os.dup(root_binding.attempts_fd)
+                descriptors.extend(
+                    (
+                        data_root_parent_fd,
+                        data_root_fd,
+                        processed_fd,
+                        final_fd,
+                        attempts_fd,
+                    )
+                )
             try:
                 os.mkdir("releases", mode=0o700, dir_fd=final_fd)
             except FileExistsError:
                 pass
-            releases_fd = open_directory_at(
-                final_fd, "releases", label="final-test releases"
-            )
+            releases_fd = open_directory_at(final_fd, "releases", label="final-test releases")
             descriptors.append(releases_fd)
             attempt_runs_fd = open_directory_at(
                 final_fd, "attempt_runs", label="final-test attempt-runs"
             )
             descriptors.append(attempt_runs_fd)
-            attempt_fd = open_directory_at(
-                attempt_runs_fd, attempt_id, label="final-test attempt"
-            )
+            attempt_fd = open_directory_at(attempt_runs_fd, attempt_id, label="final-test attempt")
             descriptors.append(attempt_fd)
             datasets_fd = open_directory_at(
                 attempt_fd, "datasets", label="final-test attempt datasets"
@@ -190,9 +207,7 @@ class FinalPublicationTransaction:
             ("releases", self.releases_identity, "final-test releases"),
             ("attempt_runs", self.attempt_runs_identity, "final-test attempt-runs"),
         ):
-            assert_directory_entry(
-                self.final_fd, name, expected=identity, label=label
-            )
+            assert_directory_entry(self.final_fd, name, expected=identity, label=label)
         assert_directory_entry(
             self.attempt_runs_fd,
             self.attempt_id,
@@ -222,9 +237,7 @@ class FinalPublicationTransaction:
             (self.artifacts_identity, directories.artifacts_identity),
         )
         if any(left != right for left, right in expected):
-            raise PublicationNamespaceChanged(
-                "final publication attempt descriptor chain differs"
-            )
+            raise PublicationNamespaceChanged("final publication attempt descriptor chain differs")
         self.assert_bound()
 
     def crosscheck_root(self, binding: FinalRootBinding) -> None:
@@ -235,9 +248,7 @@ class FinalPublicationTransaction:
             (self.attempts_identity, binding.attempts_identity),
         )
         if any(left != right for left, right in expected):
-            raise PublicationNamespaceChanged(
-                "final publication root descriptor chain differs"
-            )
+            raise PublicationNamespaceChanged("final publication root descriptor chain differs")
         binding.assert_bound()
         self.assert_bound()
 
@@ -248,9 +259,7 @@ class FinalPublicationTransaction:
             (self.releases_identity, held.releases_identity),
         )
         if any(left != right for left, right in expected):
-            raise PublicationNamespaceChanged(
-                "CURRENT publication descriptor chain differs"
-            )
+            raise PublicationNamespaceChanged("CURRENT publication descriptor chain differs")
         self.assert_bound()
 
     def append_prepared(

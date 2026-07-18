@@ -10,19 +10,20 @@ from pathlib import Path
 from typing import Iterator, Mapping
 
 from ashare_multifactor.final_test.registry import (
-    begin_execution_recovery,
-    complete_execution_recovery,
-    completed_execution_recovery_intents,
-    pending_execution_recovery,
-    resolve_execution_binding,
-    resolve_execution_input_manifest_hash,
+    begin_execution_recovery_at,
+    complete_execution_recovery_at,
+    completed_execution_recovery_intents_at,
+    pending_execution_recovery_at,
+    resolve_execution_binding_at,
+    resolve_execution_input_manifest_hash_at,
     validate_publication_id,
 )
 from ashare_multifactor.audit.secure_tree import write_frozen_tree_at
 from ashare_multifactor.final_test.execution_binding import (
     BoundExecutionInputs,
-    resolve_bound_execution_inputs,
+    resolve_bound_execution_inputs_at,
 )
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.recovery_secure_fs import (
     assert_directory_entry as _assert_directory_entry,
     atomic_rename_no_replace_at as _atomic_rename_no_replace_at,
@@ -79,16 +80,55 @@ def recover_interrupted_execution(
     *,
     preflight: ResumePreflight,
     coverage_snapshot_manifest_sha256: str,
+    root_binding: FinalRootBinding | None = None,
 ) -> Path | None:
     """Archive all directories bound to one interrupted execution, then audit it."""
-    attempt_id = preflight.authorization.attempt_id
-    registry_root = final_root / "attempts"
     identities = {
         "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
         "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
         "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
     }
-    with _opened_final_root(final_root) as (final_fd, final_identity):
+    if root_binding is not None:
+        root_binding.assert_bound()
+    with _opened_final_root(
+        final_root,
+        bound_final_fd=(root_binding.final_fd if root_binding else None),
+        expected_identity=(root_binding.final_identity if root_binding else None),
+    ) as (final_fd, final_identity):
+        registry_fd = (
+            root_binding.attempts_fd
+            if root_binding is not None
+            else _open_directory_at(final_fd, "attempts", label="attempt registry")
+        )
+        close_registry_fd = root_binding is None
+        try:
+            return _recover_interrupted_execution_at(
+                final_root,
+                final_fd=final_fd,
+                final_identity=final_identity,
+                registry_fd=registry_fd,
+                preflight=preflight,
+                coverage_snapshot_manifest_sha256=(coverage_snapshot_manifest_sha256),
+                identities=identities,
+            )
+        finally:
+            if close_registry_fd:
+                os.close(registry_fd)
+
+
+def _recover_interrupted_execution_at(
+    final_root: Path,
+    *,
+    final_fd: int,
+    final_identity: tuple[int, int],
+    registry_fd: int,
+    preflight: ResumePreflight,
+    coverage_snapshot_manifest_sha256: str,
+    identities: dict[str, str],
+) -> Path | None:
+    attempt_id = preflight.authorization.attempt_id
+    intent: dict[str, object] | None = None
+    try:
         _reject_unsafe_optional_directory_at(
             final_fd,
             "interrupted_runs",
@@ -97,11 +137,11 @@ def recover_interrupted_execution(
         verified_completed = _verified_completed_archive_hashes_at(
             final_fd,
             final_identity=final_identity,
-            registry_root=registry_root,
+            registry_fd=registry_fd,
             attempt_id=attempt_id,
         )
-        intent = pending_execution_recovery(
-            registry_root,
+        intent = pending_execution_recovery_at(
+            registry_fd,
             attempt_id,
             verified_completed_archive_manifest_sha256=verified_completed,
         )
@@ -112,8 +152,8 @@ def recover_interrupted_execution(
         )
         if intent is None and not presence["attempt_run"]:
             return None
-        registry_identity = resolve_execution_binding(
-            registry_root,
+        registry_identity = resolve_execution_binding_at(
+            registry_fd,
             attempt_id=attempt_id,
         )
         expected_registry_identity = _expected_execution_identity(
@@ -124,17 +164,15 @@ def recover_interrupted_execution(
         if registry_identity != expected_registry_identity:
             raise ValueError("interrupted execution differs from registry binding")
         expected_input_manifest_sha256 = (
-            resolve_execution_input_manifest_hash(
-                registry_root,
+            resolve_execution_input_manifest_hash_at(
+                registry_fd,
                 identity=registry_identity,
             )
             if presence["attempt_inputs"]
             else None
         )
         bound_inputs = (
-            resolve_bound_execution_inputs(
-                final_root, preflight.authorization
-            )
+            resolve_bound_execution_inputs_at(final_fd, registry_fd, preflight.authorization)
             if presence["attempt_inputs"]
             else None
         )
@@ -156,16 +194,14 @@ def recover_interrupted_execution(
                 expected_identity = _expected_execution_identity(
                     preflight,
                     execution_id=identity.get("execution_id"),
-                    coverage_snapshot_manifest_sha256=(
-                        coverage_snapshot_manifest_sha256
-                    ),
+                    coverage_snapshot_manifest_sha256=(coverage_snapshot_manifest_sha256),
                 )
                 if identity != expected_identity or identity != registry_identity:
                     raise ValueError(
                         "partial final-test execution identity differs from registry binding"
                     )
-                intent = begin_execution_recovery(
-                    registry_root,
+                intent = begin_execution_recovery_at(
+                    registry_fd,
                     attempt_id=attempt_id,
                     execution_id=str(identity["execution_id"]),
                     identities=identities,
@@ -189,9 +225,7 @@ def recover_interrupted_execution(
                 expected_identity = _expected_execution_identity(
                     preflight,
                     execution_id=identity.get("execution_id"),
-                    coverage_snapshot_manifest_sha256=(
-                        coverage_snapshot_manifest_sha256
-                    ),
+                    coverage_snapshot_manifest_sha256=(coverage_snapshot_manifest_sha256),
                 )
                 if identity != expected_identity or identity != registry_identity:
                     raise ValueError(
@@ -255,78 +289,98 @@ def recover_interrupted_execution(
                     label="interrupted archive manifest",
                 )
                 _assert_recovery_anchors(recovery)
-                complete_execution_recovery(
-                    registry_root,
+                complete_execution_recovery_at(
+                    registry_fd,
                     intent=intent,
                     verified_archive_manifest_sha256=archive_manifest_sha256,
                     verified_archive_manifest_bytes=archive_manifest_bytes,
                     verified_completed_archive_manifest_sha256=verified_completed,
                 )
+    finally:
+        pass
+    if intent is None:
+        return None
     return final_root / str(intent["archived_path"])
 
 
-def has_recoverable_execution_archive(final_root: Path, *, attempt_id: str) -> bool:
+def has_recoverable_execution_archive(
+    final_root: Path,
+    *,
+    attempt_id: str,
+    root_binding: FinalRootBinding | None = None,
+) -> bool:
     try:
-        with _opened_final_root(final_root) as (final_fd, _final_identity):
-            registry_root = final_root / "attempts"
-            verified_completed = _verified_completed_archive_hashes_at(
-                final_fd,
-                final_identity=_final_identity,
-                registry_root=registry_root,
-                attempt_id=attempt_id,
+        with _opened_final_root(
+            final_root,
+            bound_final_fd=(root_binding.final_fd if root_binding else None),
+            expected_identity=(root_binding.final_identity if root_binding else None),
+        ) as (final_fd, final_identity):
+            registry_fd = (
+                root_binding.attempts_fd
+                if root_binding is not None
+                else _open_directory_at(final_fd, "attempts", label="attempt registry")
             )
-            intent = pending_execution_recovery(
-                registry_root,
-                attempt_id,
-                verified_completed_archive_manifest_sha256=verified_completed,
-            )
-            if intent is None:
-                return False
-            if _nested_directory_exists_at(
-                final_fd,
-                parent_name="attempt_runs",
-                child_name=attempt_id,
-                label="partial execution source",
-            ):
-                return False
-            recovery_id = validate_publication_id(
-                str(intent.get("recovery_id", ""))
-            )
-            with _opened_directory_at(
-                final_fd,
-                "interrupted_runs",
-                label="interrupted_runs safe directory",
-            ) as interrupted_fd:
-                with _opened_directory_at(
-                    interrupted_fd,
+            close_registry_fd = root_binding is None
+            try:
+                verified_completed = _verified_completed_archive_hashes_at(
+                    final_fd,
+                    final_identity=final_identity,
+                    registry_fd=registry_fd,
+                    attempt_id=attempt_id,
+                )
+                intent = pending_execution_recovery_at(
+                    registry_fd,
                     attempt_id,
-                    label="interrupted attempt directory",
-                ) as attempt_fd:
+                    verified_completed_archive_manifest_sha256=verified_completed,
+                )
+                if intent is None:
+                    return False
+                if _nested_directory_exists_at(
+                    final_fd,
+                    parent_name="attempt_runs",
+                    child_name=attempt_id,
+                    label="partial execution source",
+                ):
+                    return False
+                recovery_id = validate_publication_id(str(intent.get("recovery_id", "")))
+                with _opened_directory_at(
+                    final_fd,
+                    "interrupted_runs",
+                    label="interrupted_runs safe directory",
+                ) as interrupted_fd:
                     with _opened_directory_at(
-                        attempt_fd,
-                        recovery_id,
-                        label="recovery claim",
-                    ) as recovery_fd:
-                        if (
-                            _read_json_at(
-                                recovery_fd,
-                                ".intent-claim.json",
-                                label="recovery claim",
-                            )
-                            != intent
-                        ):
-                            return False
+                        interrupted_fd,
+                        attempt_id,
+                        label="interrupted attempt directory",
+                    ) as attempt_fd:
                         with _opened_directory_at(
-                            recovery_fd,
-                            "archive",
-                            label="archive safe directory",
-                        ) as archive_fd:
-                            with _opened_directory_at(
-                                archive_fd,
-                                "attempt_run",
-                                label="archived execution directory",
+                            attempt_fd,
+                            recovery_id,
+                            label="recovery claim",
+                        ) as recovery_fd:
+                            if (
+                                _read_json_at(
+                                    recovery_fd,
+                                    ".intent-claim.json",
+                                    label="recovery claim",
+                                )
+                                != intent
                             ):
-                                return True
+                                return False
+                            with _opened_directory_at(
+                                recovery_fd,
+                                "archive",
+                                label="archive safe directory",
+                            ) as archive_fd:
+                                with _opened_directory_at(
+                                    archive_fd,
+                                    "attempt_run",
+                                    label="archived execution directory",
+                                ):
+                                    return True
+            finally:
+                if close_registry_fd:
+                    os.close(registry_fd)
     except (FileNotFoundError, ValueError):
         return False
 
@@ -335,11 +389,11 @@ def _verified_completed_archive_hashes_at(
     final_fd: int,
     *,
     final_identity: tuple[int, int],
-    registry_root: Path,
+    registry_fd: int,
     attempt_id: str,
 ) -> dict[str, str]:
     verified: dict[str, str] = {}
-    for intent in completed_execution_recovery_intents(registry_root, attempt_id):
+    for intent in completed_execution_recovery_intents_at(registry_fd, attempt_id):
         recovery_id = validate_publication_id(str(intent.get("recovery_id", "")))
         with _open_existing_recovery_archive_at(
             final_fd,
@@ -564,9 +618,7 @@ def _load_and_verify_bound_artifacts_at(
                 )
             except FileNotFoundError as error:
                 if not allow_moved or archive_fd is None:
-                    raise ValueError(
-                        "interrupted execution artifact is missing"
-                    ) from error
+                    raise ValueError("interrupted execution artifact is missing") from error
                 try:
                     artifact_fd = stack.enter_context(
                         _opened_directory_at(
@@ -576,9 +628,7 @@ def _load_and_verify_bound_artifacts_at(
                         )
                     )
                 except FileNotFoundError as archive_error:
-                    raise ValueError(
-                        "interrupted execution artifact is missing"
-                    ) from archive_error
+                    raise ValueError("interrupted execution artifact is missing") from archive_error
             manifest_name = {
                 "attempt_run": "execution_identity.json",
                 "execution_input_sources": "source_manifest.json",
@@ -598,9 +648,7 @@ def _load_and_verify_bound_artifacts_at(
                     )
                 ).hexdigest()
                 if manifest_sha256 != expected_input_manifest_sha256:
-                    raise ValueError(
-                        "interrupted execution inputs differ from registry binding"
-                    )
+                    raise ValueError("interrupted execution inputs differ from registry binding")
     identity = payloads["attempt_run"]
     if set(identity) != _IDENTITY_KEYS:
         raise ValueError("partial final-test execution identity schema differs")

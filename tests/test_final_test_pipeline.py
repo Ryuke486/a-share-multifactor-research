@@ -89,8 +89,10 @@ def test_authorized_stage8_identity_rejects_post_authorization_change(
     artifacts.mkdir()
     (artifacts / "sealed_test_protocol.json").write_text("{}")
     release = publish_release(
-        tmp_path / "processed/robustness", run_id="stage8-successor",
-        staged_datasets=datasets, staged_artifacts=artifacts,
+        tmp_path / "processed/robustness",
+        run_id="stage8-successor",
+        staged_datasets=datasets,
+        staged_artifacts=artifacts,
         lineage={"stage": "robustness"},
     )
     authorization = _authorization()
@@ -98,9 +100,7 @@ def test_authorized_stage8_identity_rejects_post_authorization_change(
         **{
             **authorization.__dict__,
             "robustness_manifest_sha256": release.manifest_sha256,
-            "robustness_lineage_sha256": hashlib.sha256(
-                release.lineage.read_bytes()
-            ).hexdigest(),
+            "robustness_lineage_sha256": hashlib.sha256(release.lineage.read_bytes()).hexdigest(),
         }
     )
     (release.root / changed).write_text("changed", encoding="utf-8")
@@ -140,9 +140,7 @@ def _prepared_publication_identity() -> dict[str, object]:
     }
 
 
-def _execution_coverage_snapshot(
-    prepared_attempt: PreparedAttempt, preflight: object
-):
+def _execution_coverage_snapshot(prepared_attempt: PreparedAttempt, preflight: object):
     return snapshot_execution_coverages(
         prepared_attempt.data_root / "processed/final_test",
         attempt_id=prepared_attempt.attempt_id,
@@ -189,10 +187,7 @@ def test_materialized_coverage_uses_one_frozen_descriptor_snapshot(
         "write_frozen_tree_at",
         replace_after_freeze,
     )
-    destination = (
-        prepared_attempt.data_root
-        / "processed/final_test/materialized-coverage"
-    )
+    destination = prepared_attempt.data_root / "processed/final_test/materialized-coverage"
     coverage_module.materialize_bound_coverage_snapshot(
         prepared_attempt.data_root / "processed/final_test",
         attempt_id=prepared_attempt.attempt_id,
@@ -257,12 +252,7 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
         **kwargs: object,
     ) -> dict[str, object]:
         final_root = Path(str(kwargs["final_root"]))
-        manifest = (
-            final_root
-            / "attempt_inputs"
-            / authorization.attempt_id
-            / "manifest.json"
-        )
+        manifest = final_root / "attempt_inputs" / authorization.attempt_id / "manifest.json"
         manifest.parent.mkdir(parents=True)
         actions = manifest.parent / "corporate_actions.parquet"
         events = manifest.parent / "security_events.parquet"
@@ -272,9 +262,7 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
         events.write_bytes(expected["security_events.parquet"])
         snapshot = manifest.parent / "coverage_snapshot"
         shutil.copytree(
-            final_root
-            / "execution_coverage_snapshots"
-            / authorization.attempt_id,
+            final_root / "execution_coverage_snapshots" / authorization.attempt_id,
             snapshot,
         )
         payload = build_execution_input_manifest(
@@ -363,9 +351,7 @@ def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
         "_copy_release_inputs": copy_inputs,
         "resolve_final_test_data_panel": lambda final_root: SimpleNamespace(
             root=final_root / "daily_panel",
-            data_manifest_sha256=sha256_file(
-                final_root / "daily_panel/data_manifest.json"
-            ),
+            data_manifest_sha256=sha256_file(final_root / "daily_panel/data_manifest.json"),
         ),
         "_upstream_identity": lambda *_args, **_kwargs: {
             "robustness_release": "stage8-successor",
@@ -413,9 +399,7 @@ def test_resume_recovers_crash_after_attempt_directories_before_identity(
     write_json_at = staging_module.write_json_at
     crashed = False
 
-    def crash_before_identity(
-        directory_fd: int, name: str, payload: object
-    ) -> None:
+    def crash_before_identity(directory_fd: int, name: str, payload: object) -> None:
         nonlocal crashed
         if name == "execution_identity.json" and not crashed:
             crashed = True
@@ -540,8 +524,7 @@ def test_resume_rejects_self_consistent_primary_files_before_first_hash_bind(
     manifest_path = input_root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest["files"] = [
-        file_record(path, root=input_root, role=path.stem).to_dict()
-        for path in (actions, events)
+        file_record(path, root=input_root, role=path.stem).to_dict() for path in (actions, events)
     ]
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -576,11 +559,7 @@ def test_first_execution_rejects_replacement_after_atomic_input_publish(
         manifest = build_inputs(*args, **kwargs)
         authorization = args[0]
         assert isinstance(authorization, FinalTestAuthorization)
-        input_root = (
-            Path(str(kwargs["final_root"]))
-            / "attempt_inputs"
-            / authorization.attempt_id
-        )
+        input_root = Path(str(kwargs["final_root"])) / "attempt_inputs" / authorization.attempt_id
         actions = input_root / "corporate_actions.parquet"
         events = input_root / "security_events.parquet"
         pl.DataFrame({"placeholder": [999]}).write_parquet(actions)
@@ -612,6 +591,7 @@ def test_first_execution_rejects_replacement_after_atomic_input_publish(
             run_id="final-release",
         )
 
+
 def test_resume_records_failed_outcome_when_coverage_drifts_after_claim(
     prepared_attempt: PreparedAttempt,
     monkeypatch: pytest.MonkeyPatch,
@@ -620,13 +600,9 @@ def test_resume_records_failed_outcome_when_coverage_drifts_after_claim(
     original_verify = pipeline_module.verify_resume_coverages
 
     def drift_then_verify(*args: object, **kwargs: object) -> None:
-        payload = json.loads(
-            prepared_attempt.security_coverage.read_text(encoding="utf-8")
-        )
+        payload = json.loads(prepared_attempt.security_coverage.read_text(encoding="utf-8"))
         payload["post_claim_drift"] = True
-        prepared_attempt.security_coverage.write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        prepared_attempt.security_coverage.write_text(json.dumps(payload), encoding="utf-8")
         original_verify(*args, **kwargs)
 
     monkeypatch.setattr(pipeline_module, "verify_resume_coverages", drift_then_verify)
@@ -644,9 +620,7 @@ def test_resume_records_failed_outcome_when_coverage_drifts_after_claim(
 
     registry = prepared_attempt.data_root / "processed/final_test/attempts"
     assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "failed"
-    assert not (
-        prepared_attempt.data_root / "processed/final_test/CURRENT.json"
-    ).exists()
+    assert not (prepared_attempt.data_root / "processed/final_test/CURRENT.json").exists()
 
 
 def test_resume_snapshots_coverages_before_post_review_self_consistent_swap(
@@ -658,13 +632,9 @@ def test_resume_snapshots_coverages_before_post_review_self_consistent_swap(
 
     def verify_then_swap(*args: object, **kwargs: object) -> None:
         original_verify(*args, **kwargs)
-        payload = json.loads(
-            prepared_attempt.security_coverage.read_text(encoding="utf-8")
-        )
+        payload = json.loads(prepared_attempt.security_coverage.read_text(encoding="utf-8"))
         payload["self_consistent_replacement"] = "second-official-set"
-        prepared_attempt.security_coverage.write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        prepared_attempt.security_coverage.write_text(json.dumps(payload), encoding="utf-8")
 
     monkeypatch.setattr(pipeline_module, "verify_resume_coverages", verify_then_swap)
 
@@ -682,9 +652,7 @@ def test_resume_snapshots_coverages_before_post_review_self_consistent_swap(
     final_root = prepared_attempt.data_root / "processed/final_test"
     assert not (final_root / "CURRENT.json").exists()
     assert (
-        resolve_attempt_state(final_root / "attempts", prepared_attempt.attempt_id)[
-            "state"
-        ]
+        resolve_attempt_state(final_root / "attempts", prepared_attempt.attempt_id)["state"]
         == "failed"
     )
 
@@ -769,9 +737,7 @@ def test_resume_archives_verified_partial_execution_before_recomputing(
             {
                 "execution_id": "interrupted-execution",
                 "attempt_id": prepared_attempt.attempt_id,
-                "sealed_protocol_sha256": (
-                    preflight.authorization.sealed_protocol_sha256
-                ),
+                "sealed_protocol_sha256": (preflight.authorization.sealed_protocol_sha256),
                 **identities,
                 "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
             }
@@ -780,9 +746,7 @@ def test_resume_archives_verified_partial_execution_before_recomputing(
     )
     bind_execution_identity(
         registry,
-        identity=json.loads(
-            (partial / "execution_identity.json").read_text(encoding="utf-8")
-        ),
+        identity=json.loads((partial / "execution_identity.json").read_text(encoding="utf-8")),
     )
     (partial / "partial.bin").write_bytes(b"immutable interrupted bytes")
     _patch_steps(monkeypatch, publishable=True)
@@ -847,9 +811,7 @@ def test_resume_completes_recovery_audit_after_move_before_event_crash(
             {
                 "execution_id": "interrupted-execution",
                 "attempt_id": prepared_attempt.attempt_id,
-                "sealed_protocol_sha256": (
-                    preflight.authorization.sealed_protocol_sha256
-                ),
+                "sealed_protocol_sha256": (preflight.authorization.sealed_protocol_sha256),
                 **identities,
                 "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
             }
@@ -858,16 +820,14 @@ def test_resume_completes_recovery_audit_after_move_before_event_crash(
     )
     bind_execution_identity(
         registry,
-        identity=json.loads(
-            (partial / "execution_identity.json").read_text(encoding="utf-8")
-        ),
+        identity=json.loads((partial / "execution_identity.json").read_text(encoding="utf-8")),
     )
     (partial / "partial.bin").write_bytes(b"crash-between-move-and-complete")
     _patch_steps(monkeypatch, publishable=True)
-    complete = recovery_module.complete_execution_recovery
+    complete = recovery_module.complete_execution_recovery_at
     monkeypatch.setattr(
         recovery_module,
-        "complete_execution_recovery",
+        "complete_execution_recovery_at",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("crash before recovery complete")
         ),
@@ -887,7 +847,7 @@ def test_resume_completes_recovery_audit_after_move_before_event_crash(
     assert not (registry / f"{prepared_attempt.attempt_id}.outcome.json").exists()
     assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "executing"
 
-    monkeypatch.setattr(recovery_module, "complete_execution_recovery", complete)
+    monkeypatch.setattr(recovery_module, "complete_execution_recovery_at", complete)
     result = pipeline_module.resume_final_test_release(
         code_root=prepared_attempt.code_root,
         data_root=prepared_attempt.data_root,
@@ -938,9 +898,7 @@ def test_resume_rejects_competing_recovery_target_without_moving_source(
         **identities,
         "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
     }
-    (partial / "execution_identity.json").write_text(
-        json.dumps(identity), encoding="utf-8"
-    )
+    (partial / "execution_identity.json").write_text(json.dumps(identity), encoding="utf-8")
     bind_execution_identity(registry, identity=identity)
     original = b"must remain in original source"
     (partial / "partial.bin").write_bytes(original)
@@ -1009,9 +967,7 @@ def test_resume_rejects_recovery_intent_path_escape_without_moving_source(
             {
                 "execution_id": "interrupted-execution",
                 "attempt_id": prepared_attempt.attempt_id,
-                "sealed_protocol_sha256": (
-                    preflight.authorization.sealed_protocol_sha256
-                ),
+                "sealed_protocol_sha256": (preflight.authorization.sealed_protocol_sha256),
                 **identities,
                 "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
             }
@@ -1020,9 +976,7 @@ def test_resume_rejects_recovery_intent_path_escape_without_moving_source(
     )
     bind_execution_identity(
         registry,
-        identity=json.loads(
-            (partial / "execution_identity.json").read_text(encoding="utf-8")
-        ),
+        identity=json.loads((partial / "execution_identity.json").read_text(encoding="utf-8")),
     )
     original = b"must not escape recovery root"
     (partial / "partial.bin").write_bytes(original)
@@ -1136,9 +1090,7 @@ def test_current_recovery_rejects_release_tree_replaced_after_complete_verificat
         release_root.rename(displaced)
         shutil.copytree(displaced, release_root)
 
-    monkeypatch.setattr(
-        pipeline_module, "_verify_complete_release_identity", verify_then_replace
-    )
+    monkeypatch.setattr(pipeline_module, "_verify_complete_release_identity", verify_then_replace)
     monkeypatch.setattr(pipeline_module, "publish_release", publish)
 
     with pytest.raises(ValueError, match="release.*identity"):
@@ -1152,9 +1104,7 @@ def test_current_recovery_rejects_release_tree_replaced_after_complete_verificat
             run_id="final-release",
         )
 
-    assert not (
-        final_root / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json"
-    ).exists()
+    assert not (final_root / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json").exists()
 
 
 @pytest.mark.parametrize(
@@ -1212,9 +1162,7 @@ def test_current_recovery_rejects_release_with_wrong_complete_identity(
             run_id="final-release",
         )
 
-    assert not (
-        final_root / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json"
-    ).exists()
+    assert not (final_root / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json").exists()
 
 
 def test_current_recovery_rejects_release_content_not_bound_to_prepared_staging(
@@ -1338,10 +1286,7 @@ def test_resume_rejects_orphan_release_with_mismatched_execution_identity(
 
     final_root = prepared_attempt.data_root / "processed/final_test"
     identity_path = (
-        final_root
-        / "attempt_runs"
-        / prepared_attempt.attempt_id
-        / "execution_identity.json"
+        final_root / "attempt_runs" / prepared_attempt.attempt_id / "execution_identity.json"
     )
     identity = json.loads(identity_path.read_text(encoding="utf-8"))
     identity["execution_id"] = "mismatched-execution"
@@ -1385,9 +1330,7 @@ def test_resume_rejects_orphan_with_invalid_prepared_record_before_current_resto
         )
 
     final_root = prepared_attempt.data_root / "processed/final_test"
-    prepared_path = (
-        final_root / "attempts" / f"{prepared_attempt.attempt_id}.prepared.json"
-    )
+    prepared_path = final_root / "attempts" / f"{prepared_attempt.attempt_id}.prepared.json"
     prepared = json.loads(prepared_path.read_text(encoding="utf-8"))
     prepared["unexpected"] = "not an immutable prepared schema"
     prepared_path.write_text(json.dumps(prepared), encoding="utf-8")
@@ -1490,9 +1433,7 @@ def test_prepared_staging_recovers_without_recomputing_research_results(
         monkeypatch.setattr(
             pipeline_module,
             name,
-            lambda *_args, _name=name, **_kwargs: pytest.fail(
-                f"prepared retry recomputed {_name}"
-            ),
+            lambda *_args, _name=name, **_kwargs: pytest.fail(f"prepared retry recomputed {_name}"),
         )
 
     result = pipeline_module.resume_final_test_release(
@@ -1547,9 +1488,7 @@ def test_prepared_recovery_rejects_attempt_runs_replaced_before_freeze(
             shutil.copytree(displaced, attempt_runs)
         return freeze(*args, **kwargs)
 
-    monkeypatch.setattr(
-        pipeline_module, "_freeze_prepared_package", replace_parent_then_freeze
-    )
+    monkeypatch.setattr(pipeline_module, "_freeze_prepared_package", replace_parent_then_freeze)
     monkeypatch.setattr(pipeline_module, "publish_release", publish)
 
     with pytest.raises(ValueError, match="attempt-runs.*identity"):
@@ -1590,10 +1529,7 @@ def test_prepared_staging_identity_drift_fails_closed_without_recomputation(
         )
     final_root = prepared_attempt.data_root / "processed/final_test"
     staging = (
-        final_root
-        / "attempt_runs"
-        / prepared_attempt.attempt_id
-        / "artifacts/lineage_preview.json"
+        final_root / "attempt_runs" / prepared_attempt.attempt_id / "artifacts/lineage_preview.json"
     )
     staging.write_text('{"changed":true}\n', encoding="utf-8")
 
@@ -1696,9 +1632,7 @@ def test_resume_rejects_partial_execution_with_incomplete_identity(
 
     assert resolve_attempt_state(registry, prepared_attempt.attempt_id)["state"] == "failed"
     assert partial.is_dir()
-    assert not (
-        prepared_attempt.data_root / "processed/final_test/CURRENT.json"
-    ).exists()
+    assert not (prepared_attempt.data_root / "processed/final_test/CURRENT.json").exists()
 
 
 def test_concurrent_resume_allows_only_one_executor(
@@ -1723,7 +1657,10 @@ def test_concurrent_resume_allows_only_one_executor(
         return "published"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = [future.result(timeout=10) for future in (executor.submit(resume), executor.submit(resume))]
+        results = [
+            future.result(timeout=10)
+            for future in (executor.submit(resume), executor.submit(resume))
+        ]
 
     assert sorted(results) == ["published", "rejected"]
 
@@ -1771,14 +1708,13 @@ def test_legacy_one_shot_pipeline_fails_closed(tmp_path: Path) -> None:
 
 
 def test_date_gate_failure_cannot_leave_publishable_attempt(
-    prepared_attempt: PreparedAttempt, monkeypatch: pytest.MonkeyPatch,
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_steps(monkeypatch, publishable=True)
     monkeypatch.setattr(
         "ashare_multifactor.final_test.pipeline._assert_frozen_release_date_bounds",
-        lambda _files: (_ for _ in ()).throw(
-            ValueError("artifact outside final-test period")
-        ),
+        lambda _files: (_ for _ in ()).throw(ValueError("artifact outside final-test period")),
     )
     with pytest.raises(ValueError, match="artifact outside"):
         pipeline_module.resume_final_test_release(
@@ -1805,7 +1741,8 @@ def test_date_gate_failure_cannot_leave_publishable_attempt(
 
 
 def test_non_publishable_attempt_is_retained_without_switching_current(
-    prepared_attempt: PreparedAttempt, monkeypatch: pytest.MonkeyPatch,
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_steps(monkeypatch, publishable=False)
     result = pipeline_module.resume_final_test_release(
@@ -1907,17 +1844,13 @@ def test_portfolio_inputs_use_boundary_nav_and_strict_period_slices() -> None:
                 "status": ["filled", "submitted", "partial", "submitted"],
             }
         ),
-        "trades": pl.DataFrame(
-            {"date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)]}
-        ),
+        "trades": pl.DataFrame({"date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)]}),
         "target_diagnostics": pl.DataFrame(
             {"date": [date(2004, 12, 31), date(2005, 1, 4), date(2017, 1, 3)]}
         ),
     }
 
-    sliced = _slice_backtest_period(
-        frames, start=date(2005, 1, 1), end=date(2016, 12, 31)
-    )
+    sliced = _slice_backtest_period(frames, start=date(2005, 1, 1), end=date(2016, 12, 31))
 
     assert sliced["nav"].get_column("date").to_list() == [
         date(2004, 12, 31),
@@ -1928,9 +1861,9 @@ def test_portfolio_inputs_use_boundary_nav_and_strict_period_slices() -> None:
 
 
 def test_release_date_scan_rejects_pretest_rows(tmp_path: Path) -> None:
-    pl.DataFrame(
-        {"date": [date(2021, 12, 31)], "symbol": ["000001"]}
-    ).write_parquet(tmp_path / "leaked.parquet")
+    pl.DataFrame({"date": [date(2021, 12, 31)], "symbol": ["000001"]}).write_parquet(
+        tmp_path / "leaked.parquet"
+    )
     with pytest.raises(ValueError, match="leaked.parquet.*outside"):
         _assert_release_date_bounds(tmp_path)
 
@@ -1955,12 +1888,8 @@ def test_stale_interval_slice_keeps_and_clips_cross_boundary_rows() -> None:
     )
     sliced = _slice_audit_frame("stale_intervals", frame)
     assert sliced.get_column("symbol").to_list() == ["a", "b"]
-    assert sliced.get_column("first_stale_date").to_list() == [
-        date(2022, 1, 1), date(2025, 12, 1)
-    ]
-    assert sliced.get_column("last_stale_date").to_list() == [
-        date(2022, 1, 5), date(2025, 12, 31)
-    ]
+    assert sliced.get_column("first_stale_date").to_list() == [date(2022, 1, 1), date(2025, 12, 1)]
+    assert sliced.get_column("last_stale_date").to_list() == [date(2022, 1, 5), date(2025, 12, 31)]
 
 
 def test_research_and_validation_use_same_stage7_continuous_candidate() -> None:
@@ -1969,9 +1898,7 @@ def test_research_and_validation_use_same_stage7_continuous_candidate() -> None:
     research = _historical_backtest_root(validation, period="research")
     holdout = _historical_backtest_root(validation, period="validation")
 
-    expected = Path(
-        "validation/datasets/backtests/rolling_ic_family_size_stratified_buffered"
-    )
+    expected = Path("validation/datasets/backtests/rolling_ic_family_size_stratified_buffered")
     assert research == expected
     assert holdout == expected
 
@@ -2045,14 +1972,17 @@ def test_historical_releases_ignore_drifting_current_pointers(tmp_path: Path) ->
 
 
 def test_security_event_zero_rows_still_require_ready_official_coverage(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     evidence = tmp_path / "official.json"
     evidence.write_text('{"source":"official"}\n', encoding="utf-8")
     evidence_index = tmp_path / "evidence_index.parquet"
     pl.DataFrame(
         {
-            "evidence_id": ["ev-1"], "source": ["szse"], "market": ["sz"],
+            "evidence_id": ["ev-1"],
+            "source": ["szse"],
+            "market": ["sz"],
             "source_url": ["https://disc.static.szse.cn/download/disc/security.pdf"],
             "cache_file": [evidence.name],
             "sha256": [file_record(evidence, root=tmp_path, role="x").sha256],
@@ -2061,9 +1991,14 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
     query_coverage = tmp_path / "query_coverage.parquet"
     pl.DataFrame(
         {
-            "symbol": ["000001"], "source": ["szse"], "market": ["sz"],
-            "query_start": [date(2022, 1, 1)], "query_end": [date(2025, 12, 31)],
-            "status": ["ok"], "event_count": [0], "evidence_id": ["ev-1"],
+            "symbol": ["000001"],
+            "source": ["szse"],
+            "market": ["sz"],
+            "query_start": [date(2022, 1, 1)],
+            "query_end": [date(2025, 12, 31)],
+            "status": ["ok"],
+            "event_count": [0],
+            "evidence_id": ["ev-1"],
         }
     ).write_parquet(query_coverage)
     coverage = tmp_path / "coverage.json"
@@ -2163,9 +2098,7 @@ def test_security_event_validator_hashes_the_single_manifest_read(
     verified = validate_security_event_coverage(coverage, symbols=["000001"])
 
     assert manifest_reads == 1
-    assert verified["coverage_manifest_sha256"] == hashlib.sha256(
-        captured_bytes
-    ).hexdigest()
+    assert verified["coverage_manifest_sha256"] == hashlib.sha256(captured_bytes).hexdigest()
     assert original_read_bytes(coverage) == disk_bytes
 
 
@@ -2212,18 +2145,23 @@ def test_security_events_must_match_coverage_counts_by_source_key() -> None:
 
 @pytest.mark.parametrize(
     ("symbol", "market"),
-    [("000001", "sz"), ("300001", "sz"), ("600000", "sh"),
-     ("688001", "sh"), ("430001", "bj"), ("830001", "bj"),
-     ("920001", "bj"), ("900901", "sh")],
+    [
+        ("000001", "sz"),
+        ("300001", "sz"),
+        ("600000", "sh"),
+        ("688001", "sh"),
+        ("430001", "bj"),
+        ("830001", "bj"),
+        ("920001", "bj"),
+        ("900901", "sh"),
+    ],
 )
 def test_authoritative_symbol_market_boundaries(symbol: str, market: str) -> None:
     assert market_for_symbol(symbol) == market
 
 
 def test_coverage_market_must_match_source_symbol() -> None:
-    invalid = pl.DataFrame(
-        {"source_symbol": ["000001"], "market": ["sh"], "source": ["sse"]}
-    )
+    invalid = pl.DataFrame({"source_symbol": ["000001"], "market": ["sh"], "source": ["sse"]})
     with pytest.raises(ValueError, match="symbol market"):
         _validate_coverage_markets(invalid)
 
@@ -2247,9 +2185,7 @@ def test_bse_symbol_rejects_self_consistent_wrong_exchange(tmp_path: Path) -> No
         symbol="920001",
         market="sh",
         source="sse",
-        source_url=(
-            "https://www.sse.com.cn/disclosure/listedinfo/announcement/notice.pdf"
-        ),
+        source_url=("https://www.sse.com.cn/disclosure/listedinfo/announcement/notice.pdf"),
     )
     with pytest.raises(ValueError, match="symbol market"):
         validate_security_event_coverage(coverage, symbols=["920001"])
@@ -2261,9 +2197,7 @@ def test_bse_evidence_rejects_non_bse_official_url(tmp_path: Path) -> None:
         symbol="920001",
         market="bj",
         source="bse",
-        source_url=(
-            "https://www.sse.com.cn/disclosure/listedinfo/announcement/notice.pdf"
-        ),
+        source_url=("https://www.sse.com.cn/disclosure/listedinfo/announcement/notice.pdf"),
     )
     with pytest.raises(ValueError, match="evidence source"):
         validate_security_event_coverage(coverage, symbols=["920001"])
@@ -2333,29 +2267,29 @@ def _write_security_event_coverage(
             ],
         )
     payload: dict[str, object] = {
-                "status": "ready",
-                "period": ["2022-01-01", "2025-12-31"],
-                "scope": "all_final_execution_symbols",
-                "symbol_count": 1,
-                "symbols_sha256": hashlib.sha256(f"{symbol}\n".encode()).hexdigest(),
-                "event_rows": 1,
-                "evidence_index": file_record(
-                    evidence_index,
-                    root=root,
-                    role="official_security_event_evidence_index",
-                ).to_dict(),
-                "coverage": [
-                    file_record(
-                        query_coverage,
-                        root=root,
-                        role="official_security_event_coverage",
-                    ).to_dict()
-                ],
-                "events_file": file_record(
-                    events,
-                    root=root,
-                    role="official_security_events",
-                ).to_dict(),
+        "status": "ready",
+        "period": ["2022-01-01", "2025-12-31"],
+        "scope": "all_final_execution_symbols",
+        "symbol_count": 1,
+        "symbols_sha256": hashlib.sha256(f"{symbol}\n".encode()).hexdigest(),
+        "event_rows": 1,
+        "evidence_index": file_record(
+            evidence_index,
+            root=root,
+            role="official_security_event_evidence_index",
+        ).to_dict(),
+        "coverage": [
+            file_record(
+                query_coverage,
+                root=root,
+                role="official_security_event_coverage",
+            ).to_dict()
+        ],
+        "events_file": file_record(
+            events,
+            root=root,
+            role="official_security_events",
+        ).to_dict(),
     }
     if official_query_coverage is not None:
         payload["official_query_coverage"] = file_record(
@@ -2446,7 +2380,7 @@ def test_prepared_recovery_rejects_mutated_publishing_claim(
         lambda _root: SimpleNamespace(requires_recovery=True),
     )
     monkeypatch.setattr(
-        "ashare_multifactor.final_test.pipeline._write_json_atomic",
+        "ashare_multifactor.final_test.pipeline.replace_data_claim_for_recovery",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("crash")),
     )
     with pytest.raises(RuntimeError, match="crash"):
@@ -2455,9 +2389,7 @@ def test_prepared_recovery_rejects_mutated_publishing_claim(
     claim[field] = replacement
     claim_path.write_text(json.dumps(claim))
     expected_error = (
-        "authorization identity is incomplete"
-        if replacement is None
-        else "prepared data recovery"
+        "authorization identity is incomplete" if replacement is None else "prepared data recovery"
     )
     with pytest.raises(ValueError, match=expected_error):
         _recover_or_archive_data_claim(root)
@@ -2676,9 +2608,7 @@ def test_pipeline_release_ignores_later_active_execution_source_changes(
         execution_root = final_root / "attempt_inputs" / authorization.attempt_id
         materialized = execution_root / "coverage_snapshot"
         shutil.copytree(
-            final_root
-            / "execution_coverage_snapshots"
-            / authorization.attempt_id,
+            final_root / "execution_coverage_snapshots" / authorization.attempt_id,
             materialized,
         )
         actions = execution_root / "corporate_actions.parquet"
@@ -2726,12 +2656,7 @@ def test_pipeline_release_ignores_later_active_execution_source_changes(
             registry,
             attempt_id=prepared_attempt.attempt_id,
         )
-        manifest = (
-            final_root
-            / "attempt_inputs"
-            / prepared_attempt.attempt_id
-            / "manifest.json"
-        )
+        manifest = final_root / "attempt_inputs" / prepared_attempt.attempt_id / "manifest.json"
         assert resolve_execution_input_manifest_hash(
             registry,
             identity=identity,
@@ -2744,9 +2669,7 @@ def test_pipeline_release_ignores_later_active_execution_source_changes(
         "resolve_final_test_data_panel",
         lambda _root: SimpleNamespace(
             root=panel_root,
-            data_manifest_sha256=sha256_file(
-                panel_root / "data_manifest.json"
-            ),
+            data_manifest_sha256=sha256_file(panel_root / "data_manifest.json"),
         ),
     )
     monkeypatch.setattr(pipeline_module, "_copy_release_inputs", copy_after_source_change)
@@ -2763,12 +2686,10 @@ def test_pipeline_release_ignores_later_active_execution_source_changes(
 
     assert result.release is not None
     assert (
-        result.release.artifacts
-        / "execution_inputs/coverage_snapshot/snapshot_manifest.json"
+        result.release.artifacts / "execution_inputs/coverage_snapshot/snapshot_manifest.json"
     ).is_file()
     assert (
-        result.release.artifacts
-        / "execution_inputs/corporate_actions.parquet"
+        result.release.artifacts / "execution_inputs/corporate_actions.parquet"
     ).read_bytes() == original_action_bytes
     assert not (result.release.artifacts / "execution_sources").exists()
 
@@ -2872,9 +2793,7 @@ def test_prepared_package_rejects_replacement_before_freeze(
 
     final_root = prepared_attempt.data_root / "processed/final_test"
     assert not (final_root / "CURRENT.json").exists()
-    assert not (
-        final_root / "attempts" / f"{prepared_attempt.attempt_id}.prepared.json"
-    ).exists()
+    assert not (final_root / "attempts" / f"{prepared_attempt.attempt_id}.prepared.json").exists()
     assert not (final_root / "releases/final-release").exists()
 
 
@@ -2922,9 +2841,7 @@ def test_attempt_staging_rejects_child_directory_replacement(
 
     final_root = prepared_attempt.data_root / "processed/final_test"
     assert not (final_root / "CURRENT.json").exists()
-    assert not (
-        final_root / "attempts" / f"{prepared_attempt.attempt_id}.prepared.json"
-    ).exists()
+    assert not (final_root / "attempts" / f"{prepared_attempt.attempt_id}.prepared.json").exists()
 
 
 def test_attempt_staging_rejects_canonical_final_root_replacement(
@@ -2946,9 +2863,7 @@ def test_attempt_staging_rejects_canonical_final_root_replacement(
             shutil.copytree(displaced, final_root)
             replaced = True
 
-    monkeypatch.setattr(
-        pipeline_module, "_assert_frozen_release_date_bounds", gate_then_replace
-    )
+    monkeypatch.setattr(pipeline_module, "_assert_frozen_release_date_bounds", gate_then_replace)
 
     with pytest.raises(ValueError, match="final-test root.*identity"):
         pipeline_module.resume_final_test_release(
@@ -2983,9 +2898,7 @@ def test_execution_claim_rejects_namespace_replacement_before_attempt_chain(
             shutil.copytree(displaced, target)
             yield recovered
 
-    monkeypatch.setattr(
-        pipeline_module, "claim_attempt_execution_at", claim_then_replace
-    )
+    monkeypatch.setattr(pipeline_module, "claim_attempt_execution_at", claim_then_replace)
 
     with pytest.raises(ValueError, match="claimed final-test root namespace"):
         pipeline_module.resume_final_test_release(
@@ -3008,8 +2921,139 @@ def test_execution_claim_rejects_namespace_replacement_before_attempt_chain(
 
 
 @pytest.mark.parametrize(
-    "replacement", ["attempts", "final_test", "processed", "data_root"]
+    ("writer", "unexpected_entry"),
+    [
+        ("attempt_root", "attempt_runs"),
+        ("execution_inputs", "attempt_inputs"),
+        ("publication", "releases"),
+    ],
 )
+def test_claimed_root_writer_never_touches_replacement_tree(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    writer: str,
+    unexpected_entry: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    replaced = False
+    replacement_inventory: set[str] = set()
+
+    def replace_final_root() -> None:
+        nonlocal replaced
+        if replaced:
+            return
+        displaced = tmp_path / f"claimed-{writer}-final-root"
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        replacement_inventory.update(
+            str(path.relative_to(final_root)) for path in final_root.rglob("*")
+        )
+        replaced = True
+
+    if writer == "attempt_root":
+        original = pipeline_module._secure_ensure_attempt_root
+
+        def invoke(*args: object, **kwargs: object):
+            replace_final_root()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_module, "_secure_ensure_attempt_root", invoke)
+    elif writer == "execution_inputs":
+        original = pipeline_module.build_final_execution_inputs
+
+        def invoke(*args: object, **kwargs: object):
+            replace_final_root()
+            with pytest.raises(ValueError, match="identity changed"):
+                kwargs["root_binding"].assert_bound()  # type: ignore[union-attr]
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_module, "build_final_execution_inputs", invoke)
+    else:
+        original = pipeline_module.FinalPublicationTransaction.open
+
+        def invoke(*args: object, **kwargs: object):
+            replace_final_root()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(pipeline_module.FinalPublicationTransaction, "open", invoke)
+
+    with pytest.raises(ValueError, match="identity changed|descriptor chain"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    if writer != "execution_inputs":
+        assert {
+            str(path.relative_to(final_root)) for path in final_root.rglob("*")
+        } == replacement_inventory
+        assert not (final_root / unexpected_entry).exists() or (
+            unexpected_entry in replacement_inventory
+        )
+    assert not (final_root / "CURRENT.json").exists()
+    outcome = final_root / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json"
+    assert not outcome.exists()
+
+
+def test_interrupted_recovery_never_touches_replacement_tree(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    ensure = pipeline_module._secure_ensure_attempt_root
+
+    def create_then_crash(*args: object, **kwargs: object):
+        result = ensure(*args, **kwargs)
+        result[1].close()
+        raise KeyboardInterrupt("after attempt shell")
+
+    monkeypatch.setattr(pipeline_module, "_secure_ensure_attempt_root", create_then_crash)
+    with pytest.raises(KeyboardInterrupt, match="after attempt shell"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    monkeypatch.setattr(pipeline_module, "_secure_ensure_attempt_root", ensure)
+    recover = pipeline_module.recover_interrupted_execution
+    final_root = prepared_attempt.data_root / "processed/final_test"
+
+    def replace_then_recover(*args: object, **kwargs: object):
+        displaced = tmp_path / "claimed-recovery-final-root"
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        return recover(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline_module, "recover_interrupted_execution", replace_then_recover)
+    monkeypatch.setattr(pipeline_module, "_is_resumable_attempt_shell", lambda *_: False)
+    with pytest.raises(ValueError, match="identity changed|descriptor chain"):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+
+    assert not (final_root / "interrupted_runs").exists()
+
+
+@pytest.mark.parametrize("replacement", ["attempts", "final_test", "processed", "data_root"])
 def test_final_publication_rejects_namespace_replacement_after_validation(
     prepared_attempt: PreparedAttempt,
     monkeypatch: pytest.MonkeyPatch,
@@ -3038,9 +3082,7 @@ def test_final_publication_rejects_namespace_replacement_after_validation(
             replaced = True
         return result
 
-    monkeypatch.setattr(
-        pipeline_module, "append_prepared_publication", append_then_replace
-    )
+    monkeypatch.setattr(pipeline_module, "append_prepared_publication", append_then_replace)
 
     with pytest.raises(ValueError, match="identity changed|publication transaction"):
         pipeline_module.resume_final_test_release(
@@ -3077,12 +3119,15 @@ def test_recovery_rejects_namespace_replacement_after_complete_validation(
     publish = pipeline_module.publish_release
 
     if recovery_mode == "prepared":
+
         def interrupt(*_args: object, **_kwargs: object):
             raise KeyboardInterrupt("after prepared validation")
     elif recovery_mode == "orphan":
+
         def interrupt(*args: object, **kwargs: object):
             return publish(*args, **kwargs, fail_before_switch=True)
     else:
+
         def interrupt(*args: object, **kwargs: object):
             publish(*args, **kwargs)
             raise KeyboardInterrupt("after CURRENT")
@@ -3126,9 +3171,7 @@ def test_recovery_rejects_namespace_replacement_after_complete_validation(
             replace_namespace()
             return result
 
-        monkeypatch.setattr(
-            pipeline_module, "_verify_prepared_staging", verify_then_replace
-        )
+        monkeypatch.setattr(pipeline_module, "_verify_prepared_staging", verify_then_replace)
     else:
         verify = pipeline_module._verify_complete_release_identity
 
@@ -3154,9 +3197,7 @@ def test_recovery_rejects_namespace_replacement_after_complete_validation(
     assert not list(tmp_path.rglob(outcome_name))
     if recovery_mode != "current":
         final_current = [
-            path
-            for path in tmp_path.rglob("CURRENT.json")
-            if path.parent.name == "final_test"
+            path for path in tmp_path.rglob("CURRENT.json") if path.parent.name == "final_test"
         ]
         assert not final_current
 
@@ -3230,18 +3271,12 @@ def test_signals_backtest_and_release_share_attempt_bound_panel_snapshot(
         canonical_file.write_bytes(b"replacement after signals snapshot")
         return result
 
-    def backtest_from_snapshot(
-        *args: object, **kwargs: object
-    ) -> FinalTestBacktestResult:
+    def backtest_from_snapshot(*args: object, **kwargs: object) -> FinalTestBacktestResult:
         observed_snapshots.append(kwargs["panel_snapshot"])
         return run_backtest(*args, **kwargs)
 
-    monkeypatch.setattr(
-        pipeline_module, "build_final_test_signals", signals_then_replace
-    )
-    monkeypatch.setattr(
-        pipeline_module, "run_final_test_backtest", backtest_from_snapshot
-    )
+    monkeypatch.setattr(pipeline_module, "build_final_test_signals", signals_then_replace)
+    monkeypatch.setattr(pipeline_module, "run_final_test_backtest", backtest_from_snapshot)
 
     result = pipeline_module.resume_final_test_release(
         code_root=prepared_attempt.code_root,
@@ -3256,14 +3291,10 @@ def test_signals_backtest_and_release_share_attempt_bound_panel_snapshot(
     assert result.release is not None
     assert observed_snapshots[0] is observed_snapshots[1]
     relative = canonical_file.relative_to(canonical_panel)
-    assert (
-        result.release.datasets / "final_daily_panel" / relative
-    ).read_bytes() == original
+    assert (result.release.datasets / "final_daily_panel" / relative).read_bytes() == original
 
 
-@pytest.mark.parametrize(
-    "replacement_scope", ["file", "subtree", "in_place", "preheld_write_fd"]
-)
+@pytest.mark.parametrize("replacement_scope", ["file", "subtree", "in_place", "preheld_write_fd"])
 def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
     tmp_path: Path,
     replacement_scope: str,
@@ -3272,9 +3303,9 @@ def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
     canonical_panel = tmp_path / "daily_panel"
     partition = canonical_panel / "year=2022/part-000.parquet"
     partition.parent.mkdir(parents=True)
-    pl.DataFrame(
-        {"date": [date(2022, 1, 4)], "symbol": ["000001"], "close": [10.0]}
-    ).write_parquet(partition)
+    pl.DataFrame({"date": [date(2022, 1, 4)], "symbol": ["000001"], "close": [10.0]}).write_parquet(
+        partition
+    )
     quality = canonical_panel / "quality_issues.json"
     quality.write_text("[]\n", encoding="utf-8")
     manifest = {
@@ -3303,9 +3334,7 @@ def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
             "sha256": hashlib.sha256(quality.read_bytes()).hexdigest(),
         },
     }
-    (canonical_panel / "manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (canonical_panel / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (canonical_panel / "data_manifest.json").write_text("{}\n", encoding="utf-8")
     datasets = tmp_path / "datasets"
     datasets.mkdir()
@@ -3324,14 +3353,10 @@ def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
                     os.O_RDWR | os.O_NOFOLLOW,
                 )
 
-            monkeypatch.setattr(
-                staging_module, "copy_frozen_tree_at", copy_then_hold_writer
-            )
+            monkeypatch.setattr(staging_module, "copy_frozen_tree_at", copy_then_hold_writer)
         snapshot = staging_module.snapshot_attempt_panel(
             canonical_panel,
-            expected_manifest_sha256=sha256_file(
-                canonical_panel / "data_manifest.json"
-            ),
+            expected_manifest_sha256=sha256_file(canonical_panel / "data_manifest.json"),
             datasets_fd=datasets_fd,
             staged_panel_root=datasets / "final_daily_panel",
             period=Period(date(2022, 1, 1), date(2025, 12, 31)),
@@ -3372,9 +3397,7 @@ def test_attempt_panel_snapshot_reads_and_releases_held_partition_bytes(
 
         observed = pl.scan_parquet(source.files).collect()
         if isinstance(snapshot, Path):
-            descriptor = os.open(
-                staged_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            )
+            descriptor = os.open(staged_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
             try:
                 frozen = read_frozen_tree_at(descriptor, label="test panel snapshot")
             finally:

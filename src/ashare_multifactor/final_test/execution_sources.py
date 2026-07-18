@@ -40,6 +40,7 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.official_query_index import (
     validate_official_query_coverage_index,
@@ -112,21 +113,18 @@ def build_final_execution_inputs(
     symbols: list[str],
     execution_identity: Mapping[str, object],
     expected_parquet_bytes: Mapping[str, bytes] | None = None,
+    root_binding: FinalRootBinding | None = None,
 ) -> dict[str, object]:
     """Generate, then bind, the frozen action/event inputs to this attempt."""
     del data_root
+    if root_binding is not None:
+        root_binding.assert_bound()
     identity = assert_execution_identity_authorized(execution_identity, authorization)
     prepare_manifest_sha256 = identity["prepare_manifest_sha256"]
-    expected_security_event_coverage_sha256 = identity[
-        "security_event_coverage_sha256"
-    ]
-    expected_corporate_action_coverage_sha256 = identity[
-        "corporate_action_coverage_sha256"
-    ]
+    expected_security_event_coverage_sha256 = identity["security_event_coverage_sha256"]
+    expected_corporate_action_coverage_sha256 = identity["corporate_action_coverage_sha256"]
     execution_id = identity["execution_id"]
-    coverage_snapshot_manifest_sha256 = identity[
-        "coverage_snapshot_manifest_sha256"
-    ]
+    coverage_snapshot_manifest_sha256 = identity["coverage_snapshot_manifest_sha256"]
     source_root = final_root / "execution_input_sources"
     execution_root = final_root / "attempt_inputs" / authorization.attempt_id
     if (
@@ -145,12 +143,8 @@ def build_final_execution_inputs(
     _assert_coverage_identity(
         security_coverage,
         corporate_coverage,
-        expected_security_event_coverage_sha256=(
-            expected_security_event_coverage_sha256
-        ),
-        expected_corporate_action_coverage_sha256=(
-            expected_corporate_action_coverage_sha256
-        ),
+        expected_security_event_coverage_sha256=(expected_security_event_coverage_sha256),
+        expected_corporate_action_coverage_sha256=(expected_corporate_action_coverage_sha256),
     )
     if not source_root.exists():
         generate_final_execution_sources(
@@ -161,16 +155,11 @@ def build_final_execution_inputs(
             corporate_action_coverage_root=corporate_action_coverage_root,
             symbols=symbols,
             prepare_manifest_sha256=prepare_manifest_sha256,
-            expected_security_event_coverage_sha256=(
-                expected_security_event_coverage_sha256
-            ),
-            expected_corporate_action_coverage_sha256=(
-                expected_corporate_action_coverage_sha256
-            ),
+            expected_security_event_coverage_sha256=(expected_security_event_coverage_sha256),
+            expected_corporate_action_coverage_sha256=(expected_corporate_action_coverage_sha256),
             execution_id=execution_id,
-            coverage_snapshot_manifest_sha256=(
-                coverage_snapshot_manifest_sha256
-            ),
+            coverage_snapshot_manifest_sha256=(coverage_snapshot_manifest_sha256),
+            final_fd=(root_binding.final_fd if root_binding is not None else None),
         )
     source_records = _verify_reusable_source_root(
         source_root,
@@ -179,12 +168,8 @@ def build_final_execution_inputs(
         final_root=final_root,
         symbols=symbols,
         prepare_manifest_sha256=prepare_manifest_sha256,
-        expected_security_event_coverage_sha256=(
-            expected_security_event_coverage_sha256
-        ),
-        expected_corporate_action_coverage_sha256=(
-            expected_corporate_action_coverage_sha256
-        ),
+        expected_security_event_coverage_sha256=(expected_security_event_coverage_sha256),
+        expected_corporate_action_coverage_sha256=(expected_corporate_action_coverage_sha256),
         execution_id=execution_id,
         coverage_snapshot_manifest_sha256=coverage_snapshot_manifest_sha256,
         expected_security_coverage=security_coverage,
@@ -195,9 +180,7 @@ def build_final_execution_inputs(
         "corporate_actions.parquet": _parquet_bytes(actions),
         "security_events.parquet": _parquet_bytes(events),
     }
-    if expected_parquet_bytes is not None and generated_parquets != dict(
-        expected_parquet_bytes
-    ):
+    if expected_parquet_bytes is not None and generated_parquets != dict(expected_parquet_bytes):
         raise ValueError("deterministic execution output differs from bound intent")
     if execution_root.exists() or execution_root.is_symlink():
         raise FileExistsError("final execution inputs are already bound")
@@ -227,56 +210,71 @@ def build_final_execution_inputs(
     ).to_dict()
     manifest["source_files"] = source_records
     manifest["coverage_snapshot_files"] = snapshot_records
-    manifest["symbols_sha256"] = hashlib.sha256(
-        ("\n".join(symbols) + "\n").encode()
-    ).hexdigest()
+    manifest["symbols_sha256"] = hashlib.sha256(("\n".join(symbols) + "\n").encode()).hexdigest()
     manifest_bytes = (
         json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     ).encode("utf-8")
     staged_files = {
         **generated_parquets,
-        **{
-            f"coverage_snapshot/{name}": payload
-            for name, payload in snapshot_files.items()
-        },
+        **{f"coverage_snapshot/{name}": payload for name, payload in snapshot_files.items()},
         "manifest.json": manifest_bytes,
     }
-    with opened_directory(final_root, label="final-test root") as final_fd:
-        try:
-            os.mkdir("attempt_inputs", mode=0o700, dir_fd=final_fd)
-        except FileExistsError:
-            pass
+    if root_binding is None:
+        with opened_directory(final_root, label="final-test root") as final_fd:
+            _publish_execution_inputs_at(
+                final_fd,
+                authorization=authorization,
+                execution_id=execution_id,
+                staged_files=staged_files,
+            )
+    else:
+        _publish_execution_inputs_at(
+            root_binding.final_fd,
+            authorization=authorization,
+            execution_id=execution_id,
+            staged_files=staged_files,
+        )
+        root_binding.assert_bound()
+    return manifest
+
+
+def _publish_execution_inputs_at(
+    final_fd: int,
+    *,
+    authorization: FinalTestAuthorization,
+    execution_id: str,
+    staged_files: Mapping[str, bytes],
+) -> None:
+    try:
+        os.mkdir("attempt_inputs", mode=0o700, dir_fd=final_fd)
+    except FileExistsError:
+        pass
+    with opened_directory_at(final_fd, "attempt_inputs", label="attempt-input root") as parent_fd:
+        staging_name = f".{authorization.attempt_id}.{execution_id}.building"
+        write_frozen_tree_at(
+            parent_fd,
+            staging_name,
+            staged_files,
+            resumable=True,
+            label="execution-input staging",
+        )
         with opened_directory_at(
-            final_fd, "attempt_inputs", label="attempt-input root"
-        ) as parent_fd:
-            staging_name = f".{authorization.attempt_id}.{execution_id}.building"
-            write_frozen_tree_at(
+            parent_fd, staging_name, label="execution-input staging"
+        ) as staging_fd:
+            staging_identity = directory_identity(staging_fd)
+            if read_frozen_tree_at(staging_fd, label="execution-input staging") != staged_files:
+                raise ValueError("final execution input staging inventory differs")
+            atomic_rename_no_replace_at(
                 parent_fd,
                 staging_name,
-                staged_files,
-                resumable=True,
-                label="execution-input staging",
+                authorization.attempt_id,
             )
-            with opened_directory_at(
-                parent_fd, staging_name, label="execution-input staging"
-            ) as staging_fd:
-                staging_identity = directory_identity(staging_fd)
-                if read_frozen_tree_at(
-                    staging_fd, label="execution-input staging"
-                ) != staged_files:
-                    raise ValueError("final execution input staging inventory differs")
-                atomic_rename_no_replace_at(
-                    parent_fd,
-                    staging_name,
-                    authorization.attempt_id,
-                )
-                assert_directory_entry(
-                    parent_fd,
-                    authorization.attempt_id,
-                    expected=staging_identity,
-                    label="final execution inputs",
-                )
-    return manifest
+            assert_directory_entry(
+                parent_fd,
+                authorization.attempt_id,
+                expected=staging_identity,
+                label="final execution inputs",
+            )
 
 
 def _execution_input_manifest_from_bytes(
@@ -349,12 +347,11 @@ def generate_final_execution_sources(
     expected_corporate_action_coverage_sha256: str,
     execution_id: str,
     coverage_snapshot_manifest_sha256: str,
+    final_fd: int | None = None,
 ) -> Path:
     """Bind verified official action/event evidence to canonical execution inputs."""
     _assert_authorization(authorization)
-    contract = load_action_source_contract(
-        code_root / "configs/final_execution_sources.yaml"
-    )
+    contract = load_action_source_contract(code_root / "configs/final_execution_sources.yaml")
     resolution = resolve_final_test_data_panel(final_root)
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication requires recovery")
@@ -375,18 +372,12 @@ def generate_final_execution_sources(
     _assert_coverage_identity(
         security_coverage,
         corporate_coverage,
-        expected_security_event_coverage_sha256=(
-            expected_security_event_coverage_sha256
-        ),
-        expected_corporate_action_coverage_sha256=(
-            expected_corporate_action_coverage_sha256
-        ),
+        expected_security_event_coverage_sha256=(expected_security_event_coverage_sha256),
+        expected_corporate_action_coverage_sha256=(expected_corporate_action_coverage_sha256),
     )
     actions, events = _execution_frames(security_coverage, corporate_coverage)
     destination = final_root / "execution_input_sources"
-    security_files = _freeze_verified_coverage_root(
-        security_coverage, label="security coverage"
-    )
+    security_files = _freeze_verified_coverage_root(security_coverage, label="security coverage")
     security_root = security_coverage.get("coverage_root")
     security_manifest = security_coverage.get("coverage_manifest_path")
     if not isinstance(security_root, Path) or not isinstance(security_manifest, Path):
@@ -397,9 +388,7 @@ def generate_final_execution_sources(
     if existing_manifest is not None and existing_manifest != manifest_bytes:
         raise ValueError("security-event support file path collision")
     security_files["security_event_coverage.json"] = manifest_bytes
-    corporate_files = _freeze_verified_coverage_root(
-        corporate_coverage, label="corporate coverage"
-    )
+    corporate_files = _freeze_verified_coverage_root(corporate_coverage, label="corporate coverage")
     primary_files = {
         "corporate_actions.parquet": _parquet_bytes(actions),
         "security_events.parquet": _parquet_bytes(events),
@@ -421,36 +410,28 @@ def generate_final_execution_sources(
     )
     records.sort(key=lambda record: Path(str(record["path"])))
     source_manifest = {
-                "attempt_id": authorization.attempt_id,
-                "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
-                "git_commit": authorization.git_commit,
-                "git_tree": authorization.git_tree,
-                "data_manifest_sha256": resolution.data_manifest_sha256,
-                "execution_id": execution_id,
-                "coverage_snapshot_manifest_sha256": (
-                    coverage_snapshot_manifest_sha256
-                ),
-                "prepare_manifest_sha256": prepare_manifest_sha256,
-                "security_event_coverage_sha256": (
-                    expected_security_event_coverage_sha256
-                ),
-                "corporate_action_coverage_sha256": (
-                    expected_corporate_action_coverage_sha256
-                ),
-                "symbols_sha256": hashlib.sha256(
-                    ("\n".join(symbols) + "\n").encode()
-                ).hexdigest(),
-                "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
-                "provider": contract.provider,
-                "query_year_type": contract.query_year_type,
-                "query_years": list(contract.query_years),
-                "symbol_count": len(symbols),
-                "successful_query_count": corporate_coverage["coverage"].height,
-                "security_event_source": (
-                    "official_events" if events.height else "official_zero_event_coverage"
-                ),
-                "files": records,
-            }
+        "attempt_id": authorization.attempt_id,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "data_manifest_sha256": resolution.data_manifest_sha256,
+        "execution_id": execution_id,
+        "coverage_snapshot_manifest_sha256": (coverage_snapshot_manifest_sha256),
+        "prepare_manifest_sha256": prepare_manifest_sha256,
+        "security_event_coverage_sha256": (expected_security_event_coverage_sha256),
+        "corporate_action_coverage_sha256": (expected_corporate_action_coverage_sha256),
+        "symbols_sha256": hashlib.sha256(("\n".join(symbols) + "\n").encode()).hexdigest(),
+        "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
+        "provider": contract.provider,
+        "query_year_type": contract.query_year_type,
+        "query_years": list(contract.query_years),
+        "symbol_count": len(symbols),
+        "successful_query_count": corporate_coverage["coverage"].height,
+        "security_event_source": (
+            "official_events" if events.height else "official_zero_event_coverage"
+        ),
+        "files": records,
+    }
     complete_files = {
         **source_files,
         "source_manifest.json": (
@@ -463,45 +444,52 @@ def generate_final_execution_sources(
             + "\n"
         ).encode("utf-8"),
     }
-    with opened_directory(
-        final_root.parent, label="final-test parent"
-    ) as final_parent_fd:
-        with opened_directory_at(
-            final_parent_fd, final_root.name, label="final-test root"
-        ) as final_fd:
-            final_identity = directory_identity(final_fd)
-            temporary_name = f".execution-input-sources-{uuid4().hex}.tmp"
-            write_frozen_tree_at(
-                final_fd,
-                temporary_name,
-                complete_files,
-                resumable=False,
-                label="execution source staging",
-            )
+    if final_fd is None:
+        with opened_directory(final_root.parent, label="final-test parent") as final_parent_fd:
             with opened_directory_at(
-                final_fd, temporary_name, label="execution source staging"
-            ) as temporary_fd:
-                temporary_identity = directory_identity(temporary_fd)
-                if read_frozen_tree_at(
-                    temporary_fd, label="execution source staging"
-                ) != complete_files:
-                    raise ValueError("execution source staging bytes differ")
-                atomic_rename_no_replace_at(
-                    final_fd, temporary_name, destination.name
+                final_parent_fd, final_root.name, label="final-test root"
+            ) as opened_final_fd:
+                _publish_execution_sources_at(
+                    opened_final_fd,
+                    destination_name=destination.name,
+                    complete_files=complete_files,
                 )
-                assert_directory_entry(
-                    final_fd,
-                    destination.name,
-                    expected=temporary_identity,
-                    label="final execution source inputs",
-                )
-                assert_directory_entry(
-                    final_parent_fd,
-                    final_root.name,
-                    expected=final_identity,
-                    label="final-test root",
-                )
+    else:
+        _publish_execution_sources_at(
+            final_fd,
+            destination_name=destination.name,
+            complete_files=complete_files,
+        )
     return destination
+
+
+def _publish_execution_sources_at(
+    final_fd: int,
+    *,
+    destination_name: str,
+    complete_files: Mapping[str, bytes],
+) -> None:
+    temporary_name = f".execution-input-sources-{uuid4().hex}.tmp"
+    write_frozen_tree_at(
+        final_fd,
+        temporary_name,
+        complete_files,
+        resumable=False,
+        label="execution source staging",
+    )
+    with opened_directory_at(
+        final_fd, temporary_name, label="execution source staging"
+    ) as temporary_fd:
+        temporary_identity = directory_identity(temporary_fd)
+        if read_frozen_tree_at(temporary_fd, label="execution source staging") != complete_files:
+            raise ValueError("execution source staging bytes differ")
+        atomic_rename_no_replace_at(final_fd, temporary_name, destination_name)
+        assert_directory_entry(
+            final_fd,
+            destination_name,
+            expected=temporary_identity,
+            label="final execution source inputs",
+        )
 
 
 def _freeze_verified_coverage_root(
@@ -524,8 +512,7 @@ def _assert_coverage_identity(
     expected_corporate_action_coverage_sha256: str,
 ) -> None:
     if (
-        security_coverage.get("coverage_manifest_sha256")
-        != expected_security_event_coverage_sha256
+        security_coverage.get("coverage_manifest_sha256") != expected_security_event_coverage_sha256
         or corporate_coverage.get("coverage_manifest_sha256")
         != expected_corporate_action_coverage_sha256
     ):
@@ -592,18 +579,12 @@ def _verify_reusable_source_root(
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("invalid reusable final execution source manifest") from error
     resolution = resolve_final_test_data_panel(final_root)
-    contract = load_action_source_contract(
-        code_root / "configs/final_execution_sources.yaml"
-    )
+    contract = load_action_source_contract(code_root / "configs/final_execution_sources.yaml")
     _assert_coverage_identity(
         expected_security_coverage,
         expected_corporate_coverage,
-        expected_security_event_coverage_sha256=(
-            expected_security_event_coverage_sha256
-        ),
-        expected_corporate_action_coverage_sha256=(
-            expected_corporate_action_coverage_sha256
-        ),
+        expected_security_event_coverage_sha256=(expected_security_event_coverage_sha256),
+        expected_corporate_action_coverage_sha256=(expected_corporate_action_coverage_sha256),
     )
     expected_actions, expected_events = _execution_frames(
         expected_security_coverage,
@@ -618,12 +599,8 @@ def _verify_reusable_source_root(
     _assert_coverage_identity(
         security_coverage,
         corporate_coverage,
-        expected_security_event_coverage_sha256=(
-            expected_security_event_coverage_sha256
-        ),
-        expected_corporate_action_coverage_sha256=(
-            expected_corporate_action_coverage_sha256
-        ),
+        expected_security_event_coverage_sha256=(expected_security_event_coverage_sha256),
+        expected_corporate_action_coverage_sha256=(expected_corporate_action_coverage_sha256),
     )
     source_actions, source_events = _execution_frames(
         security_coverage,
@@ -649,9 +626,7 @@ def _verify_reusable_source_root(
         "prepare_manifest_sha256": prepare_manifest_sha256,
         "security_event_coverage_sha256": expected_security_event_coverage_sha256,
         "corporate_action_coverage_sha256": expected_corporate_action_coverage_sha256,
-        "symbols_sha256": hashlib.sha256(
-            ("\n".join(symbols) + "\n").encode()
-        ).hexdigest(),
+        "symbols_sha256": hashlib.sha256(("\n".join(symbols) + "\n").encode()).hexdigest(),
         "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
         "provider": contract.provider,
         "query_year_type": contract.query_year_type,
@@ -659,9 +634,7 @@ def _verify_reusable_source_root(
         "symbol_count": len(symbols),
         "successful_query_count": expected_corporate_coverage["coverage"].height,
         "security_event_source": (
-            "official_events"
-            if expected_events.height
-            else "official_zero_event_coverage"
+            "official_events" if expected_events.height else "official_zero_event_coverage"
         ),
     }
     expected_keys = {*expected, "files"}
@@ -702,9 +675,7 @@ def _source_file_records(root: Path) -> list[dict[str, object]]:
                 raise ValueError("reusable final execution sources contain an unsafe file")
             if path == root / "source_manifest.json":
                 continue
-            records.append(
-                file_record(path, root=root, role="final_execution_source").to_dict()
-            )
+            records.append(file_record(path, root=root, role="final_execution_source").to_dict())
     return sorted(records, key=lambda record: Path(str(record["path"])))
 
 
@@ -738,22 +709,18 @@ def validate_security_event_coverage(
         raise ValueError("official security-event evidence index role is invalid")
     evidence_index_path = _verify_coverage_file(evidence_record, root=coverage_root)
     evidence_index = pl.read_parquet(evidence_index_path)
-    evidence_columns = {
-        "evidence_id", "source", "market", "source_url", "cache_file", "sha256"
-    }
-    if not evidence_columns.issubset(evidence_index.columns) or evidence_index.select(
-        pl.col("evidence_id").is_duplicated().any()
-    ).item():
+    evidence_columns = {"evidence_id", "source", "market", "source_url", "cache_file", "sha256"}
+    if (
+        not evidence_columns.issubset(evidence_index.columns)
+        or evidence_index.select(pl.col("evidence_id").is_duplicated().any()).item()
+    ):
         raise ValueError("official security-event evidence index is invalid")
     evidence_paths = [evidence_index_path]
     official_sources = dict(OFFICIAL_MARKET_SOURCES)
     for row in evidence_index.iter_rows(named=True):
-        if (
-            official_sources.get(str(row["market"])) != row["source"]
-            or not evidence_url_matches_source(
-                str(row["source"]), str(row["source_url"])
-            )
-        ):
+        if official_sources.get(str(row["market"])) != row[
+            "source"
+        ] or not evidence_url_matches_source(str(row["source"]), str(row["source_url"])):
             raise ValueError("official security-event evidence source is invalid")
         cached_input = coverage_root / str(row["cache_file"])
         _assert_no_symlink_path(cached_input, root=coverage_root)
@@ -767,10 +734,7 @@ def validate_security_event_coverage(
         evidence_paths.append(cached)
     coverage_paths = []
     for record in payload["coverage"]:
-        if (
-            not isinstance(record, dict)
-            or record.get("role") != "official_security_event_coverage"
-        ):
+        if not isinstance(record, dict) or record.get("role") != "official_security_event_coverage":
             raise ValueError("official security-event query coverage role is invalid")
         try:
             coverage_paths.append(_verify_coverage_file(record, root=coverage_root))
@@ -778,8 +742,14 @@ def validate_security_event_coverage(
             raise ValueError("official security-event query coverage changed") from error
     coverage = pl.concat([pl.read_parquet(item) for item in coverage_paths])
     required = {
-        "symbol", "source", "market", "query_start", "query_end", "status",
-        "event_count", "evidence_id",
+        "symbol",
+        "source",
+        "market",
+        "query_start",
+        "query_end",
+        "status",
+        "event_count",
+        "evidence_id",
     }
     if not required.issubset(coverage.columns):
         raise ValueError("official security-event query coverage schema is invalid")
@@ -818,17 +788,18 @@ def validate_security_event_coverage(
         | (pl.col("query_end") != FINAL_TEST_END)
         | (pl.col("event_count") < 0)
     )
-    if invalid.height or normalized_coverage.join(
-        evidence_index.select("evidence_id", "source", "market"),
-        on=["evidence_id", "source", "market"],
-        how="anti",
-    ).height or normalized_coverage.get_column("event_count").sum() != payload["event_rows"]:
+    if (
+        invalid.height
+        or normalized_coverage.join(
+            evidence_index.select("evidence_id", "source", "market"),
+            on=["evidence_id", "source", "market"],
+            how="anti",
+        ).height
+        or normalized_coverage.get_column("event_count").sum() != payload["event_rows"]
+    ):
         raise ValueError("official security-event query coverage is invalid")
     query_record = payload.get("official_query_coverage")
-    if (
-        not isinstance(query_record, dict)
-        or query_record.get("role") != "official_query_coverage"
-    ):
+    if not isinstance(query_record, dict) or query_record.get("role") != "official_query_coverage":
         raise ValueError("official security-event query coverage record is invalid")
     try:
         official_query_coverage_path = _verify_coverage_file(
@@ -858,9 +829,7 @@ def validate_security_event_coverage(
     result["evidence_index"] = evidence_index
     result["coverage_root"] = coverage_root
     result["coverage_manifest_path"] = path
-    result["coverage_manifest_sha256"] = hashlib.sha256(
-        manifest_bytes
-    ).hexdigest()
+    result["coverage_manifest_sha256"] = hashlib.sha256(manifest_bytes).hexdigest()
     result["official_query_coverage_file"] = official_query_coverage_path
     result["official_query_scopes"] = official_query_scopes
     result["official_query_coverage_index_sha256"] = official_query_index.index_sha256
@@ -887,14 +856,17 @@ def validate_security_event_coverage(
             .alias("market"),
         )
         for symbol_column in ("source_symbol", "target_symbol"):
-            if symbol_column in events.columns and normalized_events.filter(
-                pl.col(symbol_column).is_not_null()
-                & ~pl.col(symbol_column)
-                .cast(pl.String)
-                .str.zfill(6)
-                .map_elements(market_for_symbol, return_dtype=pl.String)
-                .is_in(("sh", "sz"))
-            ).height:
+            if (
+                symbol_column in events.columns
+                and normalized_events.filter(
+                    pl.col(symbol_column).is_not_null()
+                    & ~pl.col(symbol_column)
+                    .cast(pl.String)
+                    .str.zfill(6)
+                    .map_elements(market_for_symbol, return_dtype=pl.String)
+                    .is_in(("sh", "sz"))
+                ).height
+            ):
                 raise ValueError("official security events escape supported market scope")
         evidence_mismatch = normalized_events.join(
             evidence_index, on=["evidence_id", "source", "market"], how="anti"
@@ -904,9 +876,13 @@ def validate_security_event_coverage(
             on=[*coverage_keys, "evidence_id"],
             how="anti",
         )
-        if evidence_mismatch.height or coverage_mismatch.height or normalized_events.filter(
-            ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
-        ).height:
+        if (
+            evidence_mismatch.height
+            or coverage_mismatch.height
+            or normalized_events.filter(
+                ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
+            ).height
+        ):
             raise ValueError("official security event evidence join failed")
         result["events_file"] = events_path
         result["events"] = events
@@ -937,10 +913,7 @@ def _validate_coverage_markets(coverage: pl.DataFrame) -> None:
     )
     if expected.filter(pl.col("market") != pl.col("expected_market")).height:
         raise ValueError("official security-event symbol market is invalid")
-    allowed = [
-        {"market": market, "source": source}
-        for market, source in OFFICIAL_MARKET_SOURCES
-    ]
+    allowed = [{"market": market, "source": source} for market, source in OFFICIAL_MARKET_SOURCES]
     if expected.filter(~pl.struct("market", "source").is_in(allowed)).height:
         raise ValueError("official security-event market source is invalid")
 
@@ -1005,8 +978,7 @@ def _download_final_dividends(
                 )
                 if result.error_code != "0":
                     raise RuntimeError(
-                        f"BaoStock dividend query failed: {symbol} {year} "
-                        f"{result.error_msg}"
+                        f"BaoStock dividend query failed: {symbol} {year} {result.error_msg}"
                     )
                 fields = list(result.fields)
                 if known_fields is None:
@@ -1067,18 +1039,13 @@ def _normalize_final_dividends(
     if missing:
         raise ValueError(f"missing BaoStock final dividend fields: {missing}")
     if raw.filter(
-        (pl.col("query_year_type") != "operate")
-        | ~pl.col("query_year").is_between(2022, 2025)
+        (pl.col("query_year_type") != "operate") | ~pl.col("query_year").is_between(2022, 2025)
     ).height:
         raise ValueError("sealed final-test query metadata is invalid")
     parsed = raw.with_columns(
         pl.col("code").cast(pl.String).str.split(".").list.last().alias("symbol"),
         *(
-            pl.col(name)
-            .cast(pl.String)
-            .replace("", None)
-            .str.to_date(strict=False)
-            .alias(name)
+            pl.col(name).cast(pl.String).replace("", None).str.to_date(strict=False).alias(name)
             for name in ("dividOperateDate", "dividPayDate", "dividStockMarketDate")
         ),
         pl.col("dividCashPsBeforeTax")
@@ -1087,9 +1054,7 @@ def _normalize_final_dividends(
         .alias("cash_per_share"),
         (
             pl.col("dividStocksPs").cast(pl.Float64, strict=False).fill_null(0.0)
-            + pl.col("dividReserveToStockPs")
-            .cast(pl.Float64, strict=False)
-            .fill_null(0.0)
+            + pl.col("dividReserveToStockPs").cast(pl.Float64, strict=False).fill_null(0.0)
         ).alias("share_ratio"),
     )
     if parsed.filter(
@@ -1116,9 +1081,7 @@ def _normalize_final_dividends(
             shares.select(
                 "symbol",
                 pl.col("dividOperateDate").alias("ex_date"),
-                pl.coalesce("dividStockMarketDate", "dividOperateDate").alias(
-                    "effective_date"
-                ),
+                pl.coalesce("dividStockMarketDate", "dividOperateDate").alias("effective_date"),
                 pl.lit(0.0).alias("cash_per_share"),
                 "share_ratio",
                 pl.lit("baostock_dividend_operate_year").alias("source"),

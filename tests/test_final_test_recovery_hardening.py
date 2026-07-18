@@ -463,7 +463,7 @@ def test_recovery_never_follows_interrupted_runs_replaced_after_anchor_check(
     displaced = tmp_path / "checked-interrupted-runs"
     external = tmp_path / "window-external-interrupted-runs"
     external.mkdir()
-    original_pending = recovery_module.pending_execution_recovery
+    original_pending = recovery_module.pending_execution_recovery_at
     swapped = False
 
     def replace_after_initial_anchor_check(*args: object, **kwargs: object):
@@ -476,7 +476,7 @@ def test_recovery_never_follows_interrupted_runs_replaced_after_anchor_check(
 
     monkeypatch.setattr(
         recovery_module,
-        "pending_execution_recovery",
+        "pending_execution_recovery_at",
         replace_after_initial_anchor_check,
     )
     source_roots = {

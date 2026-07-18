@@ -20,6 +20,7 @@ from ashare_multifactor.data.manifest import validate_panel_source
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
 from ashare_multifactor.factors.panel import build_monthly_factor_panel
 from ashare_multifactor.final_test.data_publication import (
+    read_data_claim,
     resolve_final_test_data_panel,
 )
 from ashare_multifactor.final_test.data_extension import (
@@ -90,9 +91,9 @@ def build_final_test_signals(
     )
     final_daily = pl.scan_parquet(source.files).collect()
     _assert_date_bounds(final_daily, config.test, "final-test daily panel")
-    daily = pl.concat(
-        (inputs.historical_daily, final_daily), how="vertical_relaxed"
-    ).sort("date", "symbol")
+    daily = pl.concat((inputs.historical_daily, final_daily), how="vertical_relaxed").sort(
+        "date", "symbol"
+    )
     factor_settings = replace(
         factor,
         analysis_start=FINAL_TEST_START,
@@ -111,15 +112,18 @@ def build_final_test_signals(
         or column.startswith("forward_calendar_days_")
         or column.startswith("forward_skipped_observations_")
     ]
-    forward_returns = features.select("date", "symbol").unique().join(
-        labelled.select("date", "symbol", *label_columns),
-        on=["date", "symbol"],
-        how="left",
-        validate="1:1",
-    ).sort("date", "symbol")
-    return_columns = [
-        f"forward_return_{horizon}" for horizon in factor_settings.forward_horizons
-    ]
+    forward_returns = (
+        features.select("date", "symbol")
+        .unique()
+        .join(
+            labelled.select("date", "symbol", *label_columns),
+            on=["date", "symbol"],
+            how="left",
+            validate="1:1",
+        )
+        .sort("date", "symbol")
+    )
+    return_columns = [f"forward_return_{horizon}" for horizon in factor_settings.forward_horizons]
     factor_panel = features.join(
         forward_returns.select("date", "symbol", *return_columns),
         on=["date", "symbol"],
@@ -133,9 +137,7 @@ def build_final_test_signals(
         FACTOR_DEFINITIONS,
         factor_settings,
     ).rank_ic
-    all_rank_ic = pl.concat(
-        (inputs.historical_rank_ic, final_rank_ic), how="diagonal_relaxed"
-    )
+    all_rank_ic = pl.concat((inputs.historical_rank_ic, final_rank_ic), how="diagonal_relaxed")
     realization_dates = _realization_dates(
         pl.concat(
             (inputs.historical_forward_returns, forward_returns),
@@ -190,7 +192,7 @@ def _resolve_authorized_data(
     resolution = resolve_final_test_data_panel(final_root)
     if resolution.requires_recovery or resolution.claim_status != "published":
         raise ValueError("final-test data publication requires recovery before signals")
-    claim = json.loads((final_root / "data-build-claim.json").read_text(encoding="utf-8"))
+    claim = read_data_claim(final_root)
     expected = {
         "attempt_id": authorization.attempt_id,
         "approval_id": authorization.approval_id,
@@ -233,12 +235,15 @@ def _realization_dates(
     *,
     final_end: date,
 ) -> pl.DataFrame:
-    result = returns.group_by("date").agg(
-        (
-            pl.col("date").first()
-            + pl.duration(days=pl.col("forward_calendar_days_20").max())
-        ).alias("realization_date")
-    ).sort("date")
+    result = (
+        returns.group_by("date")
+        .agg(
+            (
+                pl.col("date").first() + pl.duration(days=pl.col("forward_calendar_days_20").max())
+            ).alias("realization_date")
+        )
+        .sort("date")
+    )
     if result.filter(pl.col("realization_date") > final_end).height:
         raise ValueError("forward label realization extends beyond the sealed final-test end")
     return result
@@ -256,15 +261,17 @@ def _build_rolling_targets(
     portfolio: PortfolioConstructionSettings,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     weight_dates = factor_panel.get_column("date").unique().sort().to_list()
-    realized_ic = rank_ic.join(
-        realization_dates,
-        on="date",
-        how="left",
-        validate="m:1",
-    ).filter(pl.col("realization_date").is_not_null()).drop("realization_date")
-    realized_dates = realization_dates.filter(
-        pl.col("realization_date").is_not_null()
+    realized_ic = (
+        rank_ic.join(
+            realization_dates,
+            on="date",
+            how="left",
+            validate="m:1",
+        )
+        .filter(pl.col("realization_date").is_not_null())
+        .drop("realization_date")
     )
+    realized_dates = realization_dates.filter(pl.col("realization_date").is_not_null())
     weights = rolling_ic_weights(
         realized_ic,
         weight_dates=weight_dates,
@@ -296,9 +303,7 @@ def _build_rolling_targets(
     latest = frozen_previous.get_column("date").max()
     if latest != date(2021, 12, 31):
         raise ValueError("previous targets must preserve the final 2021 rebalance")
-    prior = frozen_previous.filter(pl.col("date") == latest).select(
-        "symbol", "target_weight"
-    )
+    prior = frozen_previous.filter(pl.col("date") == latest).select("symbol", "target_weight")
     parts: list[pl.DataFrame] = []
     for signal_date in weight_dates:
         target = size_stratified_buffered(
@@ -328,18 +333,22 @@ def _build_rolling_targets(
     sums = targets.group_by("date").agg(pl.col("target_weight").sum().alias("weight"))
     if sums.filter((pl.col("weight") - 1.0).abs() > 1e-12).height:
         raise ValueError("final-test target weights must sum to one")
-    composite_weights = weights.with_columns(
-        pl.lit("rolling_ic_family").alias("method"),
-        (pl.col("factor_weight") / len(CANDIDATE_FACTORS)).alias("weight"),
-    ).select(
-        "date",
-        "method",
-        "factor_name",
-        "family",
-        "weight",
-        "history_start",
-        "history_end",
-        "history_months",
-        "fallback_equal",
-    ).sort("date", "factor_name")
+    composite_weights = (
+        weights.with_columns(
+            pl.lit("rolling_ic_family").alias("method"),
+            (pl.col("factor_weight") / len(CANDIDATE_FACTORS)).alias("weight"),
+        )
+        .select(
+            "date",
+            "method",
+            "factor_name",
+            "family",
+            "weight",
+            "history_start",
+            "history_end",
+            "history_months",
+            "fallback_equal",
+        )
+        .sort("date", "factor_name")
+    )
     return scores, composite_weights, targets

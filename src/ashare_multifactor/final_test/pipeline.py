@@ -33,7 +33,12 @@ from ashare_multifactor.final_test.data_extension import (
     _input_inventory,
     build_final_test_daily_panel,
 )
-from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
+from ashare_multifactor.final_test.data_publication import (
+    read_data_claim,
+    read_data_claim_bytes,
+    replace_data_claim_for_recovery,
+    resolve_final_test_data_panel,
+)
 from ashare_multifactor.final_test.execution_sources import (
     build_final_execution_inputs,
     freeze_final_execution_parquets,
@@ -142,9 +147,7 @@ def append_prepared_publication(
     return transaction.append_prepared(**kwargs)
 
 
-def publish_release(
-    transaction: FinalPublicationTransaction, **kwargs: object
-) -> PublishedRelease:
+def publish_release(transaction: FinalPublicationTransaction, **kwargs: object) -> PublishedRelease:
     """Test seam around the descriptor-bound release transaction."""
     return transaction.publish(**kwargs)
 
@@ -240,9 +243,7 @@ def _resume_final_test_release_bound(
         sealed_protocol_sha256=preflight.authorization.sealed_protocol_sha256,
     )
     root_binding.assert_bound()
-    prepared_run_id = (
-        str(prepared["release_run_id"]) if prepared is not None else None
-    )
+    prepared_run_id = str(prepared["release_run_id"]) if prepared is not None else None
     if prepared_run_id is not None and run_id != prepared_run_id:
         raise ValueError("prepared final-test publication run identity differs")
     identities = {
@@ -278,9 +279,7 @@ def _resume_final_test_release_bound(
                 root_binding.attempts_fd, f"{attempt_id}.prepared.json"
             )
             current_exists = _entry_exists_fd(root_binding.final_fd, "CURRENT.json")
-            publication_may_need_recovery = (
-                prepared_exists and current_exists
-            )
+            publication_may_need_recovery = prepared_exists and current_exists
             if prepared_exists and not publication_may_need_recovery:
                 try:
                     publication_may_need_recovery = (
@@ -298,13 +297,12 @@ def _resume_final_test_release_bound(
                 publication_may_need_recovery = has_recoverable_execution_archive(
                     final_root,
                     attempt_id=attempt_id,
+                    root_binding=root_binding,
                 )
             if (
                 not outcome_exists
                 and not publication_may_need_recovery
-                and not isinstance(
-                    error, (PublicationNamespaceChanged, FinalRootNamespaceChanged)
-                )
+                and not isinstance(error, (PublicationNamespaceChanged, FinalRootNamespaceChanged))
             ):
                 append_attempt_outcome_at(
                     root_binding.attempts_fd,
@@ -397,12 +395,8 @@ def _execute_authorized_final_test(
                 "attempt_id": authorization.attempt_id,
                 "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
                 "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
-                "security_event_coverage_sha256": (
-                    preflight.security_event_coverage_sha256
-                ),
-                "corporate_action_coverage_sha256": (
-                    preflight.corporate_action_coverage_sha256
-                ),
+                "security_event_coverage_sha256": (preflight.security_event_coverage_sha256),
+                "corporate_action_coverage_sha256": (preflight.corporate_action_coverage_sha256),
                 "coverage_snapshot_manifest_sha256": coverage_snapshot.manifest_sha256,
             },
         )
@@ -451,12 +445,14 @@ def _execute_authorized_final_test(
             final_root,
             preflight=preflight,
             coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
+            root_binding=root_binding,
         )
         root_binding.assert_bound()
     attempt_root, attempt_directories = _secure_ensure_attempt_root(
         final_root,
         attempt_id=authorization.attempt_id,
         execution_identity=execution_identity,
+        root_binding=root_binding,
     )
     root_binding.crosscheck(
         processed_fd=attempt_directories.root_parent_fd,
@@ -476,15 +472,12 @@ def _execute_authorized_final_test(
                 code_root=code_root,
                 data_root=data_root,
                 final_root=final_root,
-                security_event_coverage_path=(
-                    coverage_snapshot.security_event_coverage_path
-                ),
-                corporate_action_coverage_root=(
-                    coverage_snapshot.corporate_action_coverage_root
-                ),
+                security_event_coverage_path=(coverage_snapshot.security_event_coverage_path),
+                corporate_action_coverage_root=(coverage_snapshot.corporate_action_coverage_root),
                 symbols=list(coverage_snapshot.symbols),
                 execution_identity=execution_identity,
                 expected_parquet_bytes=expected_parquet_bytes,
+                root_binding=root_binding,
             )
             root_binding.assert_bound()
             candidate = validate_execution_input_candidate(
@@ -499,9 +492,7 @@ def _execute_authorized_final_test(
                 identity=execution_identity,
                 manifest_sha256=candidate.manifest_sha256,
             )
-            bound_inputs = resolve_bound_execution_inputs(
-                final_root, authorization
-            )
+            bound_inputs = resolve_bound_execution_inputs(final_root, authorization)
             root_binding.assert_bound()
         execution_manifest = dict(bound_inputs.manifest)
         panel_resolution = resolve_final_test_data_panel(final_root)
@@ -666,10 +657,9 @@ def _execute_authorized_final_test(
             artifacts_fd=attempt_directories.artifacts_fd,
         )
         _assert_attempt_directory(attempt_root, attempt_directories)
-        if (
-            dict(prepared_package.execution_identity) != dict(execution_identity)
-            or dict(prepared_package.lineage) != dict(lineage)
-        ):
+        if dict(prepared_package.execution_identity) != dict(execution_identity) or dict(
+            prepared_package.lineage
+        ) != dict(lineage):
             raise ValueError("prepared final-test staging identity differs")
         _verify_attempt_manifest_records(prepared_package)
         _assert_frozen_release_date_bounds(prepared_package.release_files)
@@ -700,7 +690,9 @@ def _execute_authorized_final_test(
             execution_identity=execution_identity,
         )
         with FinalPublicationTransaction.open(
-            final_root, attempt_id=authorization.attempt_id
+            final_root,
+            attempt_id=authorization.attempt_id,
+            root_binding=root_binding,
         ) as transaction:
             transaction.crosscheck_root(root_binding)
             transaction.crosscheck_attempt(attempt_directories)
@@ -731,9 +723,7 @@ def _execute_authorized_final_test(
             (),
         )
     except BaseException as error:
-        if _entry_exists_at(
-            attempt_directories.attempt_fd, "attempt_manifest.json"
-        ):
+        if _entry_exists_at(attempt_directories.attempt_fd, "attempt_manifest.json"):
             _replace_validating_manifest_with_failure(
                 attempt_directories.attempt_fd,
                 authorization=authorization,
@@ -766,22 +756,16 @@ def build_or_reuse_final_test_daily_panel(
     claim_path = final_root / "data-build-claim.json"
     claim_state = _recover_or_archive_data_claim(final_root)
     if claim_state in {"absent", "archived_failed"}:
-        return build_final_test_daily_panel(
-            config, authorization, start, end, code_root=code_root
-        )
+        return build_final_test_daily_panel(config, authorization, start, end, code_root=code_root)
     if not claim_path.is_file():
-        return build_final_test_daily_panel(
-            config, authorization, start, end, code_root=code_root
-        )
+        return build_final_test_daily_panel(config, authorization, start, end, code_root=code_root)
     resolution = resolve_final_test_data_panel(final_root)
-    claim = json.loads(claim_path.read_text(encoding="utf-8"))
+    claim = read_data_claim(final_root)
     recorded_inventory = json.loads(
         (resolution.root / "input_files.json").read_text(encoding="utf-8")
     )
     current_inventory = _input_inventory(config, start, end)
-    _assert_reusable_data_claim(
-        claim, authorization, recorded_inventory, current_inventory
-    )
+    _assert_reusable_data_claim(claim, authorization, recorded_inventory, current_inventory)
     reuse_root = final_root / "data-reuse"
     if reuse_root.is_symlink():
         raise ValueError("final-test data reuse path uses a symlink")
@@ -811,7 +795,7 @@ def _recover_or_archive_data_claim(final_root: Path) -> str:
     claim_path = final_root / "data-build-claim.json"
     if not claim_path.is_file():
         return "absent"
-    claim_bytes = claim_path.read_bytes()
+    claim_bytes = read_data_claim_bytes(final_root)
     claim = json.loads(claim_bytes)
     initial_claim_sha256 = hashlib.sha256(claim_bytes).hexdigest()
     status = claim.get("status") if isinstance(claim, dict) else None
@@ -855,14 +839,18 @@ def _recover_or_archive_data_claim(final_root: Path) -> str:
         prepared = _load_prepared_recovery(
             prepared_path,
             claim=claim,
-            current_claim_sha256=hashlib.sha256(claim_path.read_bytes()).hexdigest(),
+            current_claim_sha256=hashlib.sha256(read_data_claim_bytes(final_root)).hexdigest(),
         )
         claim["status"] = "published"
-        _write_json_atomic(claim_path, claim)
+        published_claim_bytes = replace_data_claim_for_recovery(
+            final_root,
+            expected_current_bytes=claim_bytes,
+            payload=claim,
+        )
         _complete_data_recovery(
             completed_path,
             prepared=prepared,
-            published_claim_sha256=hashlib.sha256(claim_path.read_bytes()).hexdigest(),
+            published_claim_sha256=hashlib.sha256(published_claim_bytes).hexdigest(),
         )
         return "recovered_published"
     if status == "published":
@@ -878,7 +866,9 @@ def _recover_or_archive_data_claim(final_root: Path) -> str:
             _complete_data_recovery(
                 completed_path,
                 prepared=prepared,
-                published_claim_sha256=hashlib.sha256(claim_path.read_bytes()).hexdigest(),
+                published_claim_sha256=hashlib.sha256(
+                    read_data_claim_bytes(final_root)
+                ).hexdigest(),
             )
             return "recovered_published"
         return "published"
@@ -935,8 +925,7 @@ def _load_prepared_recovery(
         or payload.get("data_manifest_sha256") != _claim_manifest_sha256(claim)
         or len(str(payload["claim_sha256"])) != 64
         or any(
-            payload.get(field) != value
-            for field, value in _claim_recovery_identity(claim).items()
+            payload.get(field) != value for field, value in _claim_recovery_identity(claim).items()
         )
     ):
         raise ValueError("prepared data recovery audit does not match claim")
@@ -967,8 +956,7 @@ def _complete_data_recovery(
 
 def _write_json_exclusive(path: Path, payload: Mapping[str, object]) -> None:
     content = (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str)
-        + "\n"
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True, default=str) + "\n"
     ).encode()
     temporary = path.with_name(f".{path.name}.{os.urandom(8).hex()}.tmp")
     descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
@@ -1051,7 +1039,7 @@ def _recover_or_reject_current(
     del registry_root
     attempt_id = preflight.authorization.attempt_id
     with FinalPublicationTransaction.open(
-        final_root, attempt_id=attempt_id
+        final_root, attempt_id=attempt_id, root_binding=root_binding
     ) as transaction:
         transaction.crosscheck_root(root_binding)
         with opened_verified_current(final_root) as held:
@@ -1094,7 +1082,7 @@ def _recover_orphan_release(
         return None
     attempt_id = preflight.authorization.attempt_id
     with FinalPublicationTransaction.open(
-        final_root, attempt_id=attempt_id
+        final_root, attempt_id=attempt_id, root_binding=root_binding
     ) as transaction:
         transaction.crosscheck_root(root_binding)
         if not transaction.release_exists(run_id):
@@ -1135,7 +1123,7 @@ def _verify_orphan_release(
         return None
     attempt_id = preflight.authorization.attempt_id
     with FinalPublicationTransaction.open(
-        final_root, attempt_id=attempt_id
+        final_root, attempt_id=attempt_id, root_binding=root_binding
     ) as transaction:
         transaction.crosscheck_root(root_binding)
         if not transaction.release_exists(run_id):
@@ -1169,7 +1157,7 @@ def _recover_prepared_staging(
     attempt_id = preflight.authorization.attempt_id
     attempt_root = final_root / "attempt_runs" / attempt_id
     with FinalPublicationTransaction.open(
-        final_root, attempt_id=attempt_id
+        final_root, attempt_id=attempt_id, root_binding=root_binding
     ) as transaction:
         transaction.crosscheck_root(root_binding)
         execution_identity, _, _, prepared_package = _verify_prepared_staging(
@@ -1235,8 +1223,7 @@ def _verify_complete_release_identity(
     )
     release_staging_identity = _release_files_identity(release_files)
     expected_staging_identity = {
-        key: publication_identity[key]
-        for key in ("staging_files_sha256", "staging_file_count")
+        key: publication_identity[key] for key in ("staging_files_sha256", "staging_file_count")
     }
     if (
         not isinstance(manifest, dict)
@@ -1267,13 +1254,9 @@ def _verify_prepared_staging(
 ]:
     attempt_id = preflight.authorization.attempt_id
     final_root = attempt_root.parent.parent
-    opened_root, directories = _open_existing_attempt_directories(
-        final_root, attempt_id=attempt_id
-    )
+    opened_root, directories = _open_existing_attempt_directories(final_root, attempt_id=attempt_id)
     try:
-        datasets = read_frozen_tree_at(
-            directories.datasets_fd, label="prepared datasets staging"
-        )
+        datasets = read_frozen_tree_at(directories.datasets_fd, label="prepared datasets staging")
         panel_prefix = "final_daily_panel/"
         bound_panel_files = {
             path.removeprefix(panel_prefix): payload
@@ -1314,9 +1297,7 @@ def _verify_prepared_staging(
     expected_execution = _expected_execution_identity(
         preflight,
         execution_id=publication_identity["execution_id"],
-        coverage_snapshot_manifest_sha256=publication_identity[
-            "coverage_snapshot_manifest_sha256"
-        ],
+        coverage_snapshot_manifest_sha256=publication_identity["coverage_snapshot_manifest_sha256"],
     )
     authorization = lineage.get("authorization")
     execution = lineage.get("execution")
@@ -1356,21 +1337,13 @@ def _prepared_staging_identity(
         raise ValueError("prepared final-test staging identity differs")
     staging = _release_files_identity(package.release_files)
     return {
-        "attempt_manifest_sha256": hashlib.sha256(
-            package.attempt_manifest_bytes
-        ).hexdigest(),
+        "attempt_manifest_sha256": hashlib.sha256(package.attempt_manifest_bytes).hexdigest(),
         "lineage_preview_sha256": hashlib.sha256(package.lineage_bytes).hexdigest(),
         "execution_id": expected["execution_id"],
         "prepare_manifest_sha256": expected["prepare_manifest_sha256"],
-        "security_event_coverage_sha256": expected[
-            "security_event_coverage_sha256"
-        ],
-        "corporate_action_coverage_sha256": expected[
-            "corporate_action_coverage_sha256"
-        ],
-        "coverage_snapshot_manifest_sha256": expected[
-            "coverage_snapshot_manifest_sha256"
-        ],
+        "security_event_coverage_sha256": expected["security_event_coverage_sha256"],
+        "corporate_action_coverage_sha256": expected["corporate_action_coverage_sha256"],
+        "coverage_snapshot_manifest_sha256": expected["coverage_snapshot_manifest_sha256"],
         **staging,
     }
 
@@ -1395,8 +1368,7 @@ def _expected_execution_identity(
         not isinstance(coverage_snapshot_manifest_sha256, str)
         or len(coverage_snapshot_manifest_sha256) != 64
         or any(
-            character not in "0123456789abcdef"
-            for character in coverage_snapshot_manifest_sha256
+            character not in "0123456789abcdef" for character in coverage_snapshot_manifest_sha256
         )
     ):
         raise ValueError("prepared final-test staging identity differs")
@@ -1483,9 +1455,7 @@ def _is_resumable_attempt_shell(
     ):
         return False
     try:
-        stored = json.loads(
-            items["execution_identity.json"].read_text(encoding="utf-8")
-        )
+        stored = json.loads(items["execution_identity.json"].read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     return stored == dict(execution_identity)
@@ -1531,7 +1501,11 @@ def _write_attempt_core(
     _write_json_at(
         artifacts_fd,
         "runtime_audits.json",
-        {key: value for key, value in backtest.audits.items() if not isinstance(value, pl.DataFrame)},
+        {
+            key: value
+            for key, value in backtest.audits.items()
+            if not isinstance(value, pl.DataFrame)
+        },
     )
     for name, value in backtest.audits.items():
         if isinstance(value, pl.DataFrame):
@@ -1551,17 +1525,17 @@ def _slice_audit_frame(name: str, frame: pl.DataFrame) -> pl.DataFrame:
             (pl.col("last_stale_date") >= FINAL_TEST_START)
             & (pl.col("first_stale_date") <= FINAL_TEST_END)
         ).with_columns(
-            pl.max_horizontal(
-                pl.col("first_stale_date"), pl.lit(FINAL_TEST_START)
-            ).alias("first_stale_date"),
-            pl.min_horizontal(
-                pl.col("last_stale_date"), pl.lit(FINAL_TEST_END)
-            ).alias("last_stale_date"),
+            pl.max_horizontal(pl.col("first_stale_date"), pl.lit(FINAL_TEST_START)).alias(
+                "first_stale_date"
+            ),
+            pl.min_horizontal(pl.col("last_stale_date"), pl.lit(FINAL_TEST_END)).alias(
+                "last_stale_date"
+            ),
         )
     if "date" in frame.columns:
-        return frame.filter(pl.col("date").cast(pl.Date).is_between(
-            FINAL_TEST_START, FINAL_TEST_END
-        ))
+        return frame.filter(
+            pl.col("date").cast(pl.Date).is_between(FINAL_TEST_START, FINAL_TEST_END)
+        )
     date_columns = [
         column
         for column, dtype in frame.schema.items()
@@ -1616,9 +1590,7 @@ def _assert_frozen_release_date_bounds(files: Mapping[str, bytes]) -> None:
         for column in date_columns:
             if frame.filter(
                 pl.col(column).is_not_null()
-                & ~pl.col(column).cast(pl.Date).is_between(
-                    FINAL_TEST_START, FINAL_TEST_END
-                )
+                & ~pl.col(column).cast(pl.Date).is_between(FINAL_TEST_START, FINAL_TEST_END)
             ).height:
                 raise ValueError(
                     f"{relative}: date column {column} contains rows outside final-test period"
@@ -1692,9 +1664,7 @@ def _write_attempt_manifest(
 ) -> None:
     _secure_write_attempt_manifest(
         attempt_fd,
-        metadata=_attempt_manifest_metadata(
-            authorization, status=status, reason=reason
-        ),
+        metadata=_attempt_manifest_metadata(authorization, status=status, reason=reason),
         bound_panel_files=bound_panel_files,
     )
 
@@ -1769,18 +1739,18 @@ def _upstream_identity(
     else:
         raise ValueError("final-test data identity is incomplete")
     staged_inputs = [
-            file_record(path, root=staged_root, role="self_contained_final_input").to_dict()
-            for path in sorted(
-                item
-                for relative in (
-                    "datasets/final_daily_panel",
-                    "artifacts/execution_inputs",
-                    "artifacts/execution_sources",
-                )
-                for item in (staged_root / relative).rglob("*")
-                if item.is_file()
+        file_record(path, root=staged_root, role="self_contained_final_input").to_dict()
+        for path in sorted(
+            item
+            for relative in (
+                "datasets/final_daily_panel",
+                "artifacts/execution_inputs",
+                "artifacts/execution_sources",
             )
-        ]
+            for item in (staged_root / relative).rglob("*")
+            if item.is_file()
+        )
+    ]
     try:
         robustness = resolve_current(data_root / "processed/robustness")
         validation = resolve_current(data_root / "processed/validation_evaluation")
