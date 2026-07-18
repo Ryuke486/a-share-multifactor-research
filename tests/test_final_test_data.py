@@ -884,6 +884,90 @@ def test_data_build_rejects_staging_panel_replaced_after_stage2_output(
     assert not (final_root / "daily_panel").exists()
 
 
+def test_data_build_rejects_stage2_parent_replaced_with_self_consistent_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    build_stage2 = data_extension.build_parquet_dataset
+
+    def build_then_replace_parent(*args: object, **kwargs: object):
+        result = build_stage2(*args, **kwargs)
+        target = Path(str(kwargs["output_root"]))
+        parent = target.parent
+        displaced = tmp_path / "displaced-stage2-parent"
+        parent.rename(displaced)
+        shutil.copytree(displaced, parent)
+        return result
+
+    monkeypatch.setattr(
+        data_extension, "build_parquet_dataset", build_then_replace_parent
+    )
+
+    with pytest.raises(ValueError, match="output parent.*identity|staging.*identity"):
+        _build(config, authorization, code_root)
+
+    assert not (config.paths.processed / "final_test/daily_panel").exists()
+
+
+def test_data_build_rejects_same_size_partition_rewrite_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    publish = data_extension._publish_built_panel
+
+    def rewrite_then_publish(source: Path, destination: Path, **kwargs: object) -> None:
+        partition = next(source.rglob("*.parquet"))
+        original = partition.read_bytes()
+        changed = bytearray(original)
+        changed[len(changed) // 2] ^= 1
+        with partition.open("r+b") as stream:
+            stream.write(changed)
+        assert partition.stat().st_size == len(original)
+        publish(source, destination, **kwargs)
+
+    monkeypatch.setattr(data_extension, "_publish_built_panel", rewrite_then_publish)
+
+    with pytest.raises(ValueError, match="staging bytes changed"):
+        _build(config, authorization, code_root)
+
+    assert not (config.paths.processed / "final_test/daily_panel").exists()
+
+
+def test_data_build_cannot_succeed_after_final_root_replaced_during_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import data_extension
+
+    config = _config(tmp_path)
+    _write_pair(config, date(2022, 1, 3))
+    code_root, authorization = _authorized_context(tmp_path, config)
+    update_claim = data_extension._update_claim
+    final_root = config.paths.processed / "final_test"
+
+    def replace_then_update(*args: object, status: str, **kwargs: object) -> None:
+        if status == "published":
+            displaced = tmp_path / "displaced-final-root-after-publish"
+            final_root.rename(displaced)
+            shutil.copytree(displaced, final_root)
+        update_claim(*args, status=status, **kwargs)
+
+    monkeypatch.setattr(data_extension, "_update_claim", replace_then_update)
+
+    with pytest.raises(RuntimeError, match="requires recovery/audit"):
+        _build(config, authorization, code_root)
+
+
 def test_atomic_identity_json_write_fsyncs_file_replace_and_parent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -7,9 +7,11 @@ import os
 from pathlib import Path
 import subprocess
 import hashlib
+from uuid import uuid4
 
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import sha256_file
+from ashare_multifactor.audit.secure_tree import read_frozen_tree_at
 from ashare_multifactor.config import Period, ResearchConfig
 from ashare_multifactor.data.build import BuildManifest, build_parquet_dataset
 from ashare_multifactor.data.discovery import DailyFilePair, discover_daily_pairs
@@ -45,6 +47,10 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     opened_directory_at,
     read_bytes_at,
     write_bytes_exclusive_at,
+)
+from ashare_multifactor.final_test.secure_stage2_output import (
+    SecureStage2Output,
+    opened_stage2_directories,
 )
 
 
@@ -201,7 +207,9 @@ def _build_claimed_panel(
     temporary_processed = processed / "final_test/data-staging" / authorization.attempt_id
     if temporary_processed.is_symlink():
         raise ValueError("final-test data staging path uses a symlink")
-    if temporary_processed.exists():
+    if temporary_processed.exists() and not _is_empty_stage2_shell(
+        temporary_processed
+    ):
         raise FileExistsError("final-test data staging requires recovery")
     temporary_target = temporary_processed / "validation_evaluation/daily_panel"
     build_config = replace(
@@ -212,51 +220,68 @@ def _build_claimed_panel(
     published = False
     bound_panel: FrozenPanelSnapshot | None = None
     try:
-        manifest = build_parquet_dataset(
-            build_config,
-            start,
-            end,
-            output_root=temporary_target,
-            discovered_pairs=list(pairs),
-            supported_markets=config.supported_markets,
-        )
-        load_bound_input_pairs(config, inventory, start=start, end=end)
-        bound_panel, data_manifest_identity = _bind_built_panel(
-            temporary_target,
-            final_root=target.parent,
-            inventory=inventory,
-            manifest=manifest,
-            period=Period(start, end),
-        )
-        _validate_target_paths(config)
-        if target.exists() or target.is_symlink():
-            raise FileExistsError(f"final-test daily panel already exists: {target}")
-        _update_claim(
-            claim_path,
-            authorization,
-            status="publishing",
-            data_manifest=data_manifest_identity,
-        )
-        bound_panel.read_frozen_files()
-        _publish_built_panel(
-            temporary_target,
-            target,
-            expected_source_identity=bound_panel.root_identity,
-        )
-        bound_panel.read_frozen_files()
-        published = True
-        try:
+        with opened_stage2_directories(
+            target.parent, authorization.attempt_id
+        ) as stage2_directories:
+            with SecureStage2Output(
+                stage2_directories.validation_fd, temporary_target.name
+            ) as secure_output:
+                manifest = build_parquet_dataset(
+                    build_config,
+                    start,
+                    end,
+                    output_root=temporary_target,
+                    discovered_pairs=list(pairs),
+                    supported_markets=config.supported_markets,
+                    secure_output=secure_output,
+                )
+            stage2_directories.assert_bound()
+            load_bound_input_pairs(config, inventory, start=start, end=end)
+            bound_panel, data_manifest_identity = _bind_built_panel(
+                temporary_target,
+                inventory=inventory,
+                manifest=manifest,
+                period=Period(start, end),
+                target_parent_fd=stage2_directories.validation_fd,
+            )
+            stage2_directories.assert_bound()
+            _validate_target_paths(config)
+            if target.exists() or target.is_symlink():
+                raise FileExistsError(f"final-test daily panel already exists: {target}")
             _update_claim(
                 claim_path,
                 authorization,
-                status="published",
+                status="publishing",
                 data_manifest=data_manifest_identity,
             )
-        except Exception as error:
-            raise RuntimeError(
-                "final-test data is a published artifact that requires recovery/audit"
-            ) from error
-        return manifest
+            stage2_directories.assert_bound()
+            bound_panel_files = bound_panel.read_frozen_files()
+            _publish_built_panel(
+                temporary_target,
+                target,
+                expected_source_identity=bound_panel.root_identity,
+                source_parent_fd=stage2_directories.validation_fd,
+                destination_parent_fd=stage2_directories.final_fd,
+                expected_source_files=bound_panel_files,
+            )
+            bound_panel.read_frozen_files()
+            stage2_directories.assert_published(bound_panel.root_identity)
+            published = True
+            try:
+                _update_claim(
+                    claim_path,
+                    authorization,
+                    status="published",
+                    data_manifest=data_manifest_identity,
+                )
+                stage2_directories.assert_bound()
+                stage2_directories.assert_published(bound_panel.root_identity)
+                stage2_directories.remove_empty_ancestors()
+            except Exception as error:
+                raise RuntimeError(
+                    "final-test data is a published artifact that requires recovery/audit"
+                ) from error
+            return manifest
     except Exception as error:
         if not published:
             _update_claim(
@@ -273,57 +298,51 @@ def _build_claimed_panel(
             bound_panel.close()
 
 
+def _is_empty_stage2_shell(root: Path) -> bool:
+    return (
+        root.is_dir()
+        and not root.is_symlink()
+        and {path.name for path in root.iterdir()} == {"validation_evaluation"}
+        and not any((root / "validation_evaluation").iterdir())
+    )
+
+
 def _bind_built_panel(
     target: Path,
     *,
-    final_root: Path,
+    target_parent_fd: int,
     inventory: dict[str, object],
     manifest: BuildManifest,
     period: Period,
 ) -> tuple[FrozenPanelSnapshot, dict[str, object]]:
-    relative_parent = target.parent.relative_to(final_root)
-    with opened_directory(final_root, label="final-test root") as final_fd:
-        descriptors: list[int] = []
-        current_fd = final_fd
-        try:
-            for part in relative_parent.parts:
-                current_fd = open_directory_at(
-                    current_fd, part, label="final-test data staging parent"
-                )
-                descriptors.append(current_fd)
-            with opened_directory_at(
-                current_fd, target.name, label="final-test built panel"
-            ) as target_fd:
-                stage2_bytes = read_bytes_at(
-                    target_fd, "manifest.json", label="Stage-2 manifest"
-                )
-                if json.loads(stage2_bytes) != manifest.to_dict():
-                    raise ValueError("Stage-2 output identity changed after build")
-                inventory_bytes = _json_bytes(inventory)
-                write_bytes_exclusive_at(target_fd, "input_files.json", inventory_bytes)
-                data_manifest = _data_manifest_from_bytes(
-                    stage2_bytes, inventory_bytes, inventory
-                )
-                data_manifest_bytes = _json_bytes(data_manifest)
-                write_bytes_exclusive_at(
-                    target_fd, "data_manifest.json", data_manifest_bytes
-                )
-            snapshot = bind_panel_snapshot(
-                target,
-                datasets_fd=current_fd,
-                expected_manifest_sha256=hashlib.sha256(
-                    data_manifest_bytes
-                ).hexdigest(),
-                period=period,
-            )
-            return snapshot, {
-                "relative_path": "daily_panel/data_manifest.json",
-                "sha256": hashlib.sha256(data_manifest_bytes).hexdigest(),
-                "size_bytes": len(data_manifest_bytes),
-            }
-        finally:
-            for descriptor in reversed(descriptors):
-                os.close(descriptor)
+    with opened_directory_at(
+        target_parent_fd, target.name, label="final-test built panel"
+    ) as target_fd:
+        stage2_bytes = read_bytes_at(
+            target_fd, "manifest.json", label="Stage-2 manifest"
+        )
+        if json.loads(stage2_bytes) != manifest.to_dict():
+            raise ValueError("Stage-2 output identity changed after build")
+        inventory_bytes = _json_bytes(inventory)
+        write_bytes_exclusive_at(target_fd, "input_files.json", inventory_bytes)
+        data_manifest = _data_manifest_from_bytes(
+            stage2_bytes, inventory_bytes, inventory
+        )
+        data_manifest_bytes = _json_bytes(data_manifest)
+        write_bytes_exclusive_at(
+            target_fd, "data_manifest.json", data_manifest_bytes
+        )
+    snapshot = bind_panel_snapshot(
+        target,
+        datasets_fd=target_parent_fd,
+        expected_manifest_sha256=hashlib.sha256(data_manifest_bytes).hexdigest(),
+        period=period,
+    )
+    return snapshot, {
+        "relative_path": "daily_panel/data_manifest.json",
+        "sha256": hashlib.sha256(data_manifest_bytes).hexdigest(),
+        "size_bytes": len(data_manifest_bytes),
+    }
 
 
 def _data_manifest_from_bytes(
@@ -372,7 +391,64 @@ def _publish_built_panel(
     destination: Path,
     *,
     expected_source_identity: tuple[int, int] | None = None,
+    source_parent_fd: int | None = None,
+    destination_parent_fd: int | None = None,
+    expected_source_files: dict[str, bytes] | None = None,
 ) -> None:
+    if source_parent_fd is not None or destination_parent_fd is not None:
+        if source_parent_fd is None or destination_parent_fd is None:
+            raise ValueError("complete held Stage-2 publication descriptors required")
+        with opened_directory_at(
+            source_parent_fd, source.name, label="final-test data staging"
+        ) as source_fd:
+            source_identity = directory_identity(source_fd)
+            if (
+                expected_source_identity is not None
+                and source_identity != expected_source_identity
+            ):
+                raise ValueError("final-test data staging identity changed")
+            if (
+                expected_source_files is not None
+                and read_frozen_tree_at(
+                    source_fd, label="bound Stage-2 publication source"
+                )
+                != expected_source_files
+            ):
+                raise ValueError("final-test data staging bytes changed")
+            atomic_rename_no_replace_at(
+                source_parent_fd,
+                source.name,
+                destination_parent_fd,
+                destination.name,
+            )
+            assert_directory_entry(
+                destination_parent_fd,
+                destination.name,
+                expected=source_identity,
+                label="final-test daily panel",
+            )
+            if (
+                expected_source_files is not None
+                and read_frozen_tree_at(
+                    source_fd, label="published Stage-2 panel"
+                )
+                != expected_source_files
+            ):
+                rejected_name = f".rejected-daily-panel-{uuid4().hex}"
+                atomic_rename_no_replace_at(
+                    destination_parent_fd,
+                    destination.name,
+                    source_parent_fd,
+                    rejected_name,
+                )
+                assert_directory_entry(
+                    source_parent_fd,
+                    rejected_name,
+                    expected=source_identity,
+                    label="rejected Stage-2 panel",
+                )
+                raise ValueError("final-test data staging bytes changed during publish")
+        return
     final_root = destination.parent
     relative_parent = source.parent.relative_to(final_root)
     with opened_directory(
@@ -402,6 +478,14 @@ def _publish_built_panel(
                         and source_identity != expected_source_identity
                     ):
                         raise ValueError("final-test data staging identity changed")
+                    if (
+                        expected_source_files is not None
+                        and read_frozen_tree_at(
+                            source_fd, label="bound Stage-2 publication source"
+                        )
+                        != expected_source_files
+                    ):
+                        raise ValueError("final-test data staging bytes changed")
                     atomic_rename_no_replace_at(
                         current_fd,
                         source.name,
@@ -414,6 +498,29 @@ def _publish_built_panel(
                         expected=source_identity,
                         label="final-test daily panel",
                     )
+                    if (
+                        expected_source_files is not None
+                        and read_frozen_tree_at(
+                            source_fd, label="published Stage-2 panel"
+                        )
+                        != expected_source_files
+                    ):
+                        rejected_name = f".rejected-daily-panel-{uuid4().hex}"
+                        atomic_rename_no_replace_at(
+                            final_fd,
+                            destination.name,
+                            current_fd,
+                            rejected_name,
+                        )
+                        assert_directory_entry(
+                            current_fd,
+                            rejected_name,
+                            expected=source_identity,
+                            label="rejected Stage-2 panel",
+                        )
+                        raise ValueError(
+                            "final-test data staging bytes changed during publish"
+                        )
                     assert_directory_entry(
                         final_parent_fd,
                         final_root.name,
@@ -572,11 +679,12 @@ def _recover_publishing_claim(
             period=period,
         )
         try:
-            snapshot.read_frozen_files()
+            snapshot_files = snapshot.read_frozen_files()
             _publish_built_panel(
                 staging_target,
                 target,
                 expected_source_identity=snapshot.root_identity,
+                expected_source_files=snapshot_files,
             )
             snapshot.read_frozen_files()
         finally:

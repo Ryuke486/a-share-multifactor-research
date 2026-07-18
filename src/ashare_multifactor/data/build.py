@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
 from uuid import uuid4
+from typing import Protocol
 
 import polars as pl
 
@@ -68,6 +69,16 @@ class BuildManifest:
         payload["years"] = list(self.years)
         payload["partitions"] = [partition.to_dict() for partition in self.partitions]
         return payload
+
+
+class SecureBuildOutput(Protocol):
+    def write_year(
+        self, year: int, frames: list[pl.DataFrame]
+    ) -> PartitionManifest: ...
+
+    def write_json(self, name: str, payload: object) -> bytes: ...
+
+    def publish(self) -> None: ...
 
 
 def _write_json(path: Path, payload: object) -> None:
@@ -205,6 +216,7 @@ def build_parquet_dataset(
     *,
     discovered_pairs: list[DailyFilePair] | None = None,
     supported_markets: tuple[str, ...] | None = None,
+    secure_output: SecureBuildOutput | None = None,
 ) -> BuildManifest:
     if end < start:
         raise ValueError("build end precedes start")
@@ -243,17 +255,23 @@ def build_parquet_dataset(
     ):
         raise ValueError("discovered daily pairs differ from requested period")
 
-    staging = target.parent / f".{target.name}-{uuid4().hex}.tmp"
+    staging_name = f".{target.name}-{uuid4().hex}.tmp"
+    staging = target.parent / staging_name
     quality_records: list[dict[str, object]] = []
     rows = 0
     partitions: list[PartitionManifest] = []
     try:
-        staging.mkdir(parents=True)
+        if secure_output is None:
+            staging.mkdir(parents=True)
         current_year: int | None = None
         year_frames: list[pl.DataFrame] = []
         for pair in pairs:
             if current_year is not None and pair.trading_date.year != current_year:
-                partition = _write_year(staging, current_year, year_frames)
+                partition = (
+                    _write_year(staging, current_year, year_frames)
+                    if secure_output is None
+                    else secure_output.write_year(current_year, year_frames)
+                )
                 partitions.append(partition)
                 rows += partition.rows
                 year_frames = []
@@ -314,11 +332,21 @@ def build_parquet_dataset(
             )
             year_frames.append(frame)
         if current_year is not None:
-            partition = _write_year(staging, current_year, year_frames)
+            partition = (
+                _write_year(staging, current_year, year_frames)
+                if secure_output is None
+                else secure_output.write_year(current_year, year_frames)
+            )
             partitions.append(partition)
             rows += partition.rows
 
-        _write_json(staging / "quality_issues.json", quality_records)
+        if secure_output is None:
+            _write_json(staging / "quality_issues.json", quality_records)
+            quality_bytes = (staging / "quality_issues.json").read_bytes()
+        else:
+            quality_bytes = secure_output.write_json(
+                "quality_issues.json", quality_records
+            )
         quality_path = staging / "quality_issues.json"
         quality_manifest = QualityIssuesManifest(
             relative_path="quality_issues.json",
@@ -328,8 +356,16 @@ def build_parquet_dataset(
                 for record in quality_records
                 if record.get("code") == "invalid_ohlc_quarantined"
             ),
-            size_bytes=quality_path.stat().st_size,
-            sha256=_file_sha256(quality_path),
+            size_bytes=(
+                quality_path.stat().st_size
+                if secure_output is None
+                else len(quality_bytes)
+            ),
+            sha256=(
+                _file_sha256(quality_path)
+                if secure_output is None
+                else hashlib.sha256(quality_bytes).hexdigest()
+            ),
         )
         manifest = BuildManifest(
             schema_version=SCHEMA_VERSION,
@@ -341,11 +377,16 @@ def build_parquet_dataset(
             partitions=tuple(partitions),
             quality_issues=quality_manifest,
         )
-        _write_json(staging / "manifest.json", manifest.to_dict())
-        _publish_staging(staging, target)
+        if secure_output is None:
+            _write_json(staging / "manifest.json", manifest.to_dict())
+            _publish_staging(staging, target)
+        else:
+            secure_output.write_json("manifest.json", manifest.to_dict())
+            secure_output.publish()
         return manifest
     except BaseException:
-        shutil.rmtree(staging, ignore_errors=True)
+        if secure_output is None:
+            shutil.rmtree(staging, ignore_errors=True)
         raise
 
 
