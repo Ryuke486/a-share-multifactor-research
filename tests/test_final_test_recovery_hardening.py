@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 
 import pytest
@@ -109,6 +110,78 @@ def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
         execution_id=second_execution_id,
     )
     assert rebuilt["execution_id"] == second_execution_id
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["query_package", "source_action_symlink", "manifest_symlink"],
+)
+def test_reusable_execution_sources_revalidate_copied_official_query_evidence(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    tamper: str,
+) -> None:
+    preflight = _preflight(prepared_attempt)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    snapshot = _snapshot(prepared_attempt, preflight)
+    resolution = SimpleNamespace(
+        root=final_root / "daily_panel",
+        claim_status="published",
+        requires_recovery=False,
+        data_manifest_sha256="d" * 64,
+    )
+    monkeypatch.setattr(
+        sources_module,
+        "resolve_final_test_data_panel",
+        lambda _root: resolution,
+    )
+    kwargs = {
+        "code_root": prepared_attempt.code_root,
+        "data_root": prepared_attempt.data_root,
+        "final_root": final_root,
+        "security_event_coverage_path": snapshot.security_event_coverage_path,
+        "corporate_action_coverage_root": snapshot.corporate_action_coverage_root,
+        "symbols": list(snapshot.symbols),
+        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+        "expected_security_event_coverage_sha256": (
+            preflight.security_event_coverage_sha256
+        ),
+        "expected_corporate_action_coverage_sha256": (
+            preflight.corporate_action_coverage_sha256
+        ),
+        "execution_id": "first-execution",
+    }
+    build_final_execution_inputs(preflight.authorization, **kwargs)
+    source_root = final_root / "execution_input_sources"
+    if tamper == "query_package":
+        (
+            source_root
+            / "packages/security_events/sz/000001/query-package/query_manifest.json"
+        ).unlink()
+    elif tamper == "source_action_symlink":
+        outside_action = tmp_path / "outside-corporate-actions.parquet"
+        outside_action.write_bytes(b"outside execution input")
+        source_action = source_root / "corporate_actions.parquet"
+        source_action.unlink()
+        source_action.symlink_to(outside_action)
+    manifest_path = source_root / "source_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["files"] = []
+    if tamper == "manifest_symlink":
+        outside_manifest = tmp_path / "outside-source-manifest.json"
+        outside_manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        manifest_path.unlink()
+        manifest_path.symlink_to(outside_manifest)
+    else:
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    shutil.rmtree(final_root / "attempt_inputs" / prepared_attempt.attempt_id)
+
+    with pytest.raises(ValueError):
+        build_final_execution_inputs(preflight.authorization, **kwargs)
+    assert not (
+        final_root / "attempt_inputs" / prepared_attempt.attempt_id
+    ).exists()
 
 
 def test_recovery_rejects_empty_competing_claim_target_without_moving_sources(

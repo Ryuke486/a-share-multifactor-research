@@ -21,10 +21,6 @@ from ashare_multifactor.final_test.data_extension import (
 from ashare_multifactor.final_test.action_source_contract import (
     verify_execution_input_manifest,
 )
-from ashare_multifactor.final_test.execution_sources import (
-    _verify_reusable_source_root,
-    validate_security_event_coverage,
-)
 from ashare_multifactor.final_test.execution_contracts import (
     normalize_corporate_action_rows,
     normalize_security_event_rows,
@@ -182,19 +178,9 @@ def _execution_input_failures(
             "authoritative 2022-2025 security-event inputs are missing",
         ]
     try:
-        if "attempt_inputs" in manifest_path.parts:
-            source_root = final_root / "execution_input_sources"
-            coverage_path = source_root / "security_event_coverage.json"
-            _verify_reusable_source_root(
-                source_root,
-                authorization=authorization,
-                security_event_coverage_path=coverage_path,
-                corporate_action_coverage_root=source_root / "corporate_action_coverage",
-                final_root=final_root,
-            )
-            validate_security_event_coverage(
-                coverage_path
-            )
+        # Attempt inputs are written directly from the already-validated coverage
+        # snapshot. Their own manifest, rather than the mutable audit archive,
+        # is the execution-time authority.
         verify_execution_input_manifest(manifest_path, authorization)
     except (FileNotFoundError, TypeError, ValueError) as error:
         return [str(error)]

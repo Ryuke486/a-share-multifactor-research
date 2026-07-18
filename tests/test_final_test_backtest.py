@@ -9,6 +9,7 @@ import pytest
 
 from ashare_multifactor.config import load_config
 from ashare_multifactor.final_test.backtest import (
+    _execution_input_failures,
     _validate_final_targets,
     run_final_test_backtest,
 )
@@ -237,6 +238,28 @@ def test_tampered_execution_input_is_blocked_before_final_data_read(
     assert result.publishable is False
     assert result.preflight["execution_started"] is False
     assert "digest mismatch" in " ".join(result.gate_failures)
+
+
+def test_attempt_bound_execution_inputs_do_not_reparse_mutable_source_archive(
+    tmp_path: Path,
+) -> None:
+    final_root = tmp_path / "processed/final_test"
+    execution_inputs = final_root / "attempt_inputs/attempt-001"
+    execution_inputs.mkdir(parents=True)
+    actions = execution_inputs / "corporate_actions.parquet"
+    events = execution_inputs / "security_events.parquet"
+    pl.DataFrame(schema={"effective_date": pl.Date}).write_parquet(actions)
+    pl.DataFrame(schema={"effective_date": pl.Date}).write_parquet(events)
+    build_execution_input_manifest(
+        execution_inputs / "manifest.json",
+        authorization=_authorization(),
+        files={
+            "corporate_actions.parquet": actions,
+            "security_events.parquet": events,
+        },
+    )
+
+    assert _execution_input_failures(final_root, _authorization()) == []
 
 
 def test_runtime_audit_failure_retains_stage6_outputs(

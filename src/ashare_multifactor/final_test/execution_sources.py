@@ -84,6 +84,21 @@ def build_final_execution_inputs(
         != final_root.resolve() / "attempt_inputs" / authorization.attempt_id
     ):
         raise ValueError("final execution input path uses a symlink or escapes root")
+    security_coverage, corporate_coverage = validate_final_execution_coverages(
+        symbols=symbols,
+        security_event_coverage_path=security_event_coverage_path,
+        corporate_action_coverage_root=corporate_action_coverage_root,
+    )
+    _assert_coverage_identity(
+        security_coverage,
+        corporate_coverage,
+        expected_security_event_coverage_sha256=(
+            expected_security_event_coverage_sha256
+        ),
+        expected_corporate_action_coverage_sha256=(
+            expected_corporate_action_coverage_sha256
+        ),
+    )
     if not source_root.exists():
         generate_final_execution_sources(
             authorization,
@@ -101,37 +116,33 @@ def build_final_execution_inputs(
             ),
             execution_id=execution_id,
         )
-    else:
-        _verify_reusable_source_root(
-            source_root,
-            authorization=authorization,
-            security_event_coverage_path=security_event_coverage_path,
-            corporate_action_coverage_root=corporate_action_coverage_root,
-            final_root=final_root,
-            symbols=symbols,
-            prepare_manifest_sha256=prepare_manifest_sha256,
-            expected_security_event_coverage_sha256=(
-                expected_security_event_coverage_sha256
-            ),
-            expected_corporate_action_coverage_sha256=(
-                expected_corporate_action_coverage_sha256
-            ),
-            execution_id=execution_id,
-        )
-    source_actions = source_root / "corporate_actions.parquet"
-    source_events = source_root / "security_events.parquet"
-    if not source_actions.is_file() or not source_events.is_file():
-        raise ValueError(
-            "authoritative final execution source files must be generated before execution"
-        )
+    source_records = _verify_reusable_source_root(
+        source_root,
+        authorization=authorization,
+        code_root=code_root,
+        final_root=final_root,
+        symbols=symbols,
+        prepare_manifest_sha256=prepare_manifest_sha256,
+        expected_security_event_coverage_sha256=(
+            expected_security_event_coverage_sha256
+        ),
+        expected_corporate_action_coverage_sha256=(
+            expected_corporate_action_coverage_sha256
+        ),
+        execution_id=execution_id,
+        expected_security_coverage=security_coverage,
+        expected_corporate_coverage=corporate_coverage,
+    )
+    actions, events = _execution_frames(security_coverage, corporate_coverage)
     if execution_root.exists() or execution_root.is_symlink():
         raise FileExistsError("final execution inputs are already bound")
     execution_root.mkdir(parents=True)
-    files = {}
-    for source in (source_actions, source_events):
-        destination = execution_root / source.name
-        shutil.copy2(source, destination)
-        files[source.name] = destination
+    files = {
+        "corporate_actions.parquet": execution_root / "corporate_actions.parquet",
+        "security_events.parquet": execution_root / "security_events.parquet",
+    }
+    actions.write_parquet(files["corporate_actions.parquet"])
+    events.write_parquet(files["security_events.parquet"])
     manifest = build_execution_input_manifest(
         execution_root / "manifest.json",
         authorization=authorization,
@@ -142,10 +153,7 @@ def build_final_execution_inputs(
         root=code_root,
         role="final_execution_source_contract",
     ).to_dict()
-    manifest["source_files"] = [
-        file_record(path, root=source_root, role="final_execution_source").to_dict()
-        for path in sorted(item for item in source_root.rglob("*") if item.is_file())
-    ]
+    manifest["source_files"] = source_records
     manifest.update(
         {
             "execution_id": execution_id,
@@ -202,31 +210,17 @@ def generate_final_execution_sources(
         corporate_action_coverage_root,
         symbols=symbols,
     )
-    if (
-        security_coverage.get("coverage_manifest_sha256")
-        != expected_security_event_coverage_sha256
-        or corporate_coverage.get("coverage_manifest_sha256")
-        != expected_corporate_action_coverage_sha256
-    ):
-        raise ValueError("execution coverage snapshot differs from claimed identity")
-    actions = corporate_coverage["actions"]
-    event_file = security_coverage.get("events_file")
-    events = security_coverage.get("events") if isinstance(event_file, Path) else pl.DataFrame(
-        schema={
-            "effective_date": pl.Date,
-            "source_symbol": pl.String,
-            "event_type": pl.String,
-            "target_symbol": pl.String,
-            "ratio": pl.Float64,
-            "cash_per_share": pl.Float64,
-            "source": pl.String,
-            "evidence_id": pl.String,
-        }
+    _assert_coverage_identity(
+        security_coverage,
+        corporate_coverage,
+        expected_security_event_coverage_sha256=(
+            expected_security_event_coverage_sha256
+        ),
+        expected_corporate_action_coverage_sha256=(
+            expected_corporate_action_coverage_sha256
+        ),
     )
-    if not isinstance(events, pl.DataFrame):
-        raise ValueError("official security events are not normalized")
-    if events.height != security_coverage["event_rows"]:
-        raise ValueError("official security-event row count changed")
+    actions, events = _execution_frames(security_coverage, corporate_coverage)
     destination = final_root / "execution_input_sources"
     temporary = final_root / f".execution-input-sources-{uuid4().hex}.tmp"
     temporary.mkdir(parents=True)
@@ -339,33 +333,129 @@ def _copy_official_query_coverage(
     )
 
 
+def _assert_coverage_identity(
+    security_coverage: dict[str, object],
+    corporate_coverage: dict[str, object],
+    *,
+    expected_security_event_coverage_sha256: str,
+    expected_corporate_action_coverage_sha256: str,
+) -> None:
+    if (
+        security_coverage.get("coverage_manifest_sha256")
+        != expected_security_event_coverage_sha256
+        or corporate_coverage.get("coverage_manifest_sha256")
+        != expected_corporate_action_coverage_sha256
+    ):
+        raise ValueError("execution coverage snapshot differs from claimed identity")
+
+
+def _execution_frames(
+    security_coverage: dict[str, object],
+    corporate_coverage: dict[str, object],
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    actions = corporate_coverage.get("actions")
+    if not isinstance(actions, pl.DataFrame):
+        raise ValueError("official corporate actions are not normalized")
+    event_file = security_coverage.get("events_file")
+    events = (
+        security_coverage.get("events")
+        if isinstance(event_file, Path)
+        else pl.DataFrame(
+            schema={
+                "effective_date": pl.Date,
+                "source_symbol": pl.String,
+                "event_type": pl.String,
+                "target_symbol": pl.String,
+                "ratio": pl.Float64,
+                "cash_per_share": pl.Float64,
+                "source": pl.String,
+                "evidence_id": pl.String,
+            }
+        )
+    )
+    if not isinstance(events, pl.DataFrame):
+        raise ValueError("official security events are not normalized")
+    if events.height != security_coverage.get("event_rows"):
+        raise ValueError("official security-event row count changed")
+    return actions, events
+
+
 def _verify_reusable_source_root(
     root: Path,
     *,
     authorization: FinalTestAuthorization,
-    security_event_coverage_path: Path,
-    corporate_action_coverage_root: Path,
+    code_root: Path,
     final_root: Path,
     symbols: list[str],
     prepare_manifest_sha256: str,
     expected_security_event_coverage_sha256: str,
     expected_corporate_action_coverage_sha256: str,
     execution_id: str,
-) -> None:
-    if root.is_symlink() or root.resolve() != final_root.resolve() / "execution_input_sources":
+    expected_security_coverage: dict[str, object],
+    expected_corporate_coverage: dict[str, object],
+) -> list[dict[str, object]]:
+    if (
+        root.is_symlink()
+        or not root.is_dir()
+        or root.resolve() != final_root.resolve() / "execution_input_sources"
+    ):
         raise ValueError("reusable final execution source path is unsafe")
+    manifest_path = root / "source_manifest.json"
+    if manifest_path.is_symlink() or not manifest_path.is_file():
+        raise ValueError("invalid reusable final execution source manifest")
     try:
-        manifest = json.loads((root / "source_manifest.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("invalid reusable final execution source manifest") from error
     resolution = resolve_final_test_data_panel(final_root)
+    contract = load_action_source_contract(
+        code_root / "configs/final_execution_sources.yaml"
+    )
+    _assert_coverage_identity(
+        expected_security_coverage,
+        expected_corporate_coverage,
+        expected_security_event_coverage_sha256=(
+            expected_security_event_coverage_sha256
+        ),
+        expected_corporate_action_coverage_sha256=(
+            expected_corporate_action_coverage_sha256
+        ),
+    )
+    expected_actions, expected_events = _execution_frames(
+        expected_security_coverage,
+        expected_corporate_coverage,
+    )
     security_coverage = validate_security_event_coverage(
-        security_event_coverage_path, symbols=symbols
+        root / "security_event_coverage.json", symbols=symbols
     )
     corporate_coverage = validate_corporate_action_coverage(
-        corporate_action_coverage_root, symbols=symbols
+        root / "corporate_action_coverage", symbols=symbols
     )
+    _assert_coverage_identity(
+        security_coverage,
+        corporate_coverage,
+        expected_security_event_coverage_sha256=(
+            expected_security_event_coverage_sha256
+        ),
+        expected_corporate_action_coverage_sha256=(
+            expected_corporate_action_coverage_sha256
+        ),
+    )
+    source_actions, source_events = _execution_frames(
+        security_coverage,
+        corporate_coverage,
+    )
+    stored_actions = _read_source_frame(root / "corporate_actions.parquet")
+    stored_events = _read_source_frame(root / "security_events.parquet")
+    if (
+        not stored_actions.equals(expected_actions)
+        or not stored_actions.equals(source_actions)
+        or not stored_events.equals(expected_events)
+        or not stored_events.equals(source_events)
+    ):
+        raise ValueError("reusable final execution source data differ from coverage")
     expected = {
+        "attempt_id": authorization.attempt_id,
         "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
         "git_commit": authorization.git_commit,
         "git_tree": authorization.git_tree,
@@ -377,17 +467,60 @@ def _verify_reusable_source_root(
         "symbols_sha256": hashlib.sha256(
             ("\n".join(symbols) + "\n").encode()
         ).hexdigest(),
+        "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
+        "provider": contract.provider,
+        "query_year_type": contract.query_year_type,
+        "query_years": list(contract.query_years),
+        "symbol_count": len(symbols),
+        "successful_query_count": expected_corporate_coverage["coverage"].height,
+        "security_event_source": (
+            "official_events"
+            if expected_events.height
+            else "official_zero_event_coverage"
+        ),
     }
+    expected_keys = {*expected, "files"}
     if (
-        security_coverage.get("coverage_manifest_sha256")
-        != expected_security_event_coverage_sha256
-        or corporate_coverage.get("coverage_manifest_sha256")
-        != expected_corporate_action_coverage_sha256
+        not isinstance(manifest, dict)
+        or set(manifest) != expected_keys
         or any(manifest.get(key) != value for key, value in expected.items())
+        or not isinstance(manifest.get("files"), list)
     ):
         raise ValueError("final execution sources cannot be reused across sealed inputs")
-    for record in manifest.get("files", []):
-        verify_file_record(record, root=root)
+    records = _source_file_records(root)
+    if manifest["files"] != records:
+        raise ValueError("reusable final execution source inventory differs")
+    if _source_file_records(root) != records:
+        raise ValueError("reusable final execution sources changed during validation")
+    return records
+
+
+def _read_source_frame(path: Path) -> pl.DataFrame:
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("reusable final execution source file is unsafe")
+    try:
+        return pl.read_parquet(path)
+    except (OSError, pl.exceptions.PolarsError) as error:
+        raise ValueError("reusable final execution source file is unreadable") from error
+
+
+def _source_file_records(root: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for directory, directories, filenames in os.walk(root, followlinks=False):
+        current = Path(directory)
+        for name in directories:
+            if (current / name).is_symlink():
+                raise ValueError("reusable final execution sources contain a symlink")
+        for name in filenames:
+            path = current / name
+            if path.is_symlink() or not path.is_file():
+                raise ValueError("reusable final execution sources contain an unsafe file")
+            if path == root / "source_manifest.json":
+                continue
+            records.append(
+                file_record(path, root=root, role="final_execution_source").to_dict()
+            )
+    return sorted(records, key=lambda record: Path(str(record["path"])))
 
 
 def validate_security_event_coverage(
