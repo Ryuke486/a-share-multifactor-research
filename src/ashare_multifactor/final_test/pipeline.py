@@ -34,6 +34,9 @@ from ashare_multifactor.final_test.data_extension import (
 )
 from ashare_multifactor.final_test.data_publication import resolve_final_test_data_panel
 from ashare_multifactor.final_test.execution_sources import build_final_execution_inputs
+from ashare_multifactor.final_test.execution_binding import (
+    resolve_bound_execution_inputs,
+)
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
     FINAL_TEST_START,
@@ -52,11 +55,14 @@ from ashare_multifactor.final_test.registry import (
     append_prepared_publication,
     append_attempt_outcome,
     assert_no_authoritative_success,
+    bind_execution_identity,
+    bind_execution_input_manifest_hash,
     claim_attempt_execution,
     recover_prepared_publication,
     resolve_optional_prepared_publication,
     resolve_prepared_publication,
     resolve_attempt_state_readonly,
+    resolve_optional_execution_binding,
     validate_publication_id,
 )
 from ashare_multifactor.final_test.release_outputs import (
@@ -268,20 +274,39 @@ def _execute_authorized_final_test(
         preflight=preflight,
         coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
     )
+    execution_identity = resolve_optional_execution_binding(
+        registry_root,
+        attempt_id=authorization.attempt_id,
+    )
+    if execution_identity is None:
+        execution_identity = bind_execution_identity(
+            registry_root,
+            identity={
+                "execution_id": uuid4().hex,
+                "attempt_id": authorization.attempt_id,
+                "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+                "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
+                "security_event_coverage_sha256": (
+                    preflight.security_event_coverage_sha256
+                ),
+                "corporate_action_coverage_sha256": (
+                    preflight.corporate_action_coverage_sha256
+                ),
+                "coverage_snapshot_manifest_sha256": coverage_snapshot.manifest_sha256,
+            },
+        )
+    expected_execution_identity = _expected_execution_identity(
+        preflight,
+        execution_id=execution_identity.get("execution_id"),
+        coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
+    )
+    if execution_identity != expected_execution_identity:
+        raise ValueError("final-test execution registry binding differs")
     attempt_root = final_root / "attempt_runs" / authorization.attempt_id
     datasets = attempt_root / "datasets"
     artifacts = attempt_root / "artifacts"
     datasets.mkdir(parents=True)
     artifacts.mkdir()
-    execution_identity = {
-        "execution_id": uuid4().hex,
-        "attempt_id": authorization.attempt_id,
-        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
-        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
-        "security_event_coverage_sha256": preflight.security_event_coverage_sha256,
-        "corporate_action_coverage_sha256": preflight.corporate_action_coverage_sha256,
-        "coverage_snapshot_manifest_sha256": coverage_snapshot.manifest_sha256,
-    }
     _write_json(attempt_root / "execution_identity.json", execution_identity)
     started_at = datetime.now(timezone.utc).isoformat()
     try:
@@ -294,14 +319,17 @@ def _execute_authorized_final_test(
             security_event_coverage_path=coverage_snapshot.security_event_coverage_path,
             corporate_action_coverage_root=coverage_snapshot.corporate_action_coverage_root,
             symbols=list(coverage_snapshot.symbols),
-            prepare_manifest_sha256=preflight.preparation.manifest_sha256,
-            expected_security_event_coverage_sha256=(
-                preflight.security_event_coverage_sha256
+            execution_identity=execution_identity,
+        )
+        bind_execution_input_manifest_hash(
+            registry_root,
+            identity=execution_identity,
+            manifest_sha256=sha256_file(
+                final_root
+                / "attempt_inputs"
+                / authorization.attempt_id
+                / "manifest.json"
             ),
-            expected_corporate_action_coverage_sha256=(
-                preflight.corporate_action_coverage_sha256
-            ),
-            execution_id=str(execution_identity["execution_id"]),
         )
         signals = build_final_test_signals(
             authorization,
@@ -349,10 +377,10 @@ def _execute_authorized_final_test(
         comparison.write_parquet(datasets / "period_comparison.parquet")
         completed_at = datetime.now(timezone.utc).isoformat()
         resolution = resolve_final_test_data_panel(final_root)
+        resolve_bound_execution_inputs(final_root, authorization)
         _copy_release_inputs(
             panel_root=resolution.root,
             execution_root=(final_root / "attempt_inputs" / authorization.attempt_id),
-            source_root=final_root / "execution_input_sources",
             datasets=datasets,
             artifacts=artifacts,
         )
@@ -1084,17 +1112,44 @@ def _copy_release_inputs(
     *,
     panel_root: Path,
     execution_root: Path,
-    source_root: Path | None = None,
     datasets: Path,
     artifacts: Path,
 ) -> None:
-    checked = (panel_root, execution_root, *((source_root,) if source_root else ()))
-    if any(path.is_symlink() for path in checked):
-        raise ValueError("final-test release input uses a symlink")
-    shutil.copytree(panel_root, datasets / "final_daily_panel")
-    shutil.copytree(execution_root, artifacts / "execution_inputs")
-    if source_root is not None:
-        shutil.copytree(source_root, artifacts / "execution_sources")
+    _assert_safe_release_tree(panel_root, record_files=False)
+    execution_records = _assert_safe_release_tree(execution_root, record_files=True)
+    execution_destination = artifacts / "execution_inputs"
+    try:
+        shutil.copytree(execution_root, execution_destination)
+        actual_paths = {
+            path.relative_to(execution_destination).as_posix()
+            for path in execution_destination.rglob("*")
+            if path.is_file()
+        }
+        expected_paths = {str(record["path"]) for record in execution_records}
+        if actual_paths != expected_paths:
+            raise ValueError("final-test release execution input inventory changed")
+        for record in execution_records:
+            verify_file_record(record, root=execution_destination)
+        shutil.copytree(panel_root, datasets / "final_daily_panel")
+    except BaseException:
+        shutil.rmtree(execution_destination, ignore_errors=True)
+        raise
+
+
+def _assert_safe_release_tree(
+    root: Path,
+    *,
+    record_files: bool,
+) -> list[dict[str, object]]:
+    items = list(root.rglob("*")) if root.is_dir() else []
+    if root.is_symlink() or not root.is_dir() or any(path.is_symlink() for path in items):
+        raise ValueError("final-test release input uses a symlink or is missing")
+    if not record_files:
+        return []
+    return [
+        file_record(path, root=root, role="final_test_release_input").to_dict()
+        for path in sorted(item for item in items if item.is_file())
+    ]
 
 
 def _write_attempt_core(

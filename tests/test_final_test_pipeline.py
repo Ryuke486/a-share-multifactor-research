@@ -14,9 +14,12 @@ import pytest
 from test_final_test_resume import PreparedAttempt
 
 from ashare_multifactor.audit.publication import publish_release, resolve_current
-from ashare_multifactor.audit.records import file_record
+from ashare_multifactor.audit.records import file_record, sha256_file
 from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.backtest import FinalTestBacktestResult
+from ashare_multifactor.final_test.action_source_contract import (
+    build_execution_input_manifest,
+)
 from ashare_multifactor.final_test import pipeline as pipeline_module
 from ashare_multifactor.final_test import interrupted_recovery as recovery_module
 from ashare_multifactor.final_test.coverage_snapshot import (
@@ -43,9 +46,12 @@ from ashare_multifactor.final_test.registry import (
     append_attempt_state,
     append_prepared_publication,
     begin_execution_recovery,
+    bind_execution_identity,
     recover_prepared_publication,
     register_attempt,
     resolve_attempt_state,
+    resolve_execution_binding,
+    resolve_execution_input_manifest_hash,
 )
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.resume import preflight_resume
@@ -138,8 +144,32 @@ def _execution_coverage_snapshot(
 
 
 def _patch_steps(monkeypatch: pytest.MonkeyPatch, *, publishable: bool) -> None:
-    def build_execution_inputs(*_args: object, **_kwargs: object) -> dict[str, object]:
-        return {"status": "ready", "files": []}
+    def build_execution_inputs(
+        authorization: FinalTestAuthorization,
+        *_args: object,
+        **kwargs: object,
+    ) -> dict[str, object]:
+        final_root = Path(str(kwargs["final_root"]))
+        manifest = (
+            final_root
+            / "attempt_inputs"
+            / authorization.attempt_id
+            / "manifest.json"
+        )
+        manifest.parent.mkdir(parents=True)
+        actions = manifest.parent / "corporate_actions.parquet"
+        events = manifest.parent / "security_events.parquet"
+        pl.DataFrame({"placeholder": [1]}).write_parquet(actions)
+        pl.DataFrame({"placeholder": [1]}).write_parquet(events)
+        return build_execution_input_manifest(
+            manifest,
+            authorization=authorization,
+            files={
+                "corporate_actions.parquet": actions,
+                "security_events.parquet": events,
+            },
+            execution_identity=kwargs["execution_identity"],
+        )
 
     def build_signals(*_args: object, **_kwargs: object) -> FinalTestSignals:
         return _signals()
@@ -390,6 +420,12 @@ def test_resume_archives_verified_partial_execution_before_recomputing(
         ),
         encoding="utf-8",
     )
+    bind_execution_identity(
+        registry,
+        identity=json.loads(
+            (partial / "execution_identity.json").read_text(encoding="utf-8")
+        ),
+    )
     (partial / "partial.bin").write_bytes(b"immutable interrupted bytes")
     _patch_steps(monkeypatch, publishable=True)
 
@@ -461,6 +497,12 @@ def test_resume_completes_recovery_audit_after_move_before_event_crash(
             }
         ),
         encoding="utf-8",
+    )
+    bind_execution_identity(
+        registry,
+        identity=json.loads(
+            (partial / "execution_identity.json").read_text(encoding="utf-8")
+        ),
     )
     (partial / "partial.bin").write_bytes(b"crash-between-move-and-complete")
     _patch_steps(monkeypatch, publishable=True)
@@ -541,6 +583,7 @@ def test_resume_rejects_competing_recovery_target_without_moving_source(
     (partial / "execution_identity.json").write_text(
         json.dumps(identity), encoding="utf-8"
     )
+    bind_execution_identity(registry, identity=identity)
     original = b"must remain in original source"
     (partial / "partial.bin").write_bytes(original)
     intent = begin_execution_recovery(
@@ -616,6 +659,12 @@ def test_resume_rejects_recovery_intent_path_escape_without_moving_source(
             }
         ),
         encoding="utf-8",
+    )
+    bind_execution_identity(
+        registry,
+        identity=json.loads(
+            (partial / "execution_identity.json").read_text(encoding="utf-8")
+        ),
     )
     original = b"must not escape recovery root"
     (partial / "partial.bin").write_bytes(original)
@@ -1162,7 +1211,10 @@ def test_resume_rejects_partial_execution_with_incomplete_identity(
     )
     _patch_steps(monkeypatch, publishable=True)
 
-    with pytest.raises(ValueError, match="identity (?:is incomplete|schema differs)"):
+    with pytest.raises(
+        ValueError,
+        match="identity|execution[ -]binding|registry record",
+    ):
         pipeline_module.resume_final_test_release(
             code_root=prepared_attempt.code_root,
             data_root=prepared_attempt.data_root,
@@ -2069,6 +2121,115 @@ def test_release_copies_final_data_and_execution_evidence(tmp_path: Path) -> Non
     assert (datasets / "final_daily_panel/data_manifest.json").is_file()
     assert (datasets / "final_daily_panel/input_files.json").is_file()
     assert (artifacts / "execution_inputs/coverage.json").is_file()
+
+
+def test_release_copy_rejects_nested_execution_evidence_symlink(
+    tmp_path: Path,
+) -> None:
+    panel = tmp_path / "daily_panel"
+    panel.mkdir()
+    (panel / "data_manifest.json").write_text("{}\n", encoding="utf-8")
+    execution = tmp_path / "attempt_inputs"
+    evidence = execution / "coverage_snapshot"
+    evidence.mkdir(parents=True)
+    outside = tmp_path / "outside-evidence.bin"
+    outside.write_bytes(b"must not enter release")
+    (evidence / "escaped.bin").symlink_to(outside)
+    datasets = tmp_path / "staged/datasets"
+    artifacts = tmp_path / "staged/artifacts"
+    datasets.mkdir(parents=True)
+    artifacts.mkdir()
+
+    with pytest.raises(ValueError, match="symlink"):
+        _copy_release_inputs(
+            panel_root=panel,
+            execution_root=execution,
+            datasets=datasets,
+            artifacts=artifacts,
+        )
+
+    assert not (artifacts / "execution_inputs").exists()
+
+
+def test_pipeline_release_ignores_later_active_execution_source_changes(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    panel_root = final_root / "daily_panel"
+    active_source = final_root / "execution_input_sources"
+
+    def build_inputs(
+        authorization: FinalTestAuthorization,
+        *_args: object,
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        execution_root = final_root / "attempt_inputs" / authorization.attempt_id
+        materialized = execution_root / "coverage_snapshot"
+        materialized.mkdir(parents=True)
+        (materialized / "evidence.bin").write_bytes(b"attempt-bound evidence")
+        actions = execution_root / "corporate_actions.parquet"
+        events = execution_root / "security_events.parquet"
+        pl.DataFrame({"placeholder": [1]}).write_parquet(actions)
+        pl.DataFrame({"placeholder": [1]}).write_parquet(events)
+        manifest = build_execution_input_manifest(
+            execution_root / "manifest.json",
+            authorization=authorization,
+            files={
+                "corporate_actions.parquet": actions,
+                "security_events.parquet": events,
+            },
+            execution_identity=_kwargs["execution_identity"],
+        )
+        active_source.mkdir()
+        (active_source / "evidence.bin").write_bytes(b"initial active source")
+        return manifest
+
+    def copy_after_source_change(**kwargs: object) -> None:
+        (active_source / "evidence.bin").write_bytes(b"changed active source")
+        assert "source_root" not in kwargs
+        registry = final_root / "attempts"
+        identity = resolve_execution_binding(
+            registry,
+            attempt_id=prepared_attempt.attempt_id,
+        )
+        manifest = (
+            final_root
+            / "attempt_inputs"
+            / prepared_attempt.attempt_id
+            / "manifest.json"
+        )
+        assert resolve_execution_input_manifest_hash(
+            registry,
+            identity=identity,
+        ) == sha256_file(manifest)
+        _copy_release_inputs(**kwargs)
+
+    monkeypatch.setattr(pipeline_module, "build_final_execution_inputs", build_inputs)
+    monkeypatch.setattr(
+        pipeline_module,
+        "resolve_final_test_data_panel",
+        lambda _root: SimpleNamespace(root=panel_root),
+    )
+    monkeypatch.setattr(pipeline_module, "_copy_release_inputs", copy_after_source_change)
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    assert result.release is not None
+    assert (
+        result.release.artifacts
+        / "execution_inputs/coverage_snapshot/evidence.bin"
+    ).read_bytes() == b"attempt-bound evidence"
+    assert not (result.release.artifacts / "execution_sources").exists()
 
 
 def test_failed_attempt_data_reuse_requires_same_seal_git_and_raw_inventory() -> None:

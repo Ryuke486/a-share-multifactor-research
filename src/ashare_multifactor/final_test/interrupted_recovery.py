@@ -14,6 +14,8 @@ from ashare_multifactor.final_test.registry import (
     complete_execution_recovery,
     completed_execution_recovery_intents,
     pending_execution_recovery,
+    resolve_execution_binding,
+    resolve_execution_input_manifest_hash,
     validate_publication_id,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
@@ -105,6 +107,25 @@ def recover_interrupted_execution(
         )
         if intent is None and not presence["attempt_run"]:
             return None
+        registry_identity = resolve_execution_binding(
+            registry_root,
+            attempt_id=attempt_id,
+        )
+        expected_registry_identity = _expected_execution_identity(
+            preflight,
+            execution_id=registry_identity.get("execution_id"),
+            coverage_snapshot_manifest_sha256=coverage_snapshot_manifest_sha256,
+        )
+        if registry_identity != expected_registry_identity:
+            raise ValueError("interrupted execution differs from registry binding")
+        expected_input_manifest_sha256 = (
+            resolve_execution_input_manifest_hash(
+                registry_root,
+                identity=registry_identity,
+            )
+            if presence["attempt_inputs"]
+            else None
+        )
         with _open_source_anchors_at(
             final_fd,
             final_identity=final_identity,
@@ -118,6 +139,7 @@ def recover_interrupted_execution(
                     presence=presence,
                     attempt_id=attempt_id,
                     allow_moved=False,
+                    expected_input_manifest_sha256=expected_input_manifest_sha256,
                 )
                 expected_identity = _expected_execution_identity(
                     preflight,
@@ -126,9 +148,9 @@ def recover_interrupted_execution(
                         coverage_snapshot_manifest_sha256
                     ),
                 )
-                if identity != expected_identity:
+                if identity != expected_identity or identity != registry_identity:
                     raise ValueError(
-                        "partial final-test execution identity schema or values differ"
+                        "partial final-test execution identity differs from registry binding"
                     )
                 intent = begin_execution_recovery(
                     registry_root,
@@ -150,6 +172,7 @@ def recover_interrupted_execution(
                     presence=presence,
                     attempt_id=attempt_id,
                     allow_moved=True,
+                    expected_input_manifest_sha256=expected_input_manifest_sha256,
                 )
                 expected_identity = _expected_execution_identity(
                     preflight,
@@ -158,9 +181,9 @@ def recover_interrupted_execution(
                         coverage_snapshot_manifest_sha256
                     ),
                 )
-                if identity != expected_identity:
+                if identity != expected_identity or identity != registry_identity:
                     raise ValueError(
-                        "partial final-test execution identity schema or values differ"
+                        "partial final-test execution identity differs from registry binding"
                     )
                 execution_id = str(identity["execution_id"])
                 if (
@@ -477,6 +500,7 @@ def _load_and_verify_bound_artifacts_at(
     presence: Mapping[str, bool],
     attempt_id: str,
     allow_moved: bool,
+    expected_input_manifest_sha256: str | None,
 ) -> dict[str, object]:
     payloads: dict[str, dict[str, object]] = {}
     for label in (
@@ -523,6 +547,18 @@ def _load_and_verify_bound_artifacts_at(
                 manifest_name,
                 label=f"{label} identity",
             )
+            if label == "attempt_inputs":
+                manifest_sha256 = hashlib.sha256(
+                    _read_bytes_at(
+                        artifact_fd,
+                        manifest_name,
+                        label="attempt_inputs manifest",
+                    )
+                ).hexdigest()
+                if manifest_sha256 != expected_input_manifest_sha256:
+                    raise ValueError(
+                        "interrupted execution inputs differ from registry binding"
+                    )
     identity = payloads["attempt_run"]
     if set(identity) != _IDENTITY_KEYS:
         raise ValueError("partial final-test execution identity schema differs")

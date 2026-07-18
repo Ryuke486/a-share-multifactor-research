@@ -17,7 +17,14 @@ from ashare_multifactor.final_test.action_source_contract import (
     build_execution_input_manifest,
 )
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test.registry import (
+    append_attempt_state,
+    bind_execution_identity,
+    bind_execution_input_manifest_hash,
+    register_attempt,
+)
 from ashare_multifactor.final_test.signals import FinalTestSignals
+from ashare_multifactor.audit.records import sha256_file
 
 
 FINAL_START = date(2022, 1, 1)
@@ -182,8 +189,7 @@ def test_missing_authoritative_action_inputs_block_before_final_data_read(
     )
 
     assert result.publishable is False
-    assert any("corporate-action" in item for item in result.gate_failures)
-    assert any("security-event" in item for item in result.gate_failures)
+    assert any("attempt" in item or "binding" in item for item in result.gate_failures)
     assert result.preflight["execution_started"] is False
     assert resolved_data is False
 
@@ -237,10 +243,10 @@ def test_tampered_execution_input_is_blocked_before_final_data_read(
 
     assert result.publishable is False
     assert result.preflight["execution_started"] is False
-    assert "digest mismatch" in " ".join(result.gate_failures)
+    assert "attempt" in " ".join(result.gate_failures)
 
 
-def test_attempt_bound_execution_inputs_do_not_reparse_mutable_source_archive(
+def test_unregistered_attempt_inputs_are_rejected_even_if_self_consistent(
     tmp_path: Path,
 ) -> None:
     final_root = tmp_path / "processed/final_test"
@@ -259,7 +265,121 @@ def test_attempt_bound_execution_inputs_do_not_reparse_mutable_source_archive(
         },
     )
 
-    assert _execution_input_failures(final_root, _authorization()) == []
+    failures = _execution_input_failures(final_root, _authorization())
+    assert any("attempt" in item or "binding" in item for item in failures)
+
+
+def test_self_consistent_input_replacement_is_rejected_by_registry_binding(
+    tmp_path: Path,
+) -> None:
+    authorization = _authorization()
+    final_root = tmp_path / "processed/final_test"
+    registry = final_root / "attempts"
+    register_attempt(
+        registry,
+        attempt_id=authorization.attempt_id,
+        git_commit=authorization.git_commit,
+        git_tree=authorization.git_tree,
+        token_sha256="d" * 64,
+        sealed_protocol_sha256=authorization.sealed_protocol_sha256,
+        robustness_release=authorization.robustness_release,
+        robustness_manifest_sha256="e" * 64,
+        robustness_lineage_sha256="f" * 64,
+        approval_id=authorization.approval_id,
+    )
+    prepare_sha256 = "1" * 64
+    security_sha256 = "2" * 64
+    corporate_sha256 = "3" * 64
+    append_attempt_state(
+        registry,
+        attempt_id=authorization.attempt_id,
+        state="preparing",
+    )
+    append_attempt_state(
+        registry,
+        attempt_id=authorization.attempt_id,
+        state="awaiting_official_evidence",
+        identities={"prepare_manifest_sha256": prepare_sha256},
+    )
+    append_attempt_state(
+        registry,
+        attempt_id=authorization.attempt_id,
+        state="executing",
+        identities={
+            "prepare_manifest_sha256": prepare_sha256,
+            "security_event_coverage_sha256": security_sha256,
+            "corporate_action_coverage_sha256": corporate_sha256,
+        },
+    )
+    snapshot_manifest = (
+        final_root
+        / "execution_coverage_snapshots"
+        / authorization.attempt_id
+        / "snapshot_manifest.json"
+    )
+    snapshot_manifest.parent.mkdir(parents=True)
+    snapshot_manifest.write_text(
+        json.dumps(
+            {
+                "attempt_id": authorization.attempt_id,
+                "prepare_manifest_sha256": prepare_sha256,
+                "security_event_coverage_sha256": security_sha256,
+                "corporate_action_coverage_sha256": corporate_sha256,
+            }
+        ),
+        encoding="utf-8",
+    )
+    identity = {
+        "attempt_id": authorization.attempt_id,
+        "execution_id": "execution-001",
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "prepare_manifest_sha256": prepare_sha256,
+        "security_event_coverage_sha256": security_sha256,
+        "corporate_action_coverage_sha256": corporate_sha256,
+        "coverage_snapshot_manifest_sha256": sha256_file(snapshot_manifest),
+    }
+    attempt_root = final_root / "attempt_runs" / authorization.attempt_id
+    attempt_root.mkdir(parents=True)
+    (attempt_root / "execution_identity.json").write_text(
+        json.dumps(identity), encoding="utf-8"
+    )
+    bind_execution_identity(registry, identity=identity)
+    execution_inputs = final_root / "attempt_inputs" / authorization.attempt_id
+    execution_inputs.mkdir(parents=True)
+    actions = execution_inputs / "corporate_actions.parquet"
+    events = execution_inputs / "security_events.parquet"
+    pl.DataFrame({"version": [1]}).write_parquet(actions)
+    pl.DataFrame({"version": [1]}).write_parquet(events)
+    manifest_path = execution_inputs / "manifest.json"
+    build_execution_input_manifest(
+        manifest_path,
+        authorization=authorization,
+        files={
+            "corporate_actions.parquet": actions,
+            "security_events.parquet": events,
+        },
+        execution_identity=identity,
+    )
+    bind_execution_input_manifest_hash(
+        registry,
+        identity=identity,
+        manifest_sha256=sha256_file(manifest_path),
+    )
+
+    pl.DataFrame({"version": [2]}).write_parquet(actions)
+    pl.DataFrame({"version": [2]}).write_parquet(events)
+    build_execution_input_manifest(
+        manifest_path,
+        authorization=authorization,
+        files={
+            "corporate_actions.parquet": actions,
+            "security_events.parquet": events,
+        },
+        execution_identity=identity,
+    )
+
+    failures = _execution_input_failures(final_root, authorization)
+    assert any("registry" in item or "binding" in item for item in failures)
 
 
 def test_runtime_audit_failure_retains_stage6_outputs(
@@ -468,6 +588,10 @@ def test_verified_inputs_extend_stage7_ledger_with_final_manifest_data(
         code_root=tmp_path,
         final_root=final_root,
         supported_markets=("sh", "sz"),
+        verified_execution_inputs={
+            "corporate_actions.parquet": final_actions_path,
+            "security_events.parquet": final_events_path,
+        },
     )
 
     assert result.execution_panel.get_column("date").max() == date(2022, 1, 4)

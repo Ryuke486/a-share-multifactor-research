@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import os
 from pathlib import Path
 import shutil
@@ -26,6 +27,9 @@ from ashare_multifactor.final_test.data_publication import resolve_final_test_da
 from ashare_multifactor.final_test.data_inventory import write_json
 from ashare_multifactor.final_test.execution_contracts import (
     normalize_security_event_rows,
+)
+from ashare_multifactor.final_test.execution_identity import (
+    assert_execution_identity_authorized,
 )
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
@@ -67,13 +71,22 @@ def build_final_execution_inputs(
     security_event_coverage_path: Path,
     corporate_action_coverage_root: Path,
     symbols: list[str],
-    prepare_manifest_sha256: str,
-    expected_security_event_coverage_sha256: str,
-    expected_corporate_action_coverage_sha256: str,
-    execution_id: str,
+    execution_identity: Mapping[str, object],
 ) -> dict[str, object]:
     """Generate, then bind, the frozen action/event inputs to this attempt."""
     del data_root
+    identity = assert_execution_identity_authorized(execution_identity, authorization)
+    prepare_manifest_sha256 = identity["prepare_manifest_sha256"]
+    expected_security_event_coverage_sha256 = identity[
+        "security_event_coverage_sha256"
+    ]
+    expected_corporate_action_coverage_sha256 = identity[
+        "corporate_action_coverage_sha256"
+    ]
+    execution_id = identity["execution_id"]
+    coverage_snapshot_manifest_sha256 = identity[
+        "coverage_snapshot_manifest_sha256"
+    ]
     source_root = final_root / "execution_input_sources"
     execution_root = final_root / "attempt_inputs" / authorization.attempt_id
     if (
@@ -115,6 +128,9 @@ def build_final_execution_inputs(
                 expected_corporate_action_coverage_sha256
             ),
             execution_id=execution_id,
+            coverage_snapshot_manifest_sha256=(
+                coverage_snapshot_manifest_sha256
+            ),
         )
     source_records = _verify_reusable_source_root(
         source_root,
@@ -130,6 +146,7 @@ def build_final_execution_inputs(
             expected_corporate_action_coverage_sha256
         ),
         execution_id=execution_id,
+        coverage_snapshot_manifest_sha256=coverage_snapshot_manifest_sha256,
         expected_security_coverage=security_coverage,
         expected_corporate_coverage=corporate_coverage,
     )
@@ -137,40 +154,48 @@ def build_final_execution_inputs(
     if execution_root.exists() or execution_root.is_symlink():
         raise FileExistsError("final execution inputs are already bound")
     execution_root.mkdir(parents=True)
-    files = {
-        "corporate_actions.parquet": execution_root / "corporate_actions.parquet",
-        "security_events.parquet": execution_root / "security_events.parquet",
-    }
-    actions.write_parquet(files["corporate_actions.parquet"])
-    events.write_parquet(files["security_events.parquet"])
-    manifest = build_execution_input_manifest(
-        execution_root / "manifest.json",
-        authorization=authorization,
-        files=files,
-    )
-    manifest["source_contract"] = file_record(
-        code_root / "configs/final_execution_sources.yaml",
-        root=code_root,
-        role="final_execution_source_contract",
-    ).to_dict()
-    manifest["source_files"] = source_records
-    manifest.update(
-        {
-            "execution_id": execution_id,
-            "prepare_manifest_sha256": prepare_manifest_sha256,
-            "security_event_coverage_sha256": (
-                expected_security_event_coverage_sha256
-            ),
-            "corporate_action_coverage_sha256": (
-                expected_corporate_action_coverage_sha256
-            ),
-            "symbols_sha256": hashlib.sha256(
-                ("\n".join(symbols) + "\n").encode()
-            ).hexdigest(),
+    try:
+        files = {
+            "corporate_actions.parquet": execution_root / "corporate_actions.parquet",
+            "security_events.parquet": execution_root / "security_events.parquet",
         }
-    )
-    write_json(execution_root / "manifest.json", manifest)
-    return manifest
+        actions.write_parquet(files["corporate_actions.parquet"])
+        events.write_parquet(files["security_events.parquet"])
+        from ashare_multifactor.final_test.coverage_snapshot import (
+            materialize_bound_coverage_snapshot,
+        )
+
+        snapshot_records = materialize_bound_coverage_snapshot(
+            final_root,
+            attempt_id=authorization.attempt_id,
+            destination=execution_root / "coverage_snapshot",
+            expected_manifest_sha256=coverage_snapshot_manifest_sha256,
+        )
+        manifest = build_execution_input_manifest(
+            execution_root / "manifest.json",
+            authorization=authorization,
+            files=files,
+            execution_identity=identity,
+        )
+        manifest["source_contract"] = file_record(
+            code_root / "configs/final_execution_sources.yaml",
+            root=code_root,
+            role="final_execution_source_contract",
+        ).to_dict()
+        manifest["source_files"] = source_records
+        manifest["coverage_snapshot_files"] = snapshot_records
+        manifest.update(
+            {
+                "symbols_sha256": hashlib.sha256(
+                    ("\n".join(symbols) + "\n").encode()
+                ).hexdigest(),
+            }
+        )
+        write_json(execution_root / "manifest.json", manifest)
+        return manifest
+    except BaseException:
+        shutil.rmtree(execution_root, ignore_errors=True)
+        raise
 
 
 def generate_final_execution_sources(
@@ -185,6 +210,7 @@ def generate_final_execution_sources(
     expected_security_event_coverage_sha256: str,
     expected_corporate_action_coverage_sha256: str,
     execution_id: str,
+    coverage_snapshot_manifest_sha256: str,
 ) -> Path:
     """Bind verified official action/event evidence to canonical execution inputs."""
     _assert_authorization(authorization)
@@ -281,6 +307,9 @@ def generate_final_execution_sources(
                 "git_tree": authorization.git_tree,
                 "data_manifest_sha256": resolution.data_manifest_sha256,
                 "execution_id": execution_id,
+                "coverage_snapshot_manifest_sha256": (
+                    coverage_snapshot_manifest_sha256
+                ),
                 "prepare_manifest_sha256": prepare_manifest_sha256,
                 "security_event_coverage_sha256": (
                     expected_security_event_coverage_sha256
@@ -391,6 +420,7 @@ def _verify_reusable_source_root(
     expected_security_event_coverage_sha256: str,
     expected_corporate_action_coverage_sha256: str,
     execution_id: str,
+    coverage_snapshot_manifest_sha256: str,
     expected_security_coverage: dict[str, object],
     expected_corporate_coverage: dict[str, object],
 ) -> list[dict[str, object]]:
@@ -461,6 +491,7 @@ def _verify_reusable_source_root(
         "git_tree": authorization.git_tree,
         "data_manifest_sha256": resolution.data_manifest_sha256,
         "execution_id": execution_id,
+        "coverage_snapshot_manifest_sha256": coverage_snapshot_manifest_sha256,
         "prepare_manifest_sha256": prepare_manifest_sha256,
         "security_event_coverage_sha256": expected_security_event_coverage_sha256,
         "corporate_action_coverage_sha256": expected_corporate_action_coverage_sha256,

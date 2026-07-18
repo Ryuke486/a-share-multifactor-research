@@ -1,5 +1,6 @@
 from datetime import date
 import hashlib
+import json
 from pathlib import Path
 
 import polars as pl
@@ -47,6 +48,18 @@ def _write_inputs(root: Path) -> dict[str, Path]:
     }
 
 
+def _execution_identity() -> dict[str, str]:
+    return {
+        "attempt_id": "attempt-001",
+        "execution_id": "execution-001",
+        "sealed_protocol_sha256": "c" * 64,
+        "prepare_manifest_sha256": "d" * 64,
+        "security_event_coverage_sha256": "e" * 64,
+        "corporate_action_coverage_sha256": "f" * 64,
+        "coverage_snapshot_manifest_sha256": "0" * 64,
+    }
+
+
 def test_manifest_binds_attempt_seal_period_and_hashed_files(tmp_path: Path) -> None:
     files = _write_inputs(tmp_path)
     manifest_path = tmp_path / "manifest.json"
@@ -64,6 +77,35 @@ def test_manifest_binds_attempt_seal_period_and_hashed_files(tmp_path: Path) -> 
     assert {item["path"] for item in manifest["files"]} == set(files)
     assert all(len(item["sha256"]) == 64 for item in manifest["files"])
     assert verified == {name: path.resolve() for name, path in files.items()}
+
+
+def test_manifest_requires_exact_bound_execution_identity(tmp_path: Path) -> None:
+    files = _write_inputs(tmp_path)
+    manifest_path = tmp_path / "manifest.json"
+    identity = _execution_identity()
+    build_execution_input_manifest(
+        manifest_path,
+        authorization=_authorization(),
+        files=files,
+        execution_identity=identity,
+    )
+
+    assert verify_execution_input_manifest(
+        manifest_path,
+        _authorization(),
+        execution_identity=identity,
+    ) == {name: path.resolve() for name, path in files.items()}
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["coverage_snapshot_manifest_sha256"] = "1" * 64
+    manifest_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="execution identity"):
+        verify_execution_input_manifest(
+            manifest_path,
+            _authorization(),
+            execution_identity=identity,
+        )
 
 
 def test_manifest_rejects_hash_drift_and_path_escape(tmp_path: Path) -> None:

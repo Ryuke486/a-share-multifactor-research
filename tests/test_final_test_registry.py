@@ -12,7 +12,11 @@ import pytest
 from ashare_multifactor.final_test.registry import (
     append_attempt_outcome,
     append_attempt_state,
+    bind_execution_identity,
+    bind_execution_input_manifest_hash,
     register_attempt,
+    resolve_execution_binding,
+    resolve_execution_input_manifest_hash,
     resolve_attempt_state,
 )
 from ashare_multifactor.final_test import registry as registry_module
@@ -41,6 +45,65 @@ def _awaiting_official_evidence(registry: Path) -> None:
         state="awaiting_official_evidence",
         identities={"prepare_manifest_sha256": "a" * 64},
     )
+
+
+def _execution_identity() -> dict[str, str]:
+    return {
+        "attempt_id": "attempt-001",
+        "execution_id": "execution-001",
+        "sealed_protocol_sha256": "d" * 64,
+        "prepare_manifest_sha256": "a" * 64,
+        "security_event_coverage_sha256": "b" * 64,
+        "corporate_action_coverage_sha256": "c" * 64,
+        "coverage_snapshot_manifest_sha256": "e" * 64,
+    }
+
+
+def _executing(registry: Path) -> None:
+    _awaiting_official_evidence(registry)
+    append_attempt_state(
+        registry,
+        attempt_id="attempt-001",
+        state="executing",
+        identities={
+            "prepare_manifest_sha256": "a" * 64,
+            "security_event_coverage_sha256": "b" * 64,
+            "corporate_action_coverage_sha256": "c" * 64,
+        },
+    )
+
+
+def test_execution_binding_is_append_only_and_matches_executing_state(
+    tmp_path: Path,
+) -> None:
+    registry = tmp_path / "attempts"
+    _register(registry)
+    _executing(registry)
+    identity = _execution_identity()
+
+    assert bind_execution_identity(registry, identity=identity) == identity
+    assert resolve_execution_binding(registry, attempt_id="attempt-001") == identity
+    manifest_sha256 = "f" * 64
+    assert bind_execution_input_manifest_hash(
+        registry,
+        identity=identity,
+        manifest_sha256=manifest_sha256,
+    ) == manifest_sha256
+    assert resolve_execution_input_manifest_hash(
+        registry,
+        identity=identity,
+    ) == manifest_sha256
+
+    changed = {**identity, "execution_id": "other-execution"}
+    with pytest.raises(ValueError, match="binding"):
+        bind_execution_identity(registry, identity=changed)
+    with pytest.raises(ValueError, match="binding"):
+        bind_execution_input_manifest_hash(
+            registry,
+            identity=identity,
+            manifest_sha256="0" * 64,
+        )
+    assert resolve_execution_binding(registry, attempt_id="attempt-001") == identity
 
 
 def test_readonly_attempt_state_rejects_missing_lock_without_creating_files(

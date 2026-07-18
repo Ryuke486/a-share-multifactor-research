@@ -18,12 +18,12 @@ from ashare_multifactor.execution.stale_audit import audit_stale_positions
 from ashare_multifactor.final_test.data_extension import (
     _verify_authorization as _verify_data_authorization,
 )
-from ashare_multifactor.final_test.action_source_contract import (
-    verify_execution_input_manifest,
-)
 from ashare_multifactor.final_test.execution_contracts import (
     normalize_corporate_action_rows,
     normalize_security_event_rows,
+)
+from ashare_multifactor.final_test.execution_binding import (
+    resolve_bound_execution_inputs,
 )
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
@@ -43,9 +43,6 @@ from ashare_multifactor.final_test.signal_inputs import (
 
 
 _RECONCILIATION_THRESHOLD = 0.01
-_EXECUTION_INPUT_MANIFEST = "execution_inputs/manifest.json"
-
-
 @dataclass(frozen=True)
 class FinalTestBacktestResult:
     outputs: dict[str, pl.DataFrame]
@@ -99,9 +96,17 @@ def run_final_test_backtest(
     _verify_data_authorization(config, authorization, code_root)
 
     failures = _fee_coverage_failures(code_root / "configs/market_rules.yaml")
-    failures.extend(_execution_input_failures(final_root, authorization))
+    verified_execution_inputs: dict[str, Path] | None = None
+    try:
+        verified_execution_inputs = resolve_bound_execution_inputs(
+            final_root, authorization
+        )
+    except (FileNotFoundError, TypeError, ValueError) as error:
+        failures.append(str(error))
     if failures:
         return _blocked_preflight(failures)
+    if verified_execution_inputs is None:
+        raise RuntimeError("verified execution inputs are unexpectedly missing")
 
     # Resolve test-period data only after every frozen fee/action preflight passes.
     source = _resolve_authorized_data(final_root, authorization, config.test)
@@ -113,6 +118,7 @@ def run_final_test_backtest(
             code_root=code_root,
             final_root=final_root,
             supported_markets=config.supported_markets,
+            verified_execution_inputs=verified_execution_inputs,
         )
     except (FileNotFoundError, ValueError) as error:
         return _blocked_preflight([str(error)])
@@ -178,10 +184,7 @@ def _execution_input_failures(
             "authoritative 2022-2025 security-event inputs are missing",
         ]
     try:
-        # Attempt inputs are written directly from the already-validated coverage
-        # snapshot. Their own manifest, rather than the mutable audit archive,
-        # is the execution-time authority.
-        verify_execution_input_manifest(manifest_path, authorization)
+        resolve_bound_execution_inputs(final_root, authorization)
     except (FileNotFoundError, TypeError, ValueError) as error:
         return [str(error)]
     return []
@@ -190,10 +193,7 @@ def _execution_input_failures(
 def _execution_manifest_path(
     final_root: Path, authorization: FinalTestAuthorization
 ) -> Path:
-    attempt = final_root / "attempt_inputs" / authorization.attempt_id / "manifest.json"
-    if attempt.is_file():
-        return attempt
-    return final_root / _EXECUTION_INPUT_MANIFEST
+    return final_root / "attempt_inputs" / authorization.attempt_id / "manifest.json"
 
 
 def _resolve_verified_inputs(
@@ -204,11 +204,8 @@ def _resolve_verified_inputs(
     code_root: Path,
     final_root: Path,
     supported_markets: tuple[str, ...],
+    verified_execution_inputs: dict[str, Path],
 ) -> FinalTestBacktestInputs:
-    verified = verify_execution_input_manifest(
-        _execution_manifest_path(final_root, authorization),
-        authorization,
-    )
     pretest = _resolve_pretest_execution_inputs(
         authorization,
         code_root=code_root,
@@ -239,8 +236,12 @@ def _resolve_verified_inputs(
     if adv_lookback <= 0:
         raise ValueError("frozen ADV lookback must be positive")
 
-    final_actions = _load_final_actions(verified["corporate_actions.parquet"])
-    final_events = _load_final_security_events(verified["security_events.parquet"])
+    final_actions = _load_final_actions(
+        verified_execution_inputs["corporate_actions.parquet"]
+    )
+    final_events = _load_final_security_events(
+        verified_execution_inputs["security_events.parquet"]
+    )
     targets = _continuous_targets(pretest.target_weights, signals.target_weights)
     symbols = _execution_symbols(targets, pretest.security_events, final_events)
     final_calendar = _load_final_trading_calendar(source)

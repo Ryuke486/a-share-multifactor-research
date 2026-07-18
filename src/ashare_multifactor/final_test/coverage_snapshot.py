@@ -134,6 +134,84 @@ def snapshot_execution_coverages(
     )
 
 
+def materialize_bound_coverage_snapshot(
+    final_root: Path,
+    *,
+    attempt_id: str,
+    destination: Path,
+    expected_manifest_sha256: str,
+) -> list[dict[str, object]]:
+    """Copy one verified attempt snapshot into its immutable execution inputs."""
+    validate_publication_id(attempt_id)
+    source = final_root / "execution_coverage_snapshots" / attempt_id
+    expected_source = (
+        final_root.resolve() / "execution_coverage_snapshots" / attempt_id
+    )
+    if (
+        source.is_symlink()
+        or source.resolve() != expected_source
+        or destination.exists()
+        or destination.is_symlink()
+        or not destination.parent.resolve().is_relative_to(final_root.resolve())
+    ):
+        raise ValueError("coverage snapshot materialization path is unsafe")
+    _verify_snapshot_tree(source, expected_manifest_sha256=expected_manifest_sha256)
+    shutil.copytree(source, destination)
+    _verify_snapshot_tree(
+        destination,
+        expected_manifest_sha256=expected_manifest_sha256,
+    )
+    return [
+        file_record(
+            path,
+            root=destination.parent,
+            role="official_coverage_snapshot",
+        ).to_dict()
+        for path in sorted(item for item in destination.rglob("*") if item.is_file())
+    ]
+
+
+def _verify_snapshot_tree(
+    root: Path,
+    *,
+    expected_manifest_sha256: str,
+) -> None:
+    items = list(root.rglob("*")) if root.is_dir() else []
+    if root.is_symlink() or not root.is_dir() or any(path.is_symlink() for path in items):
+        raise ValueError("coverage snapshot tree is missing or uses a symlink")
+    manifest_path = root / "snapshot_manifest.json"
+    if (
+        not manifest_path.is_file()
+        or sha256_file(manifest_path) != expected_manifest_sha256
+    ):
+        raise ValueError("coverage snapshot manifest hash differs")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("invalid coverage snapshot manifest") from error
+    records = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(records, list):
+        raise ValueError("coverage snapshot file inventory is missing")
+    recorded_paths: set[str] = set()
+    for record in records:
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            raise ValueError("invalid coverage snapshot file record")
+        relative = _safe_snapshot_relative(str(record["path"]))
+        if relative.parts[0] not in {"security", "corporate"}:
+            raise ValueError("coverage snapshot file escapes evidence roots")
+        if relative.as_posix() in recorded_paths:
+            raise ValueError("duplicate coverage snapshot file record")
+        recorded_paths.add(relative.as_posix())
+        verify_file_record(record, root=root)
+    actual_paths = {
+        path.relative_to(root).as_posix()
+        for path in items
+        if path.is_file() and path != manifest_path
+    }
+    if actual_paths != recorded_paths:
+        raise ValueError("coverage snapshot file inventory differs")
+
+
 def _verify_snapshot(
     root: Path,
     *,

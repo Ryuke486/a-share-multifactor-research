@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 import json
@@ -14,6 +15,9 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
     FINAL_TEST_START,
     FinalTestAuthorization,
+)
+from ashare_multifactor.final_test.execution_identity import (
+    assert_execution_identity_authorized,
 )
 from ashare_multifactor.final_test.official_query_coverage import (
     OFFICIAL_QUERY_ENDPOINT,
@@ -142,6 +146,7 @@ def build_execution_input_manifest(
     *,
     authorization: FinalTestAuthorization,
     files: dict[str, Path],
+    execution_identity: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     _assert_authorization(authorization)
     required = {"corporate_actions.parquet", "security_events.parquet"}
@@ -166,6 +171,10 @@ def build_execution_input_manifest(
         "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
         "files": records,
     }
+    if execution_identity is not None:
+        payload.update(
+            assert_execution_identity_authorized(execution_identity, authorization)
+        )
     write_json(destination, payload)
     return payload
 
@@ -173,6 +182,8 @@ def build_execution_input_manifest(
 def verify_execution_input_manifest(
     path: Path,
     authorization: FinalTestAuthorization,
+    *,
+    execution_identity: Mapping[str, object] | None = None,
 ) -> dict[str, Path]:
     _assert_authorization(authorization)
     if path.is_symlink() or path.parent.is_symlink():
@@ -192,6 +203,13 @@ def verify_execution_input_manifest(
         payload.get(key) != value for key, value in expected.items()
     ):
         raise ValueError("execution-input manifest differs from authorization")
+    if execution_identity is not None:
+        bound_identity = assert_execution_identity_authorized(
+            execution_identity,
+            authorization,
+        )
+        if any(payload.get(key) != value for key, value in bound_identity.items()):
+            raise ValueError("execution-input manifest execution identity differs")
     records = payload.get("files")
     if not isinstance(records, list):
         raise ValueError("execution-input manifest files are missing")
@@ -205,6 +223,37 @@ def verify_execution_input_manifest(
             resolved[name] = verify_file_record(record, root=path.parent)
         except (FileNotFoundError, TypeError, ValueError) as error:
             raise ValueError(f"execution-input digest mismatch: {name}") from error
+    snapshot_records = payload.get("coverage_snapshot_files")
+    if snapshot_records is not None:
+        if not isinstance(snapshot_records, list) or not snapshot_records:
+            raise ValueError("execution-input coverage snapshot inventory is invalid")
+        snapshot_paths: set[str] = set()
+        for record in snapshot_records:
+            if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+                raise ValueError("execution-input coverage snapshot inventory is invalid")
+            relative = Path(str(record["path"]))
+            if (
+                relative.is_absolute()
+                or not relative.parts
+                or relative.parts[0] != "coverage_snapshot"
+                or ".." in relative.parts
+                or relative.as_posix() in snapshot_paths
+            ):
+                raise ValueError("execution-input coverage snapshot path is unsafe")
+            snapshot_paths.add(relative.as_posix())
+            try:
+                verify_file_record(record, root=path.parent)
+            except (FileNotFoundError, TypeError, ValueError) as error:
+                raise ValueError(
+                    "execution-input coverage snapshot digest mismatch"
+                ) from error
+        actual_snapshot_paths = {
+            item.relative_to(path.parent).as_posix()
+            for item in (path.parent / "coverage_snapshot").rglob("*")
+            if item.is_file()
+        }
+        if actual_snapshot_paths != snapshot_paths:
+            raise ValueError("execution-input coverage snapshot inventory differs")
     return resolved
 
 

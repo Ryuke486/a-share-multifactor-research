@@ -11,6 +11,11 @@ import re
 from typing import Any, Mapping
 from uuid import uuid4
 
+from ashare_multifactor.final_test.execution_identity import (
+    EXECUTION_IDENTITY_FIELDS,
+    validate_execution_identity,
+)
+
 
 _ATTEMPT_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -217,6 +222,205 @@ def resolve_attempt_state_readonly(
     validate_publication_id(attempt_id)
     with _attempt_read_lock(registry_root, attempt_id):
         return _resolve_attempt_state_unlocked(registry_root, attempt_id)
+
+
+def bind_execution_identity(
+    registry_root: Path,
+    *,
+    identity: Mapping[str, object],
+) -> dict[str, str]:
+    """Append the one immutable identity allowed for an executing attempt."""
+    validated = validate_execution_identity(identity)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    validate_publication_id(validated["execution_id"])
+    with _attempt_transition_lock(registry_root, attempt_id):
+        state = _resolve_attempt_state_unlocked(registry_root, attempt_id)
+        expected_state_identities = {
+            key: validated[key]
+            for key in (
+                "prepare_manifest_sha256",
+                "security_event_coverage_sha256",
+                "corporate_action_coverage_sha256",
+            )
+        }
+        if (
+            state["state"] != "executing"
+            or state["identities"] != expected_state_identities
+        ):
+            raise ValueError("execution binding differs from executing attempt")
+        path = _execution_binding_path(registry_root, attempt_id)
+        if path.is_symlink():
+            raise ValueError("execution binding uses a symlink")
+        if path.exists():
+            existing = validate_execution_identity(_read_registry_json(path))
+            if existing != validated:
+                raise ValueError("execution binding differs from existing record")
+            return existing
+        try:
+            _write_exclusive(path, _json_bytes(validated))
+        except FileExistsError:
+            existing = validate_execution_identity(_read_registry_json(path))
+            if existing != validated:
+                raise ValueError("execution binding differs from existing record") from None
+            return existing
+        return validated
+
+
+def resolve_execution_binding(
+    registry_root: Path,
+    *,
+    attempt_id: str,
+) -> dict[str, str]:
+    """Read the append-only binding only while its attempt is executing."""
+    validate_publication_id(attempt_id)
+    with _attempt_read_lock(registry_root, attempt_id):
+        return _resolve_execution_binding_unlocked(registry_root, attempt_id)
+
+
+def resolve_optional_execution_binding(
+    registry_root: Path,
+    *,
+    attempt_id: str,
+) -> dict[str, str] | None:
+    """Return the immutable execution binding, or None before its first append."""
+    validate_publication_id(attempt_id)
+    with _attempt_read_lock(registry_root, attempt_id):
+        state = _resolve_attempt_state_unlocked(registry_root, attempt_id)
+        if state["state"] != "executing":
+            raise ValueError("execution binding requires an executing attempt")
+        path = _execution_binding_path(registry_root, attempt_id)
+        if path.is_symlink():
+            raise ValueError("execution binding uses a symlink")
+        if not path.exists():
+            return None
+        return _resolve_execution_binding_unlocked(registry_root, attempt_id)
+
+
+def bind_execution_input_manifest_hash(
+    registry_root: Path,
+    *,
+    identity: Mapping[str, object],
+    manifest_sha256: str,
+) -> str:
+    """Append the sole execution-input manifest hash for one execution binding."""
+    validated = validate_execution_identity(identity)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    validate_publication_id(validated["execution_id"])
+    if _SHA256.fullmatch(manifest_sha256) is None:
+        raise ValueError("execution-input manifest hash is invalid")
+    with _attempt_transition_lock(registry_root, attempt_id):
+        existing_identity = _resolve_execution_binding_unlocked(registry_root, attempt_id)
+        if existing_identity != validated:
+            raise ValueError("execution-input binding differs from execution identity")
+        path = _execution_input_binding_path(registry_root, validated)
+        if path.is_symlink():
+            raise ValueError("execution-input binding uses a symlink")
+        payload = {**validated, "execution_input_manifest_sha256": manifest_sha256}
+        if path.exists():
+            existing = _read_execution_input_binding(path)
+            if existing != payload:
+                raise ValueError("execution-input binding differs from existing record")
+            return manifest_sha256
+        try:
+            _write_exclusive(path, _json_bytes(payload))
+        except FileExistsError:
+            existing = _read_execution_input_binding(path)
+            if existing != payload:
+                raise ValueError(
+                    "execution-input binding differs from existing record"
+                ) from None
+        return manifest_sha256
+
+
+def resolve_execution_input_manifest_hash(
+    registry_root: Path,
+    *,
+    identity: Mapping[str, object],
+) -> str:
+    """Resolve an immutable input-manifest hash for the exact execution identity."""
+    validated = validate_execution_identity(identity)
+    attempt_id = validate_publication_id(validated["attempt_id"])
+    validate_publication_id(validated["execution_id"])
+    with _attempt_read_lock(registry_root, attempt_id):
+        if _resolve_execution_binding_unlocked(registry_root, attempt_id) != validated:
+            raise ValueError("execution-input binding differs from execution identity")
+        path = _execution_input_binding_path(registry_root, validated)
+        if path.is_symlink():
+            raise ValueError("execution-input binding uses a symlink")
+        if not path.is_file():
+            raise ValueError("execution-input binding is missing")
+        payload = _read_execution_input_binding(path)
+        if any(payload.get(key) != value for key, value in validated.items()):
+            raise ValueError("execution-input binding differs from execution identity")
+        return str(payload["execution_input_manifest_sha256"])
+
+
+def _execution_binding_path(registry_root: Path, attempt_id: str) -> Path:
+    return registry_root / f"{attempt_id}.execution-binding.json"
+
+
+def _resolve_execution_binding_unlocked(
+    registry_root: Path,
+    attempt_id: str,
+) -> dict[str, str]:
+    state = _resolve_attempt_state_unlocked(registry_root, attempt_id)
+    if state["state"] != "executing":
+        raise ValueError("execution binding requires an executing attempt")
+    path = _execution_binding_path(registry_root, attempt_id)
+    if path.is_symlink():
+        raise ValueError("execution binding uses a symlink")
+    if not path.is_file():
+        raise ValueError("execution binding is missing")
+    binding = validate_execution_identity(_read_registry_json(path))
+    expected_state_identities = {
+        key: binding[key]
+        for key in (
+            "prepare_manifest_sha256",
+            "security_event_coverage_sha256",
+            "corporate_action_coverage_sha256",
+        )
+    }
+    if binding["attempt_id"] != attempt_id or state["identities"] != expected_state_identities:
+        raise ValueError("execution binding differs from executing attempt")
+    return binding
+
+
+def _execution_input_binding_path(
+    registry_root: Path,
+    identity: Mapping[str, str],
+) -> Path:
+    return (
+        registry_root
+        / f"{identity['attempt_id']}.execution-input.{identity['execution_id']}.json"
+    )
+
+
+def _read_execution_input_binding(path: Path) -> dict[str, object]:
+    payload = _read_registry_json(path)
+    try:
+        validate_execution_identity(
+            {key: payload.get(key) for key in EXECUTION_IDENTITY_FIELDS}
+        )
+    except ValueError as error:
+        raise ValueError("execution-input binding is invalid") from error
+    manifest_sha256 = payload.get("execution_input_manifest_sha256")
+    if (
+        set(payload)
+        != {
+            "attempt_id",
+            "execution_id",
+            "sealed_protocol_sha256",
+            "prepare_manifest_sha256",
+            "security_event_coverage_sha256",
+            "corporate_action_coverage_sha256",
+            "coverage_snapshot_manifest_sha256",
+            "execution_input_manifest_sha256",
+        }
+        or not isinstance(manifest_sha256, str)
+        or _SHA256.fullmatch(manifest_sha256) is None
+    ):
+        raise ValueError("execution-input binding is invalid")
+    return payload
 
 
 def _resolve_attempt_state_unlocked(

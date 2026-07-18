@@ -22,6 +22,8 @@ from ashare_multifactor.final_test.execution_sources import build_final_executio
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
     begin_execution_recovery,
+    bind_execution_identity,
+    bind_execution_input_manifest_hash,
     complete_execution_recovery,
     resolve_attempt_state,
 )
@@ -29,6 +31,76 @@ from ashare_multifactor.final_test.resume import preflight_resume
 
 
 pytest_plugins = ("test_final_test_resume",)
+
+
+def test_recovery_rejects_self_reported_identity_not_bound_in_registry(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    preflight = _preflight(prepared_attempt)
+    snapshot = _snapshot(prepared_attempt, preflight)
+    _mark_executing(prepared_attempt, preflight)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    registry = final_root / "attempts"
+    bound_identity = {
+        "execution_id": "bound-execution",
+        "attempt_id": prepared_attempt.attempt_id,
+        "sealed_protocol_sha256": preflight.authorization.sealed_protocol_sha256,
+        **_identities(preflight),
+        "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
+    }
+    bind_execution_identity(registry, identity=bound_identity)
+    attempt_root = final_root / "attempt_runs" / prepared_attempt.attempt_id
+    attempt_root.mkdir(parents=True)
+    _write_execution_identity(
+        attempt_root,
+        prepared_attempt=prepared_attempt,
+        preflight=preflight,
+        execution_id="self-reported-execution",
+        snapshot_sha256=snapshot.manifest_sha256,
+        bind_registry=False,
+    )
+
+    with pytest.raises(ValueError, match="binding|registry"):
+        recovery_module.recover_interrupted_execution(
+            final_root,
+            preflight=preflight,
+            coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+        )
+
+    assert (attempt_root / "execution_identity.json").is_file()
+
+
+def test_recovery_rejects_replaced_attempt_input_manifest_bound_in_registry(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    preflight, snapshot, final_root, attempt_root, _intent = _claimed_interruption(
+        prepared_attempt,
+        with_all_sources=True,
+    )
+    manifest = (
+        final_root
+        / "attempt_inputs"
+        / prepared_attempt.attempt_id
+        / "manifest.json"
+    )
+    manifest.write_text(
+        json.dumps(
+            {
+                "execution_id": "interrupted-execution",
+                "self_consistent_replacement": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="inputs.*registry binding"):
+        recovery_module.recover_interrupted_execution(
+            final_root,
+            preflight=preflight,
+            coverage_snapshot_manifest_sha256=snapshot.manifest_sha256,
+        )
+
+    assert (attempt_root / "execution_identity.json").is_file()
 
 
 def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
@@ -56,6 +128,9 @@ def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
         execution_id=first_execution_id,
         snapshot_sha256=snapshot.manifest_sha256,
     )
+    execution_identity = json.loads(
+        (attempt_root / "execution_identity.json").read_text(encoding="utf-8")
+    )
     build_final_execution_inputs(
         preflight.authorization,
         code_root=prepared_attempt.code_root,
@@ -64,12 +139,17 @@ def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
         security_event_coverage_path=snapshot.security_event_coverage_path,
         corporate_action_coverage_root=snapshot.corporate_action_coverage_root,
         symbols=list(snapshot.symbols),
-        prepare_manifest_sha256=preflight.preparation.manifest_sha256,
-        expected_security_event_coverage_sha256=preflight.security_event_coverage_sha256,
-        expected_corporate_action_coverage_sha256=(
-            preflight.corporate_action_coverage_sha256
+        execution_identity=execution_identity,
+    )
+    bind_execution_input_manifest_hash(
+        final_root / "attempts",
+        identity=execution_identity,
+        manifest_sha256=sha256_file(
+            final_root
+            / "attempt_inputs"
+            / prepared_attempt.attempt_id
+            / "manifest.json"
         ),
-        execution_id=first_execution_id,
     )
     source_root = final_root / "execution_input_sources"
     assert (
@@ -93,7 +173,6 @@ def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
     assert (archive / "attempt_run/signals-and-backtest.completed").is_file()
     assert (archive / "execution_input_sources/source_manifest.json").is_file()
     assert (archive / "attempt_inputs/manifest.json").is_file()
-    second_execution_id = "second-execution"
     rebuilt = build_final_execution_inputs(
         preflight.authorization,
         code_root=prepared_attempt.code_root,
@@ -102,14 +181,9 @@ def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
         security_event_coverage_path=snapshot.security_event_coverage_path,
         corporate_action_coverage_root=snapshot.corporate_action_coverage_root,
         symbols=list(snapshot.symbols),
-        prepare_manifest_sha256=preflight.preparation.manifest_sha256,
-        expected_security_event_coverage_sha256=preflight.security_event_coverage_sha256,
-        expected_corporate_action_coverage_sha256=(
-            preflight.corporate_action_coverage_sha256
-        ),
-        execution_id=second_execution_id,
+        execution_identity=execution_identity,
     )
-    assert rebuilt["execution_id"] == second_execution_id
+    assert rebuilt["execution_id"] == first_execution_id
 
 
 @pytest.mark.parametrize(
@@ -143,14 +217,15 @@ def test_reusable_execution_sources_revalidate_copied_official_query_evidence(
         "security_event_coverage_path": snapshot.security_event_coverage_path,
         "corporate_action_coverage_root": snapshot.corporate_action_coverage_root,
         "symbols": list(snapshot.symbols),
-        "prepare_manifest_sha256": preflight.preparation.manifest_sha256,
-        "expected_security_event_coverage_sha256": (
-            preflight.security_event_coverage_sha256
-        ),
-        "expected_corporate_action_coverage_sha256": (
-            preflight.corporate_action_coverage_sha256
-        ),
-        "execution_id": "first-execution",
+        "execution_identity": {
+            "execution_id": "first-execution",
+            "attempt_id": prepared_attempt.attempt_id,
+            "sealed_protocol_sha256": (
+                preflight.authorization.sealed_protocol_sha256
+            ),
+            **_identities(preflight),
+            "coverage_snapshot_manifest_sha256": snapshot.manifest_sha256,
+        },
     }
     build_final_execution_inputs(preflight.authorization, **kwargs)
     source_root = final_root / "execution_input_sources"
@@ -696,6 +771,15 @@ def _claimed_interruption(
             encoding="utf-8",
         )
         (input_root / "input.bin").write_bytes(b"attempt input must roll back")
+        bind_execution_input_manifest_hash(
+            final_root / "attempts",
+            identity=json.loads(
+                (attempt_root / "execution_identity.json").read_text(
+                    encoding="utf-8"
+                )
+            ),
+            manifest_sha256=sha256_file(input_root / "manifest.json"),
+        )
     intent = begin_execution_recovery(
         final_root / "attempts",
         attempt_id=prepared_attempt.attempt_id,
@@ -747,21 +831,24 @@ def _write_execution_identity(
     preflight: object,
     execution_id: str,
     snapshot_sha256: str,
+    bind_registry: bool = True,
 ) -> None:
+    identity = {
+        "execution_id": execution_id,
+        "attempt_id": prepared_attempt.attempt_id,
+        "sealed_protocol_sha256": preflight.authorization.sealed_protocol_sha256,
+        **_identities(preflight),
+        "coverage_snapshot_manifest_sha256": snapshot_sha256,
+    }
     (root / "execution_identity.json").write_text(
-        json.dumps(
-            {
-                "execution_id": execution_id,
-                "attempt_id": prepared_attempt.attempt_id,
-                "sealed_protocol_sha256": (
-                    preflight.authorization.sealed_protocol_sha256
-                ),
-                **_identities(preflight),
-                "coverage_snapshot_manifest_sha256": snapshot_sha256,
-            }
-        ),
+        json.dumps(identity),
         encoding="utf-8",
     )
+    if bind_registry:
+        bind_execution_identity(
+            prepared_attempt.data_root / "processed/final_test/attempts",
+            identity=identity,
+        )
 
 
 def _resume(prepared_attempt: PreparedAttempt, *, run_id: str):
