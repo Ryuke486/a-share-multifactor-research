@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import platform
-import shutil
 from uuid import uuid4
 
 import polars as pl
@@ -22,10 +21,9 @@ from ashare_multifactor.audit.publication import (
     resolve_release,
     restore_current,
 )
-from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
+from ashare_multifactor.audit.records import file_record, sha256_file
 from ashare_multifactor.audit.secure_tree import (
-    frozen_records,
-    verify_frozen_tree_at,
+    read_frozen_tree_at,
     write_frozen_tree_at,
 )
 from ashare_multifactor.final_test.backtest import (
@@ -56,13 +54,7 @@ from ashare_multifactor.final_test.interrupted_recovery import (
     has_recoverable_execution_archive,
     recover_interrupted_execution,
 )
-from ashare_multifactor.final_test.recovery_secure_fs import (
-    assert_directory_entry,
-    atomic_rename_no_replace,
-    directory_identity,
-    opened_directory,
-    opened_directory_at,
-)
+from ashare_multifactor.final_test.recovery_secure_fs import opened_directory
 from ashare_multifactor.final_test.resume import (
     ResumePreflight,
     preflight_resume,
@@ -93,6 +85,20 @@ from ashare_multifactor.final_test.signals import (
     FinalTestSignals,
     build_final_test_signals,
     _load_frozen_config,
+)
+from ashare_multifactor.final_test.secure_attempt_staging import (
+    FrozenPreparedPackage as _FrozenPreparedPackage,
+    assert_attempt_directory as _assert_attempt_directory,
+    ensure_attempt_root as _secure_ensure_attempt_root,
+    entry_exists_at as _entry_exists_at,
+    freeze_prepared_package as _freeze_prepared_package,
+    open_attempt_directories as _open_attempt_directories,
+    release_files_identity as _release_files_identity,
+    verify_attempt_manifest_records as _verify_attempt_manifest_records,
+    write_attempt_manifest as _secure_write_attempt_manifest,
+    write_bytes_at as _write_bytes_at,
+    write_frame_at as _write_frame_at,
+    write_json_at as _write_json_at,
 )
 
 
@@ -350,13 +356,14 @@ def _execute_authorized_final_test(
             preflight=preflight,
             coverage_snapshot_manifest_sha256=coverage_snapshot.manifest_sha256,
         )
-    attempt_root = _ensure_attempt_root(
+    attempt_root = _secure_ensure_attempt_root(
         final_root,
-        authorization=authorization,
+        attempt_id=authorization.attempt_id,
         execution_identity=execution_identity,
     )
     datasets = attempt_root / "datasets"
     artifacts = attempt_root / "artifacts"
+    attempt_directories = _open_attempt_directories(attempt_root)
     started_at = datetime.now(timezone.utc).isoformat()
     try:
         config = _load_frozen_config(code_root, data_root)
@@ -402,11 +409,16 @@ def _execute_authorized_final_test(
             code_root=code_root,
             final_root=final_root,
         )
-        _write_attempt_core(datasets, artifacts, signals, backtest)
+        _write_attempt_core(
+            attempt_directories.datasets_fd,
+            attempt_directories.artifacts_fd,
+            signals,
+            backtest,
+        )
         if not backtest.publishable:
             reason = "; ".join(backtest.gate_failures) or "publishable=false"
             _write_attempt_manifest(
-                attempt_root,
+                attempt_directories.attempt_fd,
                 authorization=authorization,
                 status="failed",
                 reason=reason,
@@ -433,8 +445,16 @@ def _execute_authorized_final_test(
             code_root=code_root,
             data_root=data_root,
         )
-        test_metrics.write_parquet(datasets / "final_test_metrics.parquet")
-        comparison.write_parquet(datasets / "period_comparison.parquet")
+        _write_frame_at(
+            attempt_directories.datasets_fd,
+            "final_test_metrics.parquet",
+            test_metrics,
+        )
+        _write_frame_at(
+            attempt_directories.datasets_fd,
+            "period_comparison.parquet",
+            comparison,
+        )
         completed_at = datetime.now(timezone.utc).isoformat()
         resolution = resolve_final_test_data_panel(final_root)
         _copy_release_inputs(
@@ -442,6 +462,8 @@ def _execute_authorized_final_test(
             execution_inputs=bound_inputs,
             datasets=datasets,
             artifacts=artifacts,
+            datasets_fd=attempt_directories.datasets_fd,
+            artifacts_fd=attempt_directories.artifacts_fd,
         )
         upstream = _upstream_identity(
             data_root,
@@ -463,29 +485,51 @@ def _execute_authorized_final_test(
             code_root=code_root,
             registry_root=registry_root,
         )
-        (artifacts / "report.md").write_text(report, encoding="utf-8")
-        _write_json(artifacts / "execution_inputs.json", dict(execution_manifest))
-        _write_json(artifacts / "lineage_preview.json", lineage)
-        _write_json(
-            artifacts / "checkpoint_c.json",
+        _write_bytes_at(
+            attempt_directories.artifacts_fd,
+            "report.md",
+            report.encode("utf-8"),
+        )
+        _write_json_at(
+            attempt_directories.artifacts_fd,
+            "execution_inputs.json",
+            dict(execution_manifest),
+        )
+        _write_json_at(
+            attempt_directories.artifacts_fd,
+            "lineage_preview.json",
+            lineage,
+        )
+        _write_json_at(
+            attempt_directories.artifacts_fd,
+            "checkpoint_c.json",
             {
                 "status": "required",
                 "development_stopped": True,
                 "delivery_started": False,
             },
         )
+        _assert_attempt_directory(attempt_root, attempt_directories)
         _assert_release_date_bounds(attempt_root)
+        _assert_attempt_directory(attempt_root, attempt_directories)
         _write_attempt_manifest(
-            attempt_root,
+            attempt_directories.attempt_fd,
             authorization=authorization,
             status="publishable",
             reason="all frozen final-test publication gates passed",
         )
-        publication_identity = _prepared_staging_identity(
+        prepared_package = _freeze_prepared_package(
             attempt_root,
+            lineage=lineage,
+            bound_input_files=bound_inputs.files,
+            attempt_fd=attempt_directories.attempt_fd,
+            datasets_fd=attempt_directories.datasets_fd,
+            artifacts_fd=attempt_directories.artifacts_fd,
+        )
+        publication_identity = _prepared_staging_identity(
+            prepared_package,
             preflight=preflight,
             execution_identity=execution_identity,
-            bound_inputs=bound_inputs,
         )
         append_prepared_publication(
             registry_root,
@@ -504,7 +548,7 @@ def _execute_authorized_final_test(
                 preflight,
                 execution_identity=execution_identity,
             ),
-            frozen_artifact_trees={"execution_inputs": bound_inputs.files},
+            frozen_release_files=prepared_package.release_files,
         )
         append_attempt_outcome(
             registry_root,
@@ -523,14 +567,18 @@ def _execute_authorized_final_test(
             (),
         )
     except BaseException as error:
-        if attempt_root.exists() and not (attempt_root / "attempt_manifest.json").exists():
+        if not _entry_exists_at(
+            attempt_directories.attempt_fd, "attempt_manifest.json"
+        ):
             _write_attempt_manifest(
-                attempt_root,
+                attempt_directories.attempt_fd,
                 authorization=authorization,
                 status="failed",
                 reason=f"{type(error).__name__}: {error}",
             )
         raise
+    finally:
+        attempt_directories.close()
 
 
 def build_or_reuse_final_test_daily_panel(
@@ -908,14 +956,13 @@ def _recover_prepared_staging(
 ) -> FinalTestPipelineResult:
     attempt_id = preflight.authorization.attempt_id
     attempt_root = final_root / "attempt_runs" / attempt_id
-    execution_identity, lineage, publication_identity = _verify_prepared_staging(
-        attempt_root,
-        registry_root=registry_root,
-        preflight=preflight,
-        run_id=run_id,
-    )
-    bound_inputs = resolve_bound_execution_inputs(
-        final_root, preflight.authorization
+    execution_identity, lineage, publication_identity, prepared_package = (
+        _verify_prepared_staging(
+            attempt_root,
+            registry_root=registry_root,
+            preflight=preflight,
+            run_id=run_id,
+        )
     )
     release = publish_release(
         final_root,
@@ -927,7 +974,7 @@ def _recover_prepared_staging(
             preflight,
             execution_identity=execution_identity,
         ),
-        frozen_artifact_trees={"execution_inputs": bound_inputs.files},
+        frozen_release_files=prepared_package.release_files,
     )
     append_attempt_outcome(
         registry_root,
@@ -951,7 +998,7 @@ def _verify_complete_release_identity(
 ) -> None:
     attempt_id = preflight.authorization.attempt_id
     attempt_root = final_root / "attempt_runs" / attempt_id
-    execution_identity, lineage_preview, publication_identity = (
+    execution_identity, lineage_preview, publication_identity, prepared_package = (
         _verify_prepared_staging(
             attempt_root,
             registry_root=registry_root,
@@ -968,13 +1015,8 @@ def _verify_complete_release_identity(
         preflight,
         execution_identity=execution_identity,
     )
-    bound_inputs = resolve_bound_execution_inputs(
-        final_root, preflight.authorization
-    )
-    release_staging_identity = _staging_files_identity(
-        release.root,
-        bound_inputs=bound_inputs,
-    )
+    release_files = _read_published_release_files(release.root)
+    release_staging_identity = _release_files_identity(release_files)
     expected_staging_identity = {
         key: publication_identity[key]
         for key in ("staging_files_sha256", "staging_file_count")
@@ -985,6 +1027,7 @@ def _verify_complete_release_identity(
         or manifest.get("run_id") != run_id
         or any(manifest.get(key) != value for key, value in expected_metadata.items())
         or release_staging_identity != expected_staging_identity
+        or release_files != dict(prepared_package.release_files)
         or lineage != lineage_preview
         or sha256_file(release.lineage)
         != publication_identity["lineage_preview_sha256"]
@@ -998,30 +1041,27 @@ def _verify_prepared_staging(
     registry_root: Path,
     preflight: ResumePreflight,
     run_id: str,
-) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, object],
+    _FrozenPreparedPackage,
+]:
     attempt_id = preflight.authorization.attempt_id
-    identity_path = attempt_root / "execution_identity.json"
-    lineage_path = attempt_root / "artifacts/lineage_preview.json"
-    manifest_path = attempt_root / "attempt_manifest.json"
-    if attempt_root.is_symlink() or any(
-        path.is_symlink() for path in (identity_path, lineage_path, manifest_path)
-    ):
-        raise ValueError("prepared final-test staging identity differs")
-    try:
-        execution_identity = json.loads(identity_path.read_text(encoding="utf-8"))
-        lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
-        attempt_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError) as error:
-        raise ValueError("prepared final-test staging identity is incomplete") from error
-    if not isinstance(execution_identity, dict) or not isinstance(lineage, dict):
-        raise ValueError("prepared final-test staging identity differs")
-    publication_identity = _prepared_staging_identity(
+    package = _freeze_prepared_package(
         attempt_root,
+        lineage=None,
+        bound_input_files=resolve_bound_execution_inputs(
+            attempt_root.parent.parent, preflight.authorization
+        ).files,
+    )
+    execution_identity = dict(package.execution_identity)
+    lineage = dict(package.lineage)
+    attempt_manifest = dict(package.attempt_manifest)
+    publication_identity = _prepared_staging_identity(
+        package,
         preflight=preflight,
         execution_identity=execution_identity,
-        bound_inputs=resolve_bound_execution_inputs(
-            attempt_root.parent.parent, preflight.authorization
-        ),
     )
     try:
         resolve_prepared_publication(
@@ -1057,23 +1097,15 @@ def _verify_prepared_staging(
         or execution.get("identity") != execution_identity
     ):
         raise ValueError("prepared final-test staging identity differs")
-    records = attempt_manifest.get("files")
-    if not isinstance(records, list):
-        raise ValueError("prepared final-test staging identity differs")
-    try:
-        for record in records:
-            verify_file_record(record, root=attempt_root)
-    except (FileNotFoundError, TypeError, ValueError) as error:
-        raise ValueError("prepared final-test staging identity differs") from error
-    return execution_identity, lineage, publication_identity
+    _verify_attempt_manifest_records(package)
+    return execution_identity, lineage, publication_identity, package
 
 
 def _prepared_staging_identity(
-    attempt_root: Path,
+    package: _FrozenPreparedPackage,
     *,
     preflight: ResumePreflight,
     execution_identity: Mapping[str, object],
-    bound_inputs: BoundExecutionInputs,
 ) -> dict[str, object]:
     expected = _expected_execution_identity(
         preflight,
@@ -1084,12 +1116,12 @@ def _prepared_staging_identity(
     )
     if dict(execution_identity) != expected:
         raise ValueError("prepared final-test staging identity differs")
-    staging = _staging_files_identity(attempt_root, bound_inputs=bound_inputs)
+    staging = _release_files_identity(package.release_files)
     return {
-        "attempt_manifest_sha256": sha256_file(attempt_root / "attempt_manifest.json"),
-        "lineage_preview_sha256": sha256_file(
-            attempt_root / "artifacts/lineage_preview.json"
-        ),
+        "attempt_manifest_sha256": hashlib.sha256(
+            package.attempt_manifest_bytes
+        ).hexdigest(),
+        "lineage_preview_sha256": hashlib.sha256(package.lineage_bytes).hexdigest(),
         "execution_id": expected["execution_id"],
         "prepare_manifest_sha256": expected["prepare_manifest_sha256"],
         "security_event_coverage_sha256": expected[
@@ -1105,61 +1137,11 @@ def _prepared_staging_identity(
     }
 
 
-def _staging_files_identity(
-    attempt_root: Path,
-    *,
-    bound_inputs: BoundExecutionInputs,
-) -> dict[str, object]:
-    directories = (attempt_root / "datasets", attempt_root / "artifacts")
-    frozen_root = attempt_root / "artifacts/execution_inputs"
-    with opened_directory(
-        attempt_root, label="prepared staging root"
-    ) as attempt_fd:
-        with opened_directory_at(
-            attempt_fd, "artifacts", label="prepared artifacts staging"
-        ) as artifacts_fd:
-            verify_frozen_tree_at(
-                artifacts_fd,
-                "execution_inputs",
-                bound_inputs.files,
-                label="prepared frozen execution inputs",
-            )
-    items = sorted(
-        path
-        for directory in directories
-        for path in directory.rglob("*")
-        if path != frozen_root and frozen_root not in path.parents
-    )
-    files = [path for path in items if path.is_file()]
-    if (
-        attempt_root.is_symlink()
-        or any(directory.is_symlink() for directory in directories)
-        or not files
-        or any(path.is_symlink() for path in items)
-    ):
-        raise ValueError("prepared final-test staging identity differs")
-    records = [
-        file_record(path, root=attempt_root, role="prepared_staging").to_dict()
-        for path in files
-    ]
-    records.extend(
-        frozen_records(
-            bound_inputs.files,
-            prefix="artifacts/execution_inputs",
-            role="prepared_staging",
-        )
-    )
-    records.sort(key=lambda record: str(record["path"]))
-    canonical = json.dumps(
-        records,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode()
-    return {
-        "staging_files_sha256": hashlib.sha256(canonical).hexdigest(),
-        "staging_file_count": len(records),
-    }
+def _read_published_release_files(root: Path) -> dict[str, bytes]:
+    with opened_directory(root, label="published final-test release") as release_fd:
+        files = read_frozen_tree_at(release_fd, label="published final-test release")
+    files.pop("manifest.json", None)
+    return files
 
 
 def _expected_execution_identity(
@@ -1219,34 +1201,49 @@ def _copy_release_inputs(
     execution_inputs: BoundExecutionInputs,
     datasets: Path,
     artifacts: Path,
+    datasets_fd: int | None = None,
+    artifacts_fd: int | None = None,
 ) -> None:
-    _assert_safe_release_tree(panel_root, record_files=False)
-    execution_destination = artifacts / "execution_inputs"
-    if execution_destination.exists() or execution_destination.is_symlink():
-        raise FileExistsError("staged execution inputs must be absent")
     if not execution_inputs.files:
         raise ValueError("frozen execution inputs are empty")
-    with opened_directory(
-        artifacts.parent, label="attempt staging root"
-    ) as attempt_fd:
-        with opened_directory_at(
-            attempt_fd, artifacts.name, label="attempt artifacts staging"
-        ) as artifacts_fd:
-            artifacts_identity = directory_identity(artifacts_fd)
+    with opened_directory(panel_root, label="final daily panel") as panel_fd:
+        panel_files = read_frozen_tree_at(panel_fd, label="final daily panel")
+    if datasets_fd is not None and artifacts_fd is not None:
+        write_frozen_tree_at(
+            artifacts_fd,
+            "execution_inputs",
+            execution_inputs.files,
+            resumable=False,
+            label="staged frozen execution inputs",
+        )
+        write_frozen_tree_at(
+            datasets_fd,
+            "final_daily_panel",
+            panel_files,
+            resumable=False,
+            label="staged final daily panel",
+        )
+        return
+    if datasets_fd is not None or artifacts_fd is not None:
+        raise ValueError("both attempt staging descriptors are required")
+    with opened_directory(datasets, label="attempt datasets staging") as opened_datasets:
+        with opened_directory(
+            artifacts, label="attempt artifacts staging"
+        ) as opened_artifacts:
             write_frozen_tree_at(
-                artifacts_fd,
+                opened_artifacts,
                 "execution_inputs",
                 execution_inputs.files,
                 resumable=False,
                 label="staged frozen execution inputs",
             )
-            assert_directory_entry(
-                attempt_fd,
-                artifacts.name,
-                expected=artifacts_identity,
-                label="attempt artifacts staging",
+            write_frozen_tree_at(
+                opened_datasets,
+                "final_daily_panel",
+                panel_files,
+                resumable=False,
+                label="staged final daily panel",
             )
-    shutil.copytree(panel_root, datasets / "final_daily_panel")
 
 
 def _bind_or_resolve_existing_execution_inputs(
@@ -1303,41 +1300,6 @@ def _is_resumable_attempt_shell(
     return stored == dict(execution_identity)
 
 
-def _ensure_attempt_root(
-    final_root: Path,
-    *,
-    authorization: FinalTestAuthorization,
-    execution_identity: Mapping[str, object],
-) -> Path:
-    parent = final_root / "attempt_runs"
-    destination = parent / authorization.attempt_id
-    if destination.exists():
-        if not _is_resumable_attempt_shell(destination, execution_identity):
-            raise ValueError("final-test attempt shell is not safely resumable")
-        return destination
-    parent.mkdir(parents=True, exist_ok=True)
-    temporary = parent / f".{authorization.attempt_id}.initializing"
-    if temporary.is_symlink():
-        raise ValueError("final-test attempt initializer uses a symlink")
-    temporary.mkdir(exist_ok=True)
-    (temporary / "datasets").mkdir(exist_ok=True)
-    (temporary / "artifacts").mkdir(exist_ok=True)
-    identity_path = temporary / "execution_identity.json"
-    if identity_path.exists():
-        try:
-            stored = json.loads(identity_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            raise ValueError("final-test attempt initializer is invalid") from error
-        if stored != dict(execution_identity):
-            raise ValueError("final-test attempt initializer identity differs")
-    else:
-        _write_json(identity_path, execution_identity)
-    if not _is_resumable_attempt_shell(temporary, execution_identity):
-        raise ValueError("final-test attempt initializer is incomplete")
-    atomic_rename_no_replace(temporary, destination)
-    return destination
-
-
 def _assert_safe_release_tree(
     root: Path,
     *,
@@ -1355,8 +1317,8 @@ def _assert_safe_release_tree(
 
 
 def _write_attempt_core(
-    datasets: Path,
-    artifacts: Path,
+    datasets_fd: int,
+    artifacts_fd: int,
     signals: FinalTestSignals,
     backtest: FinalTestBacktestResult,
 ) -> None:
@@ -1373,16 +1335,19 @@ def _write_attempt_core(
         "target_weights": signals.target_weights,
         **release_outputs,
     }.items():
-        frame.write_parquet(datasets / f"{name}.parquet")
-    _write_json(artifacts / "preflight.json", backtest.preflight)
-    _write_json(
-        artifacts / "runtime_audits.json",
+        _write_frame_at(datasets_fd, f"{name}.parquet", frame)
+    _write_json_at(artifacts_fd, "preflight.json", backtest.preflight)
+    _write_json_at(
+        artifacts_fd,
+        "runtime_audits.json",
         {key: value for key, value in backtest.audits.items() if not isinstance(value, pl.DataFrame)},
     )
     for name, value in backtest.audits.items():
         if isinstance(value, pl.DataFrame):
-            _slice_audit_frame(name, value).write_parquet(
-                artifacts / f"{name}.parquet"
+            _write_frame_at(
+                artifacts_fd,
+                f"{name}.parquet",
+                _slice_audit_frame(name, value),
             )
 
 
@@ -1472,20 +1437,15 @@ def _assert_undated_release_relation(path: Path, *, root: Path) -> None:
 
 
 def _write_attempt_manifest(
-    root: Path,
+    attempt_fd: int,
     *,
     authorization: FinalTestAuthorization,
     status: str,
     reason: str,
 ) -> None:
-    records = [
-        file_record(path, root=root, role=path.parts[-2]).to_dict()
-        for path in sorted(item for item in root.rglob("*") if item.is_file())
-        if path.name != "attempt_manifest.json"
-    ]
-    _write_json(
-        root / "attempt_manifest.json",
-        {
+    _secure_write_attempt_manifest(
+        attempt_fd,
+        metadata={
             "attempt_id": authorization.attempt_id,
             "status": status,
             "reason": reason,
@@ -1496,7 +1456,6 @@ def _write_attempt_manifest(
             "robustness_release": authorization.robustness_release,
             "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
             "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
-            "files": records,
         },
     )
 

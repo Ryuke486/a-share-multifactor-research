@@ -23,6 +23,7 @@ from ashare_multifactor.final_test.action_source_contract import (
     build_execution_input_manifest,
 )
 from ashare_multifactor.final_test import pipeline as pipeline_module
+from ashare_multifactor.final_test import secure_attempt_staging as staging_module
 from ashare_multifactor.final_test import coverage_snapshot as coverage_module
 from ashare_multifactor.final_test import interrupted_recovery as recovery_module
 from ashare_multifactor.final_test.coverage_snapshot import (
@@ -394,17 +395,19 @@ def test_resume_recovers_crash_after_attempt_directories_before_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_steps(monkeypatch, publishable=True)
-    write_json = pipeline_module._write_json
+    write_json_at = staging_module.write_json_at
     crashed = False
 
-    def crash_before_identity(path: Path, payload: object) -> None:
+    def crash_before_identity(
+        directory_fd: int, name: str, payload: object
+    ) -> None:
         nonlocal crashed
-        if path.name == "execution_identity.json" and not crashed:
+        if name == "execution_identity.json" and not crashed:
             crashed = True
             raise KeyboardInterrupt("crash before execution identity")
-        write_json(path, payload)
+        write_json_at(directory_fd, name, payload)
 
-    monkeypatch.setattr(pipeline_module, "_write_json", crash_before_identity)
+    monkeypatch.setattr(staging_module, "write_json_at", crash_before_identity)
     with pytest.raises(KeyboardInterrupt, match="before execution identity"):
         pipeline_module.resume_final_test_release(
             code_root=prepared_attempt.code_root,
@@ -416,7 +419,7 @@ def test_resume_recovers_crash_after_attempt_directories_before_identity(
             run_id="final-release",
         )
 
-    monkeypatch.setattr(pipeline_module, "_write_json", write_json)
+    monkeypatch.setattr(staging_module, "write_json_at", write_json_at)
     result = pipeline_module.resume_final_test_release(
         code_root=prepared_attempt.code_root,
         data_root=prepared_attempt.data_root,
@@ -2604,6 +2607,53 @@ def test_pipeline_release_ignores_later_active_execution_source_changes(
         / "execution_inputs/corporate_actions.parquet"
     ).read_bytes() == original_action_bytes
     assert not (result.release.artifacts / "execution_sources").exists()
+
+
+def test_prepared_release_uses_frozen_package_after_staging_replacement(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    append_prepared = pipeline_module.append_prepared_publication
+    originals: dict[str, bytes] = {}
+
+    def append_then_replace(*args: object, **kwargs: object) -> dict[str, object]:
+        result = append_prepared(*args, **kwargs)
+        attempt_root = (
+            prepared_attempt.data_root
+            / "processed/final_test/attempt_runs"
+            / prepared_attempt.attempt_id
+        )
+        targets = (
+            attempt_root / "datasets/final_test_metrics.parquet",
+            attempt_root / "datasets/target_weights.parquet",
+            attempt_root / "artifacts/report.md",
+        )
+        for path in targets:
+            relative = path.relative_to(attempt_root).as_posix()
+            originals[relative] = path.read_bytes()
+            path.write_bytes(f"replacement:{relative}".encode())
+        return result
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "append_prepared_publication",
+        append_then_replace,
+    )
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    assert result.release is not None
+    for relative, expected in originals.items():
+        assert (result.release.root / relative).read_bytes() == expected
 
 
 def test_failed_attempt_data_reuse_requires_same_seal_git_and_raw_inventory() -> None:

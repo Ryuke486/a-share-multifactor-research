@@ -13,11 +13,16 @@ import json
 import hashlib
 
 from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
+from ashare_multifactor.audit.secure_tree import (
+    atomic_rename_no_replace_at,
+    frozen_records,
+    read_frozen_tree_at,
+    write_frozen_tree_at,
+)
 from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.final_test.action_source_contract import (
     OFFICIAL_MARKET_SOURCES,
-    build_execution_input_manifest,
     evidence_url_matches_source,
     load_action_source_contract,
 )
@@ -43,7 +48,10 @@ from ashare_multifactor.final_test.official_query_index import (
     validate_official_query_coverage_index,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
-    atomic_rename_no_replace,
+    assert_directory_entry,
+    directory_identity,
+    opened_directory,
+    opened_directory_at,
 )
 
 
@@ -196,82 +204,110 @@ def build_final_execution_inputs(
         raise ValueError("deterministic execution output differs from bound intent")
     if execution_root.exists() or execution_root.is_symlink():
         raise FileExistsError("final execution inputs are already bound")
-    execution_root.parent.mkdir(parents=True, exist_ok=True)
-    staging = execution_root.parent / (
-        f".{authorization.attempt_id}.{execution_id}.building"
+    from ashare_multifactor.final_test.coverage_snapshot import (
+        freeze_bound_coverage_snapshot,
     )
-    if staging.is_symlink():
-        raise ValueError("final execution input staging uses a symlink")
-    staging.mkdir(exist_ok=True)
-    try:
-        files = {
-            "corporate_actions.parquet": staging / "corporate_actions.parquet",
-            "security_events.parquet": staging / "security_events.parquet",
-        }
-        for name, path in sorted(files.items()):
-            _write_resumable_bytes(path, generated_parquets[name])
-        from ashare_multifactor.final_test.coverage_snapshot import (
-            materialize_bound_coverage_snapshot,
-        )
 
-        snapshot_records = materialize_bound_coverage_snapshot(
-            final_root,
-            attempt_id=authorization.attempt_id,
-            destination=staging / "coverage_snapshot",
-            expected_manifest_sha256=coverage_snapshot_manifest_sha256,
-        )
-        manifest = build_execution_input_manifest(
-            staging / "manifest.json",
-            authorization=authorization,
-            files=files,
-            execution_identity=identity,
-            write=False,
-        )
-        manifest["source_contract"] = file_record(
-            code_root / "configs/final_execution_sources.yaml",
-            root=code_root,
-            role="final_execution_source_contract",
-        ).to_dict()
-        manifest["source_files"] = source_records
-        manifest["coverage_snapshot_files"] = snapshot_records
-        manifest.update(
-            {
-                "symbols_sha256": hashlib.sha256(
-                    ("\n".join(symbols) + "\n").encode()
-                ).hexdigest(),
-            }
-        )
-        _write_resumable_bytes(
-            staging / "manifest.json",
-            (
-                json.dumps(
-                    manifest,
-                    ensure_ascii=False,
-                    indent=2,
-                    sort_keys=True,
+    snapshot_files = freeze_bound_coverage_snapshot(
+        final_root,
+        attempt_id=authorization.attempt_id,
+        expected_manifest_sha256=coverage_snapshot_manifest_sha256,
+    )
+    snapshot_records = frozen_records(
+        snapshot_files,
+        prefix="coverage_snapshot",
+        role="official_coverage_snapshot",
+    )
+    manifest = _execution_input_manifest_from_bytes(
+        authorization=authorization,
+        files=generated_parquets,
+        execution_identity=identity,
+    )
+    manifest["source_contract"] = file_record(
+        code_root / "configs/final_execution_sources.yaml",
+        root=code_root,
+        role="final_execution_source_contract",
+    ).to_dict()
+    manifest["source_files"] = source_records
+    manifest["coverage_snapshot_files"] = snapshot_records
+    manifest["symbols_sha256"] = hashlib.sha256(
+        ("\n".join(symbols) + "\n").encode()
+    ).hexdigest()
+    manifest_bytes = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+    staged_files = {
+        **generated_parquets,
+        **{
+            f"coverage_snapshot/{name}": payload
+            for name, payload in snapshot_files.items()
+        },
+        "manifest.json": manifest_bytes,
+    }
+    with opened_directory(final_root, label="final-test root") as final_fd:
+        try:
+            os.mkdir("attempt_inputs", mode=0o700, dir_fd=final_fd)
+        except FileExistsError:
+            pass
+        with opened_directory_at(
+            final_fd, "attempt_inputs", label="attempt-input root"
+        ) as parent_fd:
+            staging_name = f".{authorization.attempt_id}.{execution_id}.building"
+            write_frozen_tree_at(
+                parent_fd,
+                staging_name,
+                staged_files,
+                resumable=True,
+                label="execution-input staging",
+            )
+            with opened_directory_at(
+                parent_fd, staging_name, label="execution-input staging"
+            ) as staging_fd:
+                staging_identity = directory_identity(staging_fd)
+                if read_frozen_tree_at(
+                    staging_fd, label="execution-input staging"
+                ) != staged_files:
+                    raise ValueError("final execution input staging inventory differs")
+                atomic_rename_no_replace_at(
+                    parent_fd,
+                    staging_name,
+                    authorization.attempt_id,
                 )
-                + "\n"
-            ).encode("utf-8"),
-        )
-        from ashare_multifactor.final_test.execution_binding import (
-            _read_stable_tree,
-        )
-        from ashare_multifactor.final_test.recovery_secure_fs import opened_directory
+                assert_directory_entry(
+                    parent_fd,
+                    authorization.attempt_id,
+                    expected=staging_identity,
+                    label="final execution inputs",
+                )
+    return manifest
 
-        with opened_directory(staging, label="execution-input staging") as staging_fd:
-            staged_files = _read_stable_tree(staging_fd)
-        expected_files = {
-            "manifest.json",
-            "corporate_actions.parquet",
-            "security_events.parquet",
-            *(str(record["path"]) for record in snapshot_records),
-        }
-        if set(staged_files) != expected_files:
-            raise ValueError("final execution input staging inventory differs")
-        atomic_rename_no_replace(staging, execution_root)
-        return manifest
-    except BaseException:
-        raise
+
+def _execution_input_manifest_from_bytes(
+    *,
+    authorization: FinalTestAuthorization,
+    files: Mapping[str, bytes],
+    execution_identity: Mapping[str, object],
+) -> dict[str, object]:
+    required = {"corporate_actions.parquet", "security_events.parquet"}
+    if set(files) != required:
+        raise ValueError("execution-input files differ from the frozen contract")
+    return {
+        "attempt_id": authorization.attempt_id,
+        "approval_id": authorization.approval_id,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "robustness_release": authorization.robustness_release,
+        "period": [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()],
+        "files": [
+            {
+                "path": name,
+                "role": name.removesuffix(".parquet"),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+            for name, payload in sorted(files.items())
+        ],
+        **assert_execution_identity_authorized(execution_identity, authorization),
+    }
 
 
 def _write_resumable_bytes(path: Path, payload: bytes) -> None:

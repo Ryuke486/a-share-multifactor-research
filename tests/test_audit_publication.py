@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -127,12 +128,12 @@ def test_publish_rejects_artifacts_parent_replacement_during_frozen_write(
 
     def replace_artifacts(*args: object, **kwargs: object) -> None:
         nonlocal swapped
+        write_tree(*args, **kwargs)
         if not swapped:
             staging = root / "releases/.race.tmp"
             (staging / "artifacts").rename(staging / "artifacts.displaced")
             (staging / "artifacts").mkdir()
             swapped = True
-        write_tree(*args, **kwargs)
 
     monkeypatch.setattr(
         publication_module,
@@ -140,7 +141,7 @@ def test_publish_rejects_artifacts_parent_replacement_during_frozen_write(
         replace_artifacts,
     )
 
-    with pytest.raises(ValueError, match="artifacts staging identity changed"):
+    with pytest.raises(ValueError, match="temporary staging bytes differ"):
         publish_release(
             root,
             run_id="race",
@@ -153,6 +154,76 @@ def test_publish_rejects_artifacts_parent_replacement_during_frozen_write(
         )
 
     assert not (root / "releases/race").exists()
+
+
+def test_publish_rejects_temporary_directory_replacement_before_rename(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    datasets, artifacts = _staged(tmp_path)
+    root = tmp_path / "published"
+    rename = publication_module.atomic_rename_no_replace_at
+    swapped = False
+
+    def replace_temporary_then_rename(
+        parent_fd: int,
+        source: str,
+        destination: str,
+    ) -> None:
+        nonlocal swapped
+        if not swapped and source == ".race.tmp":
+            temporary = root / "releases/.race.tmp"
+            displaced = root / "releases/.race.displaced"
+            publication_module.os.rename(temporary, displaced)
+            shutil.copytree(displaced, temporary)
+            swapped = True
+        rename(parent_fd, source, destination)
+
+    monkeypatch.setattr(
+        publication_module,
+        "atomic_rename_no_replace_at",
+        replace_temporary_then_rename,
+    )
+
+    with pytest.raises(ValueError, match="temporary staging identity changed"):
+        publish_release(
+            root,
+            run_id="race",
+            staged_datasets=datasets,
+            staged_artifacts=artifacts,
+            lineage={"identity": "race"},
+        )
+
+    assert not (root / "CURRENT.json").exists()
+
+
+def test_publish_rejects_publication_root_replacement_before_current_switch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    datasets, artifacts = _staged(tmp_path)
+    root = tmp_path / "published"
+    displaced = tmp_path / "published.displaced"
+    write_current = publication_module._write_current_at
+
+    def replace_root(root_fd: int, payload: dict[str, object]) -> None:
+        root.rename(displaced)
+        root.mkdir()
+        write_current(root_fd, payload)
+
+    monkeypatch.setattr(publication_module, "_write_current_at", replace_root)
+
+    with pytest.raises(ValueError, match="publication root identity changed"):
+        publish_release(
+            root,
+            run_id="race",
+            staged_datasets=datasets,
+            staged_artifacts=artifacts,
+            lineage={"identity": "race"},
+        )
+
+    assert (displaced / "CURRENT.json").is_file()
+    assert not (root / "CURRENT.json").exists()
 
 
 def test_code_identity_records_dirty_diff_and_source_hashes(tmp_path: Path) -> None:

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import ctypes
+import errno
 import os
 from pathlib import PurePosixPath
 import stat
+import sys
 from typing import Iterator, Mapping
 
 
@@ -41,6 +44,52 @@ def verify_frozen_tree_at(
     with _opened_directory_at(parent_fd, name, label=label) as root_fd:
         if _read_level(root_fd, prefix="", label=label) != expected:
             raise ValueError(f"{label} bytes differ from frozen snapshot")
+
+
+def read_frozen_tree_at(directory_fd: int, *, label: str) -> dict[str, bytes]:
+    """Read one exact tree through a caller-owned directory descriptor."""
+    return _read_level(directory_fd, prefix="", label=label)
+
+
+def atomic_rename_no_replace_at(
+    parent_fd: int,
+    source_name: str,
+    destination_name: str,
+) -> None:
+    """Rename one child without ever replacing a competing destination."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    source = os.fsencode(source_name)
+    destination = os.fsencode(destination_name)
+    if sys.platform == "darwin":
+        function = getattr(libc, "renameatx_np", None)
+        if function is None:
+            raise RuntimeError("atomic no-replace renameat is unavailable")
+        result = function(
+            ctypes.c_int(parent_fd),
+            source,
+            ctypes.c_int(parent_fd),
+            destination,
+            ctypes.c_uint(0x00000004),
+        )
+    elif sys.platform.startswith("linux"):
+        function = getattr(libc, "renameat2", None)
+        if function is None:
+            raise RuntimeError("atomic no-replace renameat is unavailable")
+        result = function(
+            ctypes.c_int(parent_fd),
+            source,
+            ctypes.c_int(parent_fd),
+            destination,
+            ctypes.c_uint(1),
+        )
+    else:
+        raise RuntimeError("atomic no-replace renameat is unsupported")
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise FileExistsError("release destination already exists")
+    raise OSError(error_number, os.strerror(error_number), destination_name)
 
 
 def frozen_records(

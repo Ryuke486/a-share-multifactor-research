@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -8,10 +9,10 @@ import shutil
 from typing import Mapping
 from uuid import uuid4
 
-from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
+from ashare_multifactor.audit.records import sha256_file, verify_file_record
 from ashare_multifactor.audit.secure_tree import (
-    frozen_records,
-    verify_frozen_tree_at,
+    atomic_rename_no_replace_at,
+    read_frozen_tree_at,
     write_frozen_tree_at,
 )
 
@@ -36,30 +37,67 @@ def publish_release(
     lineage: dict[str, object],
     manifest_metadata: dict[str, object] | None = None,
     frozen_artifact_trees: Mapping[str, Mapping[str, bytes]] | None = None,
+    frozen_release_files: Mapping[str, bytes] | None = None,
     fail_before_switch: bool = False,
 ) -> PublishedRelease:
+    release_files = (
+        dict(frozen_release_files)
+        if frozen_release_files is not None
+        else _freeze_staged_release(
+            staged_datasets,
+            staged_artifacts,
+            lineage=lineage,
+        )
+    )
+    for name, files in sorted(dict(frozen_artifact_trees or {}).items()):
+        prefix = f"artifacts/{name}/"
+        release_files = {
+            path: payload
+            for path, payload in release_files.items()
+            if not path.startswith(prefix)
+        }
+        release_files.update(
+            {f"{prefix}{path}": payload for path, payload in files.items()}
+        )
+    records = _release_records(release_files)
+    manifest_bytes = _json_payload_bytes(
+        {"files": records, "run_id": run_id, **(manifest_metadata or {})}
+    )
+    complete_files = {**release_files, "manifest.json": manifest_bytes}
+    root.mkdir(parents=True, exist_ok=True)
+    root_parent_fd = os.open(
+        root.parent,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+    )
+    root_fd = os.open(
+        root.name,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=root_parent_fd,
+    )
+    root_identity = _descriptor_identity(root_fd)
     releases = root / "releases"
-    releases.mkdir(parents=True, exist_ok=True)
+    try:
+        os.mkdir("releases", mode=0o700, dir_fd=root_fd)
+    except FileExistsError:
+        pass
     final = releases / run_id
     if final.exists():
         raise FileExistsError(f"release already exists: {run_id}")
     temporary = releases / f".{run_id}.tmp"
-    shutil.rmtree(temporary, ignore_errors=True)
-    temporary.mkdir()
     releases_fd = os.open(
-        releases,
+        "releases",
         os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        dir_fd=root_fd,
     )
     temporary_fd: int | None = None
-    artifacts_fd: int | None = None
     temporary_identity: tuple[int, int] | None = None
     try:
-        shutil.copytree(staged_datasets, temporary / "datasets")
-        frozen = dict(frozen_artifact_trees or {})
-        shutil.copytree(
-            staged_artifacts,
-            temporary / "artifacts",
-            ignore=(shutil.ignore_patterns(*frozen) if frozen else None),
+        write_frozen_tree_at(
+            releases_fd,
+            temporary.name,
+            complete_files,
+            resumable=False,
+            label="release temporary staging",
         )
         temporary_fd = os.open(
             temporary.name,
@@ -67,123 +105,44 @@ def publish_release(
             dir_fd=releases_fd,
         )
         temporary_identity = _descriptor_identity(temporary_fd)
-        artifacts_fd = os.open(
-            "artifacts",
-            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
-            dir_fd=temporary_fd,
-        )
-        artifacts_identity = _descriptor_identity(artifacts_fd)
-        try:
-            for name, files in sorted(frozen.items()):
-                if name in {"", ".", ".."} or "/" in name or "\\" in name:
-                    raise ValueError("frozen artifact tree name is invalid")
-                write_frozen_tree_at(
-                    artifacts_fd,
-                    name,
-                    files,
-                    resumable=False,
-                    label=f"frozen artifact tree {name}",
-                )
-            _assert_entry_identity(
-                temporary_fd,
-                "artifacts",
-                artifacts_identity,
-                label="release artifacts staging",
-            )
-            for name, files in sorted(frozen.items()):
-                verify_frozen_tree_at(
-                    artifacts_fd,
-                    name,
-                    files,
-                    label=f"frozen artifact tree {name}",
-                )
-        except BaseException:
-            os.close(artifacts_fd)
-            os.close(temporary_fd)
-            artifacts_fd = None
-            temporary_fd = None
-            raise
-        _write_json(temporary / "lineage.json", lineage)
+        if read_frozen_tree_at(
+            temporary_fd, label="release temporary staging"
+        ) != complete_files:
+            raise ValueError("release temporary staging bytes differ")
+        atomic_rename_no_replace_at(releases_fd, temporary.name, final.name)
         _assert_entry_identity(
             releases_fd,
-            temporary.name,
-            temporary_identity,
-            label="release temporary staging",
-        )
-        records = []
-        for path in sorted(item for item in temporary.rglob("*") if item.is_file()):
-            relative = path.relative_to(temporary)
-            if (
-                len(relative.parts) >= 2
-                and relative.parts[0] == "artifacts"
-                and relative.parts[1] in frozen
-            ):
-                continue
-            role = "lineage" if path.name == "lineage.json" else path.parts[-2]
-            records.append(file_record(path, root=temporary, role=role).to_dict())
-        for name, files in sorted(frozen.items()):
-            records.extend(
-                frozen_records(
-                    files,
-                    prefix=f"artifacts/{name}",
-                    role=name,
-                )
-            )
-        _write_json(
-            temporary / "manifest.json",
-            {"files": records, "run_id": run_id, **(manifest_metadata or {})},
-        )
-        _assert_entry_identity(
-            releases_fd,
-            temporary.name,
-            temporary_identity,
-            label="release temporary staging",
-        )
-        _assert_entry_identity(
-            temporary_fd,
-            "artifacts",
-            artifacts_identity,
-            label="release artifacts staging",
-        )
-        for name, files in sorted(frozen.items()):
-            verify_frozen_tree_at(
-                artifacts_fd,
-                name,
-                files,
-                label=f"frozen artifact tree {name}",
-            )
-        os.close(artifacts_fd)
-        os.close(temporary_fd)
-        artifacts_fd = None
-        temporary_fd = None
-        _assert_entry_identity(
-            releases_fd,
-            temporary.name,
-            temporary_identity,
-            label="release temporary staging",
-        )
-        os.rename(
-            temporary.name,
             final.name,
-            src_dir_fd=releases_fd,
-            dst_dir_fd=releases_fd,
+            temporary_identity,
+            label="release temporary staging",
         )
-        manifest_hash = sha256_file(final / "manifest.json")
+        manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
         if fail_before_switch:
             raise RuntimeError("injected failure before pointer switch")
-        root.mkdir(parents=True, exist_ok=True)
-        pointer_tmp = root / ".CURRENT.json.tmp"
-        _write_json(
-            pointer_tmp,
+        _write_current_at(
+            root_fd,
             {"manifest_sha256": manifest_hash, "run_id": run_id},
         )
-        os.replace(pointer_tmp, root / "CURRENT.json")
+        _assert_entry_identity(
+            releases_fd,
+            final.name,
+            temporary_identity,
+            label="published release",
+        )
+        _assert_entry_identity(
+            root_parent_fd,
+            root.name,
+            root_identity,
+            label="publication root",
+        )
+        os.close(temporary_fd)
+        temporary_fd = None
         published = _published(root, run_id, manifest_hash)
         os.close(releases_fd)
+        os.close(root_fd)
+        os.close(root_parent_fd)
         return published
     except BaseException:
-        if artifacts_fd is not None:
-            os.close(artifacts_fd)
         if temporary_fd is not None:
             os.close(temporary_fd)
         try:
@@ -198,7 +157,85 @@ def publish_release(
         except (FileNotFoundError, ValueError):
             pass
         os.close(releases_fd)
+        os.close(root_fd)
+        os.close(root_parent_fd)
         raise
+
+
+def _freeze_staged_release(
+    staged_datasets: Path,
+    staged_artifacts: Path,
+    *,
+    lineage: Mapping[str, object],
+) -> dict[str, bytes]:
+    files: dict[str, bytes] = {}
+    for prefix, path in (
+        ("datasets", staged_datasets),
+        ("artifacts", staged_artifacts),
+    ):
+        descriptor = os.open(
+            path,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        )
+        try:
+            frozen = read_frozen_tree_at(descriptor, label=f"staged {prefix}")
+        finally:
+            os.close(descriptor)
+        files.update({f"{prefix}/{name}": payload for name, payload in frozen.items()})
+    files["lineage.json"] = _json_payload_bytes(lineage)
+    return files
+
+
+def _release_records(files: Mapping[str, bytes]) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for path, payload in sorted(files.items()):
+        parts = Path(path).parts
+        role = "lineage" if path == "lineage.json" else parts[-2]
+        records.append(
+            {
+                "path": path,
+                "role": role,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+        )
+    return records
+
+
+def _json_payload_bytes(payload: Mapping[str, object]) -> bytes:
+    return (
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+
+def _write_current_at(root_fd: int, payload: Mapping[str, object]) -> None:
+    temporary = f".CURRENT.{uuid4().hex}.tmp"
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_NOFOLLOW"),
+        0o600,
+        dir_fd=root_fd,
+    )
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as stream:
+            stream.write(_json_payload_bytes(payload))
+            stream.flush()
+            os.fsync(descriptor)
+        os.replace(
+            temporary,
+            "CURRENT.json",
+            src_dir_fd=root_fd,
+            dst_dir_fd=root_fd,
+        )
+    finally:
+        os.close(descriptor)
+        try:
+            os.unlink(temporary, dir_fd=root_fd)
+        except FileNotFoundError:
+            pass
 
 
 def _descriptor_identity(descriptor: int) -> tuple[int, int]:

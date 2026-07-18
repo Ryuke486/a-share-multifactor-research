@@ -9,10 +9,16 @@ import os
 from pathlib import Path
 from pathlib import PurePosixPath
 import shutil
+from tempfile import TemporaryDirectory
 from uuid import uuid4
 
 from ashare_multifactor.audit.records import file_record, sha256_file, verify_file_record
-from ashare_multifactor.audit.secure_tree import frozen_records, write_frozen_tree_at
+from ashare_multifactor.audit.secure_tree import (
+    atomic_rename_no_replace_at,
+    frozen_records,
+    read_frozen_tree_at,
+    write_frozen_tree_at,
+)
 from ashare_multifactor.final_test.execution_sources import (
     validate_final_execution_coverages,
 )
@@ -79,10 +85,8 @@ def snapshot_execution_coverages(
         security_event_coverage_path=security_event_coverage_path,
         corporate_action_coverage_root=corporate_action_coverage_root,
     )
-    parent.mkdir(parents=True, exist_ok=True)
-    temporary = parent / f".{attempt_id}.{uuid4().hex}.tmp"
-    temporary.mkdir()
-    try:
+    with TemporaryDirectory(prefix="final-coverage-snapshot-") as scratch_name:
+        temporary = Path(scratch_name).resolve()
         security_root = _required_root(security, "security coverage")
         corporate_root = _required_root(corporate, "corporate coverage")
         security_files = _security_dependency_paths(security)
@@ -126,12 +130,51 @@ def snapshot_execution_coverages(
                 "files": records,
             },
         )
-        if destination.exists() or destination.is_symlink():
-            raise FileExistsError("execution coverage snapshot already exists")
-        os.rename(temporary, destination)
-    except BaseException:
-        shutil.rmtree(temporary, ignore_errors=True)
-        raise
+        with opened_directory(
+            temporary, label="coverage snapshot scratch"
+        ) as scratch_fd:
+            frozen = read_frozen_tree_at(
+                scratch_fd, label="coverage snapshot scratch"
+            )
+        _verify_snapshot_bytes(
+            frozen,
+            expected_manifest_sha256=hashlib.sha256(
+                frozen["snapshot_manifest.json"]
+            ).hexdigest(),
+        )
+        with opened_directory(final_root, label="final-test root") as final_fd:
+            try:
+                os.mkdir("execution_coverage_snapshots", mode=0o700, dir_fd=final_fd)
+            except FileExistsError:
+                pass
+            with opened_directory_at(
+                final_fd,
+                "execution_coverage_snapshots",
+                label="coverage snapshot root",
+            ) as parent_fd:
+                temporary_name = f".{attempt_id}.{uuid4().hex}.tmp"
+                write_frozen_tree_at(
+                    parent_fd,
+                    temporary_name,
+                    frozen,
+                    resumable=False,
+                    label="coverage snapshot staging",
+                )
+                with opened_directory_at(
+                    parent_fd,
+                    temporary_name,
+                    label="coverage snapshot staging",
+                ) as staging_fd:
+                    staging_identity = directory_identity(staging_fd)
+                    atomic_rename_no_replace_at(
+                        parent_fd, temporary_name, attempt_id
+                    )
+                    assert_directory_entry(
+                        parent_fd,
+                        attempt_id,
+                        expected=staging_identity,
+                        label="execution coverage snapshot",
+                    )
     return _verify_snapshot(
         destination,
         attempt_id=attempt_id,
@@ -150,24 +193,16 @@ def materialize_bound_coverage_snapshot(
     expected_manifest_sha256: str,
 ) -> list[dict[str, object]]:
     """Copy one verified attempt snapshot into its immutable execution inputs."""
-    validate_publication_id(attempt_id)
-    source = final_root / "execution_coverage_snapshots" / attempt_id
-    expected_source = (
-        final_root.resolve() / "execution_coverage_snapshots" / attempt_id
+    frozen = freeze_bound_coverage_snapshot(
+        final_root,
+        attempt_id=attempt_id,
+        expected_manifest_sha256=expected_manifest_sha256,
     )
     if (
-        source.is_symlink()
-        or source.resolve() != expected_source
-        or destination.is_symlink()
+        destination.is_symlink()
         or not destination.parent.resolve().is_relative_to(final_root.resolve())
     ):
         raise ValueError("coverage snapshot materialization path is unsafe")
-    with opened_directory(source, label="bound coverage snapshot") as source_fd:
-        frozen = _read_stable_tree(source_fd)
-    _verify_snapshot_bytes(
-        frozen,
-        expected_manifest_sha256=expected_manifest_sha256,
-    )
     with opened_directory(
         destination.parent.parent,
         label="coverage snapshot destination anchor",
@@ -196,6 +231,27 @@ def materialize_bound_coverage_snapshot(
         prefix=destination.name,
         role="official_coverage_snapshot",
     )
+
+
+def freeze_bound_coverage_snapshot(
+    final_root: Path,
+    *,
+    attempt_id: str,
+    expected_manifest_sha256: str,
+) -> dict[str, bytes]:
+    """Return exact verified snapshot bytes without reopening child paths."""
+    validate_publication_id(attempt_id)
+    source = final_root / "execution_coverage_snapshots" / attempt_id
+    expected_source = final_root.resolve() / "execution_coverage_snapshots" / attempt_id
+    if source.is_symlink() or source.resolve() != expected_source:
+        raise ValueError("coverage snapshot materialization path is unsafe")
+    with opened_directory(source, label="bound coverage snapshot") as source_fd:
+        frozen = _read_stable_tree(source_fd)
+    _verify_snapshot_bytes(
+        frozen,
+        expected_manifest_sha256=expected_manifest_sha256,
+    )
+    return frozen
 
 
 def _verify_snapshot_bytes(
