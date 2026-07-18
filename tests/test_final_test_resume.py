@@ -25,9 +25,11 @@ from ashare_multifactor.final_test import execution_sources as execution_sources
 from ashare_multifactor.final_test import gate as gate_module
 from ashare_multifactor.final_test import resume as resume_module
 from ashare_multifactor.final_test.preparation import _publish_preparation
+from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
 )
+from test_final_test_official_query_index import _write_index
 from ashare_multifactor.final_test.resume import (
     load_registered_authorization,
     preflight_resume,
@@ -532,6 +534,7 @@ def _attempt_state(attempt: PreparedAttempt) -> str:
 
 def _write_security_coverage(root: Path, *, symbols: list[str]) -> Path:
     root.mkdir(exist_ok=True)
+    shutil.rmtree(root / "packages", ignore_errors=True)
     evidence_rows = []
     for market, source in (("sz", "szse"), ("sh", "sse")):
         evidence = root / f"{source}.pdf"
@@ -570,6 +573,20 @@ def _write_security_coverage(root: Path, *, symbols: list[str]) -> Path:
         )
     query_coverage = root / "query_coverage.parquet"
     pl.DataFrame(coverage_rows).write_parquet(query_coverage)
+    official_query_coverage = _write_index(
+        root,
+        [
+            OfficialQueryScope(
+                symbol=symbol,
+                market="sz" if symbol.startswith(("0", "3")) else "sh",
+                category="security_events",
+                query_category="",
+                start=date(2022, 1, 1),
+                end=date(2025, 12, 31),
+            )
+            for symbol in sorted(symbols)
+        ],
+    )
     normalized = sorted(symbols)
     path = root / "coverage.json"
     path.write_text(
@@ -595,6 +612,11 @@ def _write_security_coverage(root: Path, *, symbols: list[str]) -> Path:
                         role="official_security_event_coverage",
                     ).to_dict()
                 ],
+                "official_query_coverage": file_record(
+                    official_query_coverage,
+                    root=root,
+                    role="official_query_coverage",
+                ).to_dict(),
             }
         ),
         encoding="utf-8",

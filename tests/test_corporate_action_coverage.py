@@ -12,6 +12,8 @@ from ashare_multifactor.audit.records import file_record
 from ashare_multifactor.final_test.execution_sources import (
     validate_corporate_action_coverage,
 )
+from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
+from test_final_test_official_query_index import _write_index
 
 
 def test_corporate_action_coverage_requires_existing_root(tmp_path: Path) -> None:
@@ -68,6 +70,18 @@ def test_zero_event_symbol_still_requires_successful_official_query(tmp_path: Pa
     coverage.write_parquet(root / "query_coverage.parquet")
     _refresh_record(root, "query_coverage")
     with pytest.raises(ValueError, match="query coverage is invalid"):
+        validate_corporate_action_coverage(root, symbols=["000001", "600000"])
+
+
+def test_zero_event_symbol_requires_hash_bound_cninfo_query_package(
+    tmp_path: Path,
+) -> None:
+    root = _write_coverage(tmp_path)
+    payload = json.loads((root / "coverage.json").read_text(encoding="utf-8"))
+    payload.pop("official_query_coverage")
+    (root / "coverage.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="query.*coverage"):
         validate_corporate_action_coverage(root, symbols=["000001", "600000"])
 
 
@@ -302,6 +316,20 @@ def _write_coverage(
             "candidate_id": ["candidate-1"],
         }
     ).write_parquet(root / "official_actions.parquet")
+    query_index = _write_index(
+        root,
+        [
+            OfficialQueryScope(
+                symbol=symbol,
+                market="sz" if symbol.startswith(("0", "3")) else "sh",
+                category="corporate_actions",
+                query_category="",
+                start=date(2022, 1, 1),
+                end=date(2025, 12, 31),
+            )
+            for symbol in sorted(symbols)
+        ],
+    )
     roles = {
         "candidate_file": ("candidates.parquet", "baostock_corporate_action_candidates"),
         "query_coverage": ("query_coverage.parquet", "official_corporate_action_coverage"),
@@ -311,6 +339,10 @@ def _write_coverage(
         ),
         "official_actions": ("official_actions.parquet", "official_corporate_actions"),
         "candidate_diff": ("candidate_diff.parquet", "corporate_action_candidate_diff"),
+        "official_query_coverage": (
+            query_index.name,
+            "official_query_coverage",
+        ),
     }
     normalized = sorted(symbols)
     payload: dict[str, object] = {

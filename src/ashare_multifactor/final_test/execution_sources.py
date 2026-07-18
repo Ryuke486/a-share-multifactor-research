@@ -32,6 +32,11 @@ from ashare_multifactor.final_test.gate import (
     FINAL_TEST_START,
     FinalTestAuthorization,
 )
+from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
+from ashare_multifactor.final_test.official_query_index import (
+    copy_validated_official_query_coverage,
+    validate_official_query_coverage_index,
+)
 
 
 def validate_final_execution_coverages(
@@ -245,6 +250,11 @@ def generate_final_execution_sources(
             destination_support = corporate_destination / relative
             destination_support.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(support, destination_support)
+        _copy_official_query_coverage(
+            corporate_coverage,
+            destination=corporate_destination,
+            label="corporate coverage",
+        )
         support_paths = set(security_coverage["evidence_paths"]) | set(
             security_coverage["coverage_paths"]
         )
@@ -259,6 +269,11 @@ def generate_final_execution_sources(
                     continue
                 raise ValueError("security-event support file path collision")
             shutil.copy2(support, destination_support)
+        _copy_official_query_coverage(
+            security_coverage,
+            destination=temporary,
+            label="security coverage",
+        )
         records = [
             file_record(path, root=temporary, role="final_execution_source").to_dict()
             for path in sorted(item for item in temporary.rglob("*") if item.is_file())
@@ -301,6 +316,27 @@ def generate_final_execution_sources(
         shutil.rmtree(temporary, ignore_errors=True)
         raise
     return destination
+
+
+def _copy_official_query_coverage(
+    coverage: dict[str, object],
+    *,
+    destination: Path,
+    label: str,
+) -> None:
+    index = coverage.get("official_query_coverage_file")
+    scopes = coverage.get("official_query_scopes")
+    if (
+        not isinstance(index, Path)
+        or not isinstance(scopes, tuple)
+        or any(not isinstance(scope, OfficialQueryScope) for scope in scopes)
+    ):
+        raise ValueError(f"verified {label} official query coverage is invalid")
+    copy_validated_official_query_coverage(
+        index,
+        expected_scopes=scopes,
+        destination_root=destination,
+    )
 
 
 def _verify_reusable_source_root(
@@ -470,6 +506,34 @@ def validate_security_event_coverage(
         how="anti",
     ).height or normalized_coverage.get_column("event_count").sum() != payload["event_rows"]:
         raise ValueError("official security-event query coverage is invalid")
+    query_record = payload.get("official_query_coverage")
+    if (
+        not isinstance(query_record, dict)
+        or query_record.get("role") != "official_query_coverage"
+    ):
+        raise ValueError("official security-event query coverage record is invalid")
+    try:
+        official_query_coverage_path = _verify_coverage_file(
+            query_record,
+            root=coverage_root,
+        )
+    except (FileNotFoundError, TypeError, ValueError) as error:
+        raise ValueError("official security-event query coverage changed") from error
+    official_query_scopes = tuple(
+        OfficialQueryScope(
+            symbol=symbol,
+            market=market_for_symbol(symbol),
+            category="security_events",
+            query_category="",
+            start=FINAL_TEST_START,
+            end=FINAL_TEST_END,
+        )
+        for symbol in normalized
+    )
+    official_query_index = validate_official_query_coverage_index(
+        official_query_coverage_path,
+        expected_scopes=official_query_scopes,
+    )
     result = dict(payload)
     result["evidence_paths"] = evidence_paths
     result["coverage_paths"] = coverage_paths
@@ -479,6 +543,9 @@ def validate_security_event_coverage(
     result["coverage_manifest_sha256"] = hashlib.sha256(
         manifest_bytes
     ).hexdigest()
+    result["official_query_coverage_file"] = official_query_coverage_path
+    result["official_query_scopes"] = official_query_scopes
+    result["official_query_coverage_index_sha256"] = official_query_index.index_sha256
     event_record = payload.get("events_file")
     normalized_events = pl.DataFrame(
         schema={

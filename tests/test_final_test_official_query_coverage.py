@@ -54,7 +54,7 @@ def _write_package(
         "page_size": 30,
         "form": {
             "category": selected_scope.query_category,
-            "column": "szse",
+            "column": {"sh": "sse", "sz": "szse"}[selected_scope.market],
             "plate": selected_scope.market,
             "searchkey": "",
             "seDate": (f"{selected_scope.start.isoformat()}~{selected_scope.end.isoformat()}"),
@@ -136,6 +136,24 @@ def test_query_package_validates_canonical_complete_post_evidence(
     assert (
         verified.request_sha256 == hashlib.sha256((root / "request.json").read_bytes()).hexdigest()
     )
+
+
+def test_query_package_accepts_a_supported_sh_market_scope(tmp_path: Path) -> None:
+    scope = OfficialQueryScope(
+        symbol="600000",
+        market="sh",
+        category="corporate_actions",
+        query_category="",
+        start=date(2022, 1, 1),
+        end=date(2025, 12, 31),
+    )
+
+    verified = validate_official_query_package(
+        _write_package(tmp_path, scope=scope),
+        expected_scope=scope,
+    )
+
+    assert verified.scope == scope
 
 
 def test_verified_query_identity_exposes_no_mutable_package_paths(

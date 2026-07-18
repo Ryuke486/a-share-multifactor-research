@@ -70,6 +70,16 @@ def test_real_execution_inputs_are_archived_and_can_be_rebuilt_after_crash(
         ),
         execution_id=first_execution_id,
     )
+    source_root = final_root / "execution_input_sources"
+    assert (
+        source_root
+        / "packages/security_events/sz/000001/query-package/query_manifest.json"
+    ).is_file()
+    assert (
+        source_root
+        / "corporate_action_coverage"
+        / "packages/corporate_actions/sz/000001/query-package/query_manifest.json"
+    ).is_file()
     (attempt_root / "signals-and-backtest.completed").write_text("crashed after work")
 
     archive = recovery_module.recover_interrupted_execution(

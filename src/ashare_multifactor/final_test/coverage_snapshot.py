@@ -15,6 +15,10 @@ from ashare_multifactor.audit.records import file_record, sha256_file, verify_fi
 from ashare_multifactor.final_test.execution_sources import (
     validate_final_execution_coverages,
 )
+from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
+from ashare_multifactor.final_test.official_query_index import (
+    copy_validated_official_query_coverage,
+)
 from ashare_multifactor.final_test.preparation import FinalTestPreparation
 from ashare_multifactor.final_test.registry import validate_publication_id
 from ashare_multifactor.final_test.resume import load_bound_symbol_scope
@@ -76,10 +80,20 @@ def snapshot_execution_coverages(
         security_files = _security_dependency_paths(security)
         corporate_files = _corporate_dependency_paths(corporate)
         _copy_dependencies(security_files, root=security_root, destination=temporary / "security")
+        _copy_official_query_coverage(
+            security,
+            destination=temporary / "security",
+            label="security coverage",
+        )
         _copy_dependencies(
             corporate_files,
             root=corporate_root,
             destination=temporary / "corporate",
+        )
+        _copy_official_query_coverage(
+            corporate,
+            destination=temporary / "corporate",
+            label="corporate coverage",
         )
         snapshot_security = temporary / "security" / _relative_manifest(
             security, security_root
@@ -263,6 +277,27 @@ def _corporate_dependency_paths(value: dict[str, object]) -> set[Path]:
         *value.get("evidence_paths", []),
     }
     return _path_set(paths, "corporate coverage")
+
+
+def _copy_official_query_coverage(
+    value: dict[str, object],
+    *,
+    destination: Path,
+    label: str,
+) -> None:
+    index = value.get("official_query_coverage_file")
+    scopes = value.get("official_query_scopes")
+    if (
+        not isinstance(index, Path)
+        or not isinstance(scopes, tuple)
+        or any(not isinstance(scope, OfficialQueryScope) for scope in scopes)
+    ):
+        raise ValueError(f"verified {label} official query coverage is invalid")
+    copy_validated_official_query_coverage(
+        index,
+        expected_scopes=scopes,
+        destination_root=destination,
+    )
 
 
 def _path_set(values: set[object], label: str) -> set[Path]:

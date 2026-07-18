@@ -8,11 +8,16 @@ from pathlib import Path
 import yaml
 
 from ashare_multifactor.audit.records import file_record, verify_file_record
+from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.data_inventory import write_json
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
     FINAL_TEST_START,
     FinalTestAuthorization,
+)
+from ashare_multifactor.final_test.official_query_coverage import (
+    OFFICIAL_QUERY_ENDPOINT,
+    OfficialQueryScope,
 )
 
 
@@ -43,6 +48,9 @@ class FinalActionSourceContract:
     provider: str
     query_year_type: str
     query_years: tuple[int, ...]
+    official_query_endpoint: str
+    official_query_method: str
+    official_query_categories: tuple[tuple[str, str], ...]
     allowed_url_prefixes: tuple[str, ...]
     market_sources: tuple[tuple[str, str], ...]
     supported_markets: tuple[str, ...]
@@ -53,12 +61,19 @@ def load_action_source_contract(path: Path) -> FinalActionSourceContract:
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     start, end = (date.fromisoformat(str(value)) for value in raw["period"])
     structured = raw["structured_source"]
+    query_coverage = raw["official_query_coverage"]
     contract = FinalActionSourceContract(
         start=start,
         end=end,
         provider=str(structured["provider"]),
         query_year_type=str(structured["query_year_type"]),
         query_years=tuple(int(value) for value in structured["query_years"]),
+        official_query_endpoint=str(query_coverage["endpoint"]),
+        official_query_method=str(query_coverage["method"]),
+        official_query_categories=tuple(
+            (str(category), str(query_category))
+            for category, query_category in query_coverage["categories"].items()
+        ),
         allowed_url_prefixes=tuple(raw["official_evidence_url_prefixes"]),
         market_sources=tuple(
             (str(market), str(source))
@@ -72,6 +87,10 @@ def load_action_source_contract(path: Path) -> FinalActionSourceContract:
         or contract.provider != "baostock_query_dividend_data"
         or contract.query_year_type != "operate"
         or contract.query_years != (2022, 2023, 2024, 2025)
+        or contract.official_query_endpoint != OFFICIAL_QUERY_ENDPOINT
+        or contract.official_query_method != "POST"
+        or contract.official_query_categories
+        != (("corporate_actions", ""), ("security_events", ""))
         or set(contract.required_files)
         != {"corporate_actions.parquet", "security_events.parquet"}
         or contract.allowed_url_prefixes != OFFICIAL_EVIDENCE_URL_PREFIXES
@@ -80,6 +99,30 @@ def load_action_source_contract(path: Path) -> FinalActionSourceContract:
     ):
         raise ValueError("invalid frozen final execution source contract")
     return contract
+
+
+def official_query_scope(
+    contract: FinalActionSourceContract,
+    *,
+    symbol: str,
+    category: str,
+) -> OfficialQueryScope:
+    """Return one pre-registered coverage query; never an event-fact source."""
+    try:
+        query_category = dict(contract.official_query_categories)[category]
+        market = market_for_symbol(symbol)
+    except (KeyError, ValueError) as error:
+        raise ValueError("official query category or symbol is invalid") from error
+    if market not in contract.supported_markets:
+        raise ValueError("official query symbol escapes supported markets")
+    return OfficialQueryScope(
+        symbol=symbol,
+        market=market,
+        category=category,
+        query_category=query_category,
+        start=contract.start,
+        end=contract.end,
+    )
 
 
 def assert_allowed_evidence_url(

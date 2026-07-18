@@ -16,6 +16,10 @@ from ashare_multifactor.final_test.gate import FINAL_TEST_END, FINAL_TEST_START
 from ashare_multifactor.final_test.execution_contracts import (
     normalize_corporate_action_rows,
 )
+from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
+from ashare_multifactor.final_test.official_query_index import (
+    validate_official_query_coverage_index,
+)
 
 def validate_corporate_action_coverage(
     root: Path, *, symbols: list[str] | None = None
@@ -33,6 +37,7 @@ def validate_corporate_action_coverage(
         "evidence_index": "official_corporate_action_evidence_index",
         "official_actions": "official_corporate_actions",
         "candidate_diff": "corporate_action_candidate_diff",
+        "official_query_coverage": "official_query_coverage",
     }
     if (
         not isinstance(payload, dict)
@@ -105,6 +110,21 @@ def validate_corporate_action_coverage(
         raise ValueError("official corporate-action coverage symbol scope changed")
     if coverage.select(pl.col("symbol").is_duplicated().any()).item():
         raise ValueError("official corporate-action query coverage has duplicates")
+    official_query_scopes = tuple(
+        OfficialQueryScope(
+            symbol=symbol,
+            market=market_for_symbol(symbol),
+            category="corporate_actions",
+            query_category="",
+            start=FINAL_TEST_START,
+            end=FINAL_TEST_END,
+        )
+        for symbol in normalized
+    )
+    official_query_index = validate_official_query_coverage_index(
+        paths["official_query_coverage"],
+        expected_scopes=official_query_scopes,
+    )
     expected = pl.DataFrame({"symbol": normalized})
     if (
         coverage.join(expected, on="symbol", how="anti").height
@@ -285,6 +305,9 @@ def validate_corporate_action_coverage(
             "evidence_index_file": paths["evidence_index"],
             "official_actions_file": paths["official_actions"],
             "diff_file": paths["candidate_diff"],
+            "official_query_coverage_file": paths["official_query_coverage"],
+            "official_query_scopes": official_query_scopes,
+            "official_query_coverage_index_sha256": official_query_index.index_sha256,
             "evidence_paths": evidence_paths,
             "coverage": coverage,
             "actions": actions,

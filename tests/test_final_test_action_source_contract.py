@@ -9,9 +9,14 @@ from ashare_multifactor.final_test.action_source_contract import (
     assert_allowed_evidence_url,
     build_execution_input_manifest,
     load_action_source_contract,
+    official_query_scope,
     verify_execution_input_manifest,
 )
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test.official_query_coverage import (
+    OFFICIAL_QUERY_ENDPOINT,
+    OfficialQueryScope,
+)
 
 
 def _authorization() -> FinalTestAuthorization:
@@ -103,6 +108,30 @@ def test_source_contract_freezes_scope_and_official_domains() -> None:
         "sz": "szse",
     }
     assert contract.supported_markets == ("sh", "sz")
+    assert contract.official_query_endpoint == OFFICIAL_QUERY_ENDPOINT
+    assert contract.official_query_method == "POST"
+    assert dict(contract.official_query_categories) == {
+        "corporate_actions": "",
+        "security_events": "",
+    }
+    assert official_query_scope(
+        contract,
+        symbol="000001",
+        category="corporate_actions",
+    ) == OfficialQueryScope(
+        symbol="000001",
+        market="sz",
+        category="corporate_actions",
+        query_category="",
+        start=date(2022, 1, 1),
+        end=date(2025, 12, 31),
+    )
+    with pytest.raises(ValueError, match="query category"):
+        official_query_scope(
+            contract,
+            symbol="000001",
+            category="other_events",
+        )
     assert_allowed_evidence_url(
         "https://static.cninfo.com.cn/finalpage/2024-05-10/notice.PDF",
         contract,
@@ -121,6 +150,8 @@ def test_source_contract_freezes_scope_and_official_domains() -> None:
         assert_allowed_evidence_url("https://example.com/notice.pdf", contract)
     with pytest.raises(ValueError, match="official evidence URL"):
         assert_allowed_evidence_url("https://www.bse.cn.evil/disclosure/a.pdf", contract)
+    with pytest.raises(ValueError, match="official evidence URL"):
+        assert_allowed_evidence_url(OFFICIAL_QUERY_ENDPOINT, contract)
 
 
 def test_supported_market_contract_is_protocol_hash_bound(tmp_path: Path) -> None:

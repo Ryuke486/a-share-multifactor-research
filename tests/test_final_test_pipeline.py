@@ -47,6 +47,7 @@ from ashare_multifactor.final_test.registry import (
     register_attempt,
     resolve_attempt_state,
 )
+from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.resume import preflight_resume
 from ashare_multifactor.final_test.release_outputs import (
     _historical_backtest_root,
@@ -55,6 +56,7 @@ from ashare_multifactor.final_test.release_outputs import (
     _slice_backtest_period,
 )
 from ashare_multifactor.final_test.signals import FinalTestSignals
+from test_final_test_official_query_index import _write_index
 
 
 pytest_plugins = ("test_final_test_resume",)
@@ -1544,6 +1546,19 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
         }
     ).write_parquet(query_coverage)
     coverage = tmp_path / "coverage.json"
+    official_query_coverage = _write_index(
+        tmp_path,
+        [
+            OfficialQueryScope(
+                symbol="000001",
+                market="sz",
+                category="security_events",
+                query_category="",
+                start=date(2022, 1, 1),
+                end=date(2025, 12, 31),
+            )
+        ],
+    )
     coverage.write_text(
         json.dumps(
             {
@@ -1565,6 +1580,11 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
                         role="official_security_event_coverage",
                     ).to_dict()
                 ],
+                "official_query_coverage": file_record(
+                    official_query_coverage,
+                    root=tmp_path,
+                    role="official_query_coverage",
+                ).to_dict(),
             }
         ),
         encoding="utf-8",
@@ -1578,6 +1598,13 @@ def test_security_event_zero_rows_still_require_ready_official_coverage(
     alias.symlink_to(tmp_path, target_is_directory=True)
     with pytest.raises(ValueError, match="symlink"):
         validate_security_event_coverage(alias / "coverage.json", symbols=["000001"])
+    payload = json.loads(coverage.read_text(encoding="utf-8"))
+    query_record = payload.pop("official_query_coverage")
+    coverage.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="query.*coverage"):
+        validate_security_event_coverage(coverage, symbols=["000001"])
+    payload["official_query_coverage"] = query_record
+    coverage.write_text(json.dumps(payload), encoding="utf-8")
     pl.concat([pl.read_parquet(query_coverage)] * 2).write_parquet(query_coverage)
     with pytest.raises(ValueError, match="query coverage"):
         validate_security_event_coverage(coverage, symbols=["000001"])
@@ -1769,9 +1796,22 @@ def _write_security_event_coverage(
         }
     ).write_parquet(events)
     coverage = root / "coverage.json"
-    coverage.write_text(
-        json.dumps(
-            {
+    official_query_coverage = None
+    if market == market_for_symbol(symbol) and market in {"sh", "sz"}:
+        official_query_coverage = _write_index(
+            root,
+            [
+                OfficialQueryScope(
+                    symbol=symbol,
+                    market=market,
+                    category="security_events",
+                    query_category="",
+                    start=date(2022, 1, 1),
+                    end=date(2025, 12, 31),
+                )
+            ],
+        )
+    payload: dict[str, object] = {
                 "status": "ready",
                 "period": ["2022-01-01", "2025-12-31"],
                 "scope": "all_final_execution_symbols",
@@ -1795,10 +1835,14 @@ def _write_security_event_coverage(
                     root=root,
                     role="official_security_events",
                 ).to_dict(),
-            }
-        ),
-        encoding="utf-8",
-    )
+    }
+    if official_query_coverage is not None:
+        payload["official_query_coverage"] = file_record(
+            official_query_coverage,
+            root=root,
+            role="official_query_coverage",
+        ).to_dict()
+    coverage.write_text(json.dumps(payload), encoding="utf-8")
     return coverage
 
 
