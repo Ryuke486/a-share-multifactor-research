@@ -84,3 +84,24 @@
 - [x] Route every post-claim CURRENT, data-panel, attempt-directory, and execution-input read through caller-held descriptors.
 - [x] Run the four-mode focused tests, all final-test recovery/publication tests, full pytest, ruff, and diff checks.
 - [x] Append exact evidence to the ignored remediation report and create one local commit without resealing.
+
+### Task 5: Close post-snapshot ABA read paths
+
+**Files:**
+- Modify: `src/ashare_multifactor/final_test/backtest.py`
+- Modify: `src/ashare_multifactor/final_test/data_extension.py`
+- Modify: `src/ashare_multifactor/final_test/pipeline.py`
+- Modify: `src/ashare_multifactor/final_test/release_outputs.py`
+- Modify: `src/ashare_multifactor/final_test/signals.py`
+- Test: `tests/test_final_test_pipeline.py`
+
+**Interfaces:**
+- Consumes: `BoundExecutionInputs`, `FrozenPanelSnapshot`, `FinalRootBinding.attempts_fd`, and held attempt staging descriptors.
+- Produces: bound-only optional parameters on signal/backtest/report helpers and byte-derived lineage records.
+
+- [x] Add a normal-flow ABA test that swaps A to B strictly after the panel snapshot, mutates B execution inputs, staged files, and registry outcomes, restores A before package freeze/publication, and rejects any B marker in A datasets, artifacts, lineage, or report.
+- [x] Add prepared/orphan/CURRENT ABA recovery coverage around the bound input/package read window and assert B remains unchanged after the deliberate fixture mutation.
+- [x] Run the new tests against `bc144a9` and confirm the normal test fails because B-derived bytes enter A.
+- [x] Pass the already-bound execution inputs and registry FD through signals/backtest/report; construct lineage identities from immutable bytes and held descriptors rather than lexical paths.
+- [x] Audit every normal/recovery read after `FinalRootBinding.open` and retain lexical paths only as labels or for unrelated frozen upstream releases.
+- [x] Run focused tests, all final-test publication/recovery tests, full pytest, ruff, and `git diff --check`; append evidence and create one local commit without resealing.

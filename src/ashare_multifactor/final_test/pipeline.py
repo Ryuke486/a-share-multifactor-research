@@ -67,7 +67,6 @@ from ashare_multifactor.final_test.publication_transaction import (
     PublicationNamespaceChanged,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
-    opened_directory,
     opened_directory_at,
     read_bytes_at,
 )
@@ -525,6 +524,7 @@ def _execute_authorized_final_test(
             code_root=code_root,
             final_root=final_root,
             panel_snapshot=panel_snapshot,
+            registry_fd=root_binding.attempts_fd,
         )
         backtest = run_final_test_backtest(
             authorization,
@@ -532,6 +532,8 @@ def _execute_authorized_final_test(
             code_root=code_root,
             final_root=final_root,
             panel_snapshot=panel_snapshot,
+            execution_inputs=bound_inputs,
+            registry_fd=root_binding.attempts_fd,
         )
         _write_attempt_core(
             attempt_directories.datasets_fd,
@@ -607,11 +609,14 @@ def _execute_authorized_final_test(
             artifacts_fd=attempt_directories.artifacts_fd,
         )
         _assert_attempt_directory(attempt_root, attempt_directories)
+        bound_panel_files = panel_snapshot.read_frozen_files()
         upstream = _upstream_identity(
             data_root,
             authorization,
             execution_manifest,
-            staged_root=attempt_root,
+            bound_panel_files=bound_panel_files,
+            bound_input_files=bound_inputs.files,
+            artifacts_fd=attempt_directories.artifacts_fd,
         )
         lineage = _lineage(
             authorization,
@@ -626,6 +631,7 @@ def _execute_authorized_final_test(
             comparison,
             code_root=code_root,
             registry_root=registry_root,
+            registry_fd=root_binding.attempts_fd,
         )
         _write_bytes_at(
             attempt_directories.artifacts_fd,
@@ -653,7 +659,6 @@ def _execute_authorized_final_test(
         )
         _assert_attempt_directory(attempt_root, attempt_directories)
         _assert_attempt_directory(attempt_root, attempt_directories)
-        bound_panel_files = panel_snapshot.read_frozen_files()
         _assert_attempt_directory(attempt_root, attempt_directories)
         _write_attempt_manifest(
             attempt_directories.attempt_fd,
@@ -1072,7 +1077,6 @@ def _recover_or_reject_current(
                 registry_root=final_root / "attempts",
                 preflight=preflight,
                 run_id=run_id,
-                release=release,
                 held_release_files=held.files,
                 held_manifest=held.manifest,
                 transaction=transaction,
@@ -1121,7 +1125,6 @@ def _recover_orphan_release(
                 registry_root=final_root / "attempts",
                 preflight=preflight,
                 run_id=run_id,
-                release=release,
                 held_release_files=release_files,
                 held_manifest=manifest,
                 transaction=transaction,
@@ -1169,7 +1172,6 @@ def _verify_orphan_release(
                 registry_root=final_root / "attempts",
                 preflight=preflight,
                 run_id=run_id,
-                release=release,
                 held_release_files=release_files,
                 held_manifest=manifest,
                 transaction=transaction,
@@ -1225,9 +1227,8 @@ def _verify_complete_release_identity(
     registry_root: Path,
     preflight: ResumePreflight,
     run_id: str,
-    release: PublishedRelease,
-    held_release_files: Mapping[str, bytes] | None = None,
-    held_manifest: Mapping[str, object] | None = None,
+    held_release_files: Mapping[str, bytes],
+    held_manifest: Mapping[str, object],
     transaction: FinalPublicationTransaction,
     root_binding: FinalRootBinding,
 ) -> None:
@@ -1244,14 +1245,9 @@ def _verify_complete_release_identity(
         )
     )
     try:
-        if held_release_files is None or held_manifest is None:
-            manifest = json.loads(release.manifest.read_text(encoding="utf-8"))
-            lineage_bytes = release.lineage.read_bytes()
-            release_files = _read_published_release_files(release.root)
-        else:
-            manifest = dict(held_manifest)
-            release_files = dict(held_release_files)
-            lineage_bytes = release_files["lineage.json"]
+        manifest = dict(held_manifest)
+        release_files = dict(held_release_files)
+        lineage_bytes = release_files["lineage.json"]
         lineage = json.loads(lineage_bytes)
     except (FileNotFoundError, KeyError, json.JSONDecodeError) as error:
         raise ValueError("final-test release identity is incomplete") from error
@@ -1391,13 +1387,6 @@ def _prepared_staging_identity(
         "coverage_snapshot_manifest_sha256": expected["coverage_snapshot_manifest_sha256"],
         **staging,
     }
-
-
-def _read_published_release_files(root: Path) -> dict[str, bytes]:
-    with opened_directory(root, label="published final-test release") as release_fd:
-        files = read_frozen_tree_at(release_fd, label="published final-test release")
-    files.pop("manifest.json", None)
-    return files
 
 
 def _expected_execution_identity(
@@ -1757,29 +1746,41 @@ def _upstream_identity(
     authorization: FinalTestAuthorization,
     execution_manifest: Mapping[str, object],
     *,
-    staged_root: Path,
+    bound_panel_files: Mapping[str, bytes],
+    bound_input_files: Mapping[str, bytes],
+    artifacts_fd: int,
 ) -> dict[str, object]:
-    staged_panel = staged_root / "datasets/final_daily_panel"
-    final_data = []
-    for name in ("data_manifest.json", "input_files.json"):
-        record = file_record(
-            staged_panel / name,
-            root=staged_root,
+    required_panel_files = ("data_manifest.json", "input_files.json")
+    if any(name not in bound_panel_files for name in required_panel_files):
+        raise ValueError("final-test data identity is incomplete")
+    final_data = [
+        _bytes_file_record(
+            f"processed/final_test/daily_panel/{name}",
+            bound_panel_files[name],
             role="final_test_data_input",
-        ).to_dict()
-        record["path"] = f"processed/final_test/daily_panel/{name}"
-        final_data.append(record)
-    staged_inputs = [
-        file_record(path, root=staged_root, role="self_contained_final_input").to_dict()
-        for path in sorted(
-            item
-            for relative in (
-                "datasets/final_daily_panel",
-                "artifacts/execution_inputs",
-                "artifacts/execution_sources",
+        )
+        for name in required_panel_files
+    ]
+    try:
+        with opened_directory_at(
+            artifacts_fd,
+            "execution_sources",
+            label="attempt execution sources",
+        ) as sources_fd:
+            execution_source_files = read_frozen_tree_at(
+                sources_fd, label="attempt execution sources"
             )
-            for item in (staged_root / relative).rglob("*")
-            if item.is_file()
+    except FileNotFoundError:
+        execution_source_files = {}
+    staged_inputs = [
+        _bytes_file_record(relative, payload, role="self_contained_final_input")
+        for prefix, files in (
+            ("datasets/final_daily_panel", bound_panel_files),
+            ("artifacts/execution_inputs", bound_input_files),
+            ("artifacts/execution_sources", execution_source_files),
+        )
+        for relative, payload in (
+            (f"{prefix}/{name}", files[name]) for name in sorted(files)
         )
     ]
     try:
@@ -1806,6 +1807,20 @@ def _upstream_identity(
         "final_test_data": final_data,
         "self_contained_inputs": staged_inputs,
         "execution_inputs": dict(execution_manifest),
+    }
+
+
+def _bytes_file_record(
+    relative: str,
+    payload: bytes,
+    *,
+    role: str,
+) -> dict[str, object]:
+    return {
+        "path": relative,
+        "role": role,
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
     }
 
 

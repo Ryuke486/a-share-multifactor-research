@@ -58,6 +58,7 @@ def build_final_test_signals(
     code_root: Path,
     final_root: Path,
     panel_snapshot: FrozenPanelSnapshot | None = None,
+    registry_fd: int | None = None,
 ) -> FinalTestSignals:
     """Extend the single sealed Stage-8 candidate through the final-test period."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -69,7 +70,15 @@ def build_final_test_signals(
     config = _load_frozen_config(code_root, final_root.parent.parent)
     if final_root != config.paths.processed / "final_test":
         raise ValueError("final-test data root is not canonical")
-    _verify_data_authorization(config, authorization, code_root)
+    if registry_fd is None:
+        _verify_data_authorization(config, authorization, code_root)
+    else:
+        _verify_data_authorization(
+            config,
+            authorization,
+            code_root,
+            registry_fd=registry_fd,
+        )
     if (config.test.start, config.test.end) != (FINAL_TEST_START, FINAL_TEST_END):
         raise ValueError("configured test period differs from the sealed final-test period")
     factor = config.factor_research

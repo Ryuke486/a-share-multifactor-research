@@ -26,6 +26,7 @@ from ashare_multifactor.final_test.execution_contracts import (
 from ashare_multifactor.final_test.execution_binding import (
     BoundExecutionInputs,
     resolve_bound_execution_inputs,
+    verify_bound_execution_inputs_at,
 )
 from ashare_multifactor.final_test.gate import (
     FINAL_TEST_END,
@@ -81,6 +82,8 @@ def run_final_test_backtest(
     code_root: Path,
     final_root: Path,
     panel_snapshot: FrozenPanelSnapshot | None = None,
+    execution_inputs: BoundExecutionInputs | None = None,
+    registry_fd: int | None = None,
 ) -> FinalTestBacktestResult:
     """Fail closed until the sealed fee and execution-input contracts are complete."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -97,16 +100,35 @@ def run_final_test_backtest(
     )
     if final_root != config.paths.processed / "final_test":
         raise ValueError("final-test root is not canonical")
-    _verify_data_authorization(config, authorization, code_root)
+    if registry_fd is None:
+        _verify_data_authorization(config, authorization, code_root)
+    else:
+        _verify_data_authorization(
+            config,
+            authorization,
+            code_root,
+            registry_fd=registry_fd,
+        )
 
     failures = _fee_coverage_failures(code_root / "configs/market_rules.yaml")
-    verified_execution_inputs: BoundExecutionInputs | None = None
-    try:
-        verified_execution_inputs = resolve_bound_execution_inputs(
-            final_root, authorization
+    verified_execution_inputs = execution_inputs
+    if verified_execution_inputs is None:
+        try:
+            verified_execution_inputs = resolve_bound_execution_inputs(
+                final_root, authorization
+            )
+        except (FileNotFoundError, TypeError, ValueError) as error:
+            failures.append(str(error))
+    else:
+        if registry_fd is None:
+            raise ValueError(
+                "caller-supplied execution inputs require held registry verification"
+            )
+        verified_execution_inputs = verify_bound_execution_inputs_at(
+            registry_fd,
+            authorization,
+            verified_execution_inputs,
         )
-    except (FileNotFoundError, TypeError, ValueError) as error:
-        failures.append(str(error))
     if failures:
         return _blocked_preflight(failures)
     if verified_execution_inputs is None:

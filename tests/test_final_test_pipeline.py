@@ -29,7 +29,10 @@ from ashare_multifactor.final_test.action_source_contract import (
     build_execution_input_manifest,
 )
 from ashare_multifactor.final_test import pipeline as pipeline_module
+from ashare_multifactor.final_test import data_extension as data_extension_module
 from ashare_multifactor.final_test import data_publication as data_publication_module
+from ashare_multifactor.final_test import execution_binding as execution_binding_module
+from ashare_multifactor.final_test import release_outputs as release_outputs_module
 from ashare_multifactor.final_test import secure_attempt_staging as staging_module
 from ashare_multifactor.final_test import coverage_snapshot as coverage_module
 from ashare_multifactor.final_test import interrupted_recovery as recovery_module
@@ -3174,6 +3177,282 @@ def test_normal_bound_data_resolver_never_reads_or_locks_replacement_root(
     ).exists()
 
 
+def test_post_snapshot_aba_never_imports_replacement_bytes_into_bound_attempt(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    upstream_impl = pipeline_module._upstream_identity
+    report_impl = release_outputs_module.build_final_report
+    _patch_steps(monkeypatch, publishable=True)
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    (final_root / "daily_panel/input_files.json").write_text(
+        '{"pairs": []}\n', encoding="utf-8"
+    )
+    marker = "REPLACEMENT-B-BYTES"
+    signal_stub = pipeline_module.build_final_test_signals
+    backtest_stub = pipeline_module.run_final_test_backtest
+    displaced = tmp_path / "aba-held-root-a"
+    replacement_roots: list[Path] = []
+    replacement_inventories: list[tuple[set[str], dict[str, bytes]]] = []
+    original_actions: bytes | None = None
+
+    def read_json_at(directory_fd: int, name: str) -> dict[str, object]:
+        descriptor = os.open(
+            name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            dir_fd=directory_fd,
+        )
+        try:
+            payload = os.read(descriptor, os.fstat(descriptor).st_size)
+        finally:
+            os.close(descriptor)
+        value = json.loads(payload)
+        assert isinstance(value, dict)
+        return value
+
+    def mutate_replacement() -> bytes:
+        registration = final_root / "attempts" / f"{prepared_attempt.attempt_id}.json"
+        registration_payload = json.loads(registration.read_text(encoding="utf-8"))
+        registration_payload["replacement_marker"] = marker
+        registration.write_text(json.dumps(registration_payload) + "\n", encoding="utf-8")
+        (final_root / "attempts/replacement.outcome.json").write_text(
+            json.dumps(
+                {
+                    "attempt_id": "replacement",
+                    "status": "failed",
+                    "authoritative": False,
+                    "reason": marker,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        input_root = final_root / "attempt_inputs" / prepared_attempt.attempt_id
+        manifest_path = input_root / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        records = {
+            str(record["path"]): record
+            for record in manifest["files"]
+            if isinstance(record, dict)
+        }
+        for name in ("corporate_actions.parquet", "security_events.parquet"):
+            pl.DataFrame({"replacement_marker": [marker]}).write_parquet(
+                input_root / name
+            )
+        manifest["files"] = [
+            file_record(
+                input_root / name,
+                root=input_root,
+                role=str(records[name]["role"]),
+            ).to_dict()
+            for name in ("corporate_actions.parquet", "security_events.parquet")
+        ]
+        manifest_path.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        execution_id = str(manifest["execution_id"])
+        output_path = (
+            final_root
+            / "attempts"
+            / f"{prepared_attempt.attempt_id}.execution-output.{execution_id}.json"
+        )
+        output = json.loads(output_path.read_text(encoding="utf-8"))
+        output["outputs"] = {
+            name: {
+                "sha256": sha256_file(input_root / name),
+                "size_bytes": (input_root / name).stat().st_size,
+            }
+            for name in ("corporate_actions.parquet", "security_events.parquet")
+        }
+        output_path.write_text(
+            json.dumps(output, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        input_binding = (
+            final_root
+            / "attempts"
+            / f"{prepared_attempt.attempt_id}.execution-input.{execution_id}.json"
+        )
+        binding = json.loads(input_binding.read_text(encoding="utf-8"))
+        binding["execution_input_manifest_sha256"] = sha256_file(manifest_path)
+        input_binding.write_text(
+            json.dumps(binding, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        staged_marker = (
+            final_root
+            / "attempt_runs"
+            / prepared_attempt.attempt_id
+            / f"datasets/final_daily_panel/{marker}.bin"
+        )
+        staged_marker.parent.mkdir(parents=True, exist_ok=True)
+        staged_marker.write_bytes(marker.encode())
+        source_marker = staged_marker.parents[2] / "artifacts/execution_sources/marker.json"
+        source_marker.parent.mkdir(parents=True, exist_ok=True)
+        source_marker.write_text(json.dumps({"marker": marker}), encoding="utf-8")
+        return (input_root / "corporate_actions.parquet").read_bytes()
+
+    def swap_to_replacement() -> bytes:
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        replacement_actions = mutate_replacement()
+        replacement_inventories.append(_namespace_inventory(final_root))
+        return replacement_actions
+
+    def restore_bound_root() -> None:
+        replacement = tmp_path / f"aba-replacement-b-{len(replacement_roots) + 1}"
+        final_root.rename(replacement)
+        displaced.rename(final_root)
+        replacement_roots.append(replacement)
+
+    def signals_after_swap(
+        authorization: FinalTestAuthorization,
+        *_args: object,
+        **kwargs: object,
+    ) -> FinalTestSignals:
+        nonlocal original_actions
+        input_root = final_root / "attempt_inputs" / prepared_attempt.attempt_id
+        original_actions = (input_root / "corporate_actions.parquet").read_bytes()
+        swap_to_replacement()
+        registry_fd = kwargs.get("registry_fd")
+        if isinstance(registry_fd, int):
+            config = pipeline_module._load_frozen_config(
+                Path(str(kwargs["code_root"])),
+                final_root.parent.parent,
+            )
+            data_extension_module._verify_authorization(
+                config,
+                authorization,
+                Path(str(kwargs["code_root"])),
+                registry_fd=registry_fd,
+            )
+            registration = read_json_at(
+                registry_fd, f"{prepared_attempt.attempt_id}.json"
+            )
+        else:
+            registration = json.loads(
+                (
+                    final_root
+                    / "attempts"
+                    / f"{prepared_attempt.attempt_id}.json"
+                ).read_text(encoding="utf-8")
+            )
+        source = str(registration.get("replacement_marker", "BOUND-A"))
+        result = signal_stub(authorization, **kwargs)
+        return FinalTestSignals(
+            result.factor_panel.with_columns(pl.lit(source).alias("registry_source")),
+            result.composite_scores,
+            result.composite_weights,
+            result.target_weights,
+        )
+
+    def backtest_before_restore(
+        authorization: FinalTestAuthorization,
+        signals: FinalTestSignals,
+        *_args: object,
+        **kwargs: object,
+    ) -> FinalTestBacktestResult:
+        execution_inputs = kwargs.get("execution_inputs")
+        registry_fd = kwargs.get("registry_fd")
+        if isinstance(execution_inputs, BoundExecutionInputs) and isinstance(
+            registry_fd, int
+        ):
+            execution_inputs = (
+                execution_binding_module.verify_bound_execution_inputs_at(
+                    registry_fd,
+                    authorization,
+                    execution_inputs,
+                )
+            )
+        else:
+            execution_inputs = execution_binding_module.resolve_bound_execution_inputs(
+                Path(str(kwargs["final_root"])), authorization
+            )
+        source = (
+            marker
+            if marker.encode() in execution_inputs["corporate_actions.parquet"]
+            else "BOUND-A"
+        )
+        result = backtest_stub(authorization, signals, **kwargs)
+        restore_bound_root()
+        return FinalTestBacktestResult(
+            outputs=result.outputs,
+            audits={**result.audits, "execution_input_source": source},
+            preflight=result.preflight,
+            publishable=result.publishable,
+            gate_failures=result.gate_failures,
+        )
+
+    def upstream_during_second_swap(*args: object, **kwargs: object) -> dict[str, object]:
+        swap_to_replacement()
+        return upstream_impl(*args, **kwargs)
+
+    def report_before_second_restore(
+        report_authorization: FinalTestAuthorization,
+        report_comparison: pl.DataFrame,
+        **kwargs: object,
+    ) -> str:
+        try:
+            return report_impl(
+                report_authorization,
+                report_comparison,
+                **kwargs,
+            )
+        finally:
+            restore_bound_root()
+
+    monkeypatch.setattr(pipeline_module, "build_final_test_signals", signals_after_swap)
+    monkeypatch.setattr(pipeline_module, "run_final_test_backtest", backtest_before_restore)
+    monkeypatch.setattr(pipeline_module, "_upstream_identity", upstream_during_second_swap)
+    monkeypatch.setattr(pipeline_module, "build_final_report", report_before_second_restore)
+    monkeypatch.setattr(
+        release_outputs_module,
+        "render_final_test_report",
+        lambda *_args, failed_runs, **_kwargs: "\n".join(
+            str(item.get("reason", "")) for item in failed_runs
+        ),
+    )
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    assert result.release is not None
+    factor_panel = pl.read_parquet(result.release.datasets / "factor_panel.parquet")
+    runtime_audits = json.loads(
+        (result.release.artifacts / "runtime_audits.json").read_text(encoding="utf-8")
+    )
+    lineage = json.loads(result.release.lineage.read_text(encoding="utf-8"))
+    report = (result.release.artifacts / "report.md").read_text(encoding="utf-8")
+    observed_sources = {
+        "signal_registry": factor_panel.get_column("registry_source").item(),
+        "backtest_execution_inputs": runtime_audits["execution_input_source"],
+        "lineage_staging": marker if marker in json.dumps(lineage) else "BOUND-A",
+        "report_registry": marker if marker in report else "BOUND-A",
+    }
+    assert observed_sources == {
+        "signal_registry": "BOUND-A",
+        "backtest_execution_inputs": "BOUND-A",
+        "lineage_staging": "BOUND-A",
+        "report_registry": "BOUND-A",
+    }
+    assert original_actions is not None
+    assert (
+        result.release.artifacts / "execution_inputs/corporate_actions.parquet"
+    ).read_bytes() == original_actions
+    assert len(replacement_roots) == len(replacement_inventories) == 2
+    for root, before in zip(replacement_roots, replacement_inventories, strict=True):
+        assert _namespace_inventory(root) == before
+
+
 @pytest.mark.parametrize("recovery_mode", ["prepared", "orphan", "current"])
 def test_bound_recovery_resolvers_never_read_or_lock_replacement_root(
     prepared_attempt: PreparedAttempt,
@@ -3279,6 +3558,137 @@ def test_bound_recovery_resolvers_never_read_or_lock_replacement_root(
     assert not (final_root / ".data-claim.publication.lock").exists()
     outcome = displaced / "attempts" / f"{prepared_attempt.attempt_id}.outcome.json"
     assert not outcome.exists()
+
+
+@pytest.mark.parametrize("recovery_mode", ["prepared", "orphan", "current"])
+def test_recovery_aba_never_imports_replacement_package_or_registry(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    recovery_mode: str,
+) -> None:
+    _patch_steps(monkeypatch, publishable=True)
+    publish = pipeline_module.publish_release
+    if recovery_mode == "prepared":
+
+        def interrupt(*_args: object, **_kwargs: object):
+            raise KeyboardInterrupt("after prepared validation")
+    elif recovery_mode == "orphan":
+
+        def interrupt(*args: object, **kwargs: object):
+            return publish(*args, **kwargs, fail_before_switch=True)
+    else:
+
+        def interrupt(*args: object, **kwargs: object):
+            publish(*args, **kwargs)
+            raise KeyboardInterrupt("after CURRENT")
+
+    monkeypatch.setattr(pipeline_module, "publish_release", interrupt)
+    with pytest.raises((KeyboardInterrupt, RuntimeError)):
+        pipeline_module.resume_final_test_release(
+            code_root=prepared_attempt.code_root,
+            data_root=prepared_attempt.data_root,
+            approval_key=prepared_attempt.approval_key,
+            attempt_id=prepared_attempt.attempt_id,
+            security_event_coverage_path=prepared_attempt.security_coverage,
+            corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+            run_id="final-release",
+        )
+    monkeypatch.setattr(pipeline_module, "publish_release", publish)
+
+    final_root = prepared_attempt.data_root / "processed/final_test"
+    original_actions = (
+        final_root
+        / "attempt_inputs"
+        / prepared_attempt.attempt_id
+        / "corporate_actions.parquet"
+    ).read_bytes()
+    displaced = tmp_path / f"{recovery_mode}-aba-held-root-a"
+    replacement = tmp_path / f"{recovery_mode}-aba-replacement-b"
+    replacement_before: tuple[set[str], dict[str, bytes]] | None = None
+    resolver = pipeline_module.resolve_bound_execution_inputs_at
+    freeze_package = pipeline_module._freeze_prepared_package
+    attacked = False
+    replacement_active = False
+
+    def restore_after_package_freeze() -> None:
+        nonlocal replacement_active
+        if replacement_active:
+            final_root.rename(replacement)
+            displaced.rename(final_root)
+            replacement_active = False
+
+    def resolve_during_aba(*args: object, **kwargs: object):
+        nonlocal attacked, replacement_active, replacement_before
+        if attacked:
+            return resolver(*args, **kwargs)
+        attacked = True
+        final_root.rename(displaced)
+        shutil.copytree(displaced, final_root)
+        replacement_active = True
+        b_artifacts = (
+            final_root / "attempt_runs" / prepared_attempt.attempt_id / "artifacts"
+        )
+        (b_artifacts / "report.md").write_text(
+            "REPLACEMENT-B-RECOVERY\n", encoding="utf-8"
+        )
+        (final_root / "attempts/replacement.outcome.json").write_text(
+            json.dumps(
+                {
+                    "attempt_id": "replacement",
+                    "status": "failed",
+                    "authoritative": False,
+                    "reason": "REPLACEMENT-B-RECOVERY",
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        replacement_before = _namespace_inventory(final_root)
+        try:
+            return resolver(*args, **kwargs)
+        except BaseException:
+            restore_after_package_freeze()
+            raise
+
+    def freeze_during_aba(*args: object, **kwargs: object):
+        try:
+            return freeze_package(*args, **kwargs)
+        finally:
+            restore_after_package_freeze()
+
+    monkeypatch.setattr(
+        pipeline_module,
+        "resolve_bound_execution_inputs_at",
+        resolve_during_aba,
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_freeze_prepared_package",
+        freeze_during_aba,
+    )
+
+    result = pipeline_module.resume_final_test_release(
+        code_root=prepared_attempt.code_root,
+        data_root=prepared_attempt.data_root,
+        approval_key=prepared_attempt.approval_key,
+        attempt_id=prepared_attempt.attempt_id,
+        security_event_coverage_path=prepared_attempt.security_coverage,
+        corporate_action_coverage_root=prepared_attempt.corporate_coverage,
+        run_id="final-release",
+    )
+
+    assert attacked
+    assert replacement_active is False
+    assert replacement_before is not None
+    assert result.release is not None
+    assert "REPLACEMENT-B-RECOVERY" not in (
+        result.release.artifacts / "report.md"
+    ).read_text(encoding="utf-8")
+    assert (
+        result.release.artifacts / "execution_inputs/corporate_actions.parquet"
+    ).read_bytes() == original_actions
+    assert _namespace_inventory(replacement) == replacement_before
 
 
 @pytest.mark.parametrize("replacement", ["attempts", "final_test", "processed", "data_root"])

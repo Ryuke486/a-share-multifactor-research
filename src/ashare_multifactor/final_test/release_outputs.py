@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import date
+import os
 from pathlib import Path
 
 import polars as pl
@@ -18,6 +19,7 @@ from ashare_multifactor.final_test.metrics import (
     compute_final_test_metrics,
 )
 from ashare_multifactor.final_test.report import render_final_test_report
+from ashare_multifactor.final_test.recovery_secure_fs import read_bytes_at
 from ashare_multifactor.final_test.signals import (
     MAIN_CANDIDATE,
     FinalTestSignals,
@@ -77,6 +79,7 @@ def build_final_report(
     *,
     code_root: Path,
     registry_root: Path,
+    registry_fd: int | None = None,
 ) -> str:
     robustness = _resolve_authorized_robustness(
         registry_root.parent.parent.parent, authorization
@@ -84,11 +87,11 @@ def build_final_report(
     sealed = json.loads(
         (robustness.artifacts / "sealed_test_protocol.json").read_text(encoding="utf-8")
     )
-    failures = []
-    for path in sorted(registry_root.glob("*.outcome.json")):
-        record = json.loads(path.read_text(encoding="utf-8"))
-        if record.get("status") == "failed":
-            failures.append(record)
+    failures = (
+        _failed_outcomes_at(registry_fd)
+        if registry_fd is not None
+        else _failed_outcomes(registry_root)
+    )
     return render_final_test_report(
         code_root / "docs/templates/stage9-final-test-report-template.md",
         expected_template_sha256=str(sealed["report_template_sha256"]),
@@ -103,6 +106,39 @@ def build_final_report(
         },
         failed_runs=failures,
     )
+
+
+def _failed_outcomes(registry_root: Path) -> list[dict[str, object]]:
+    failures = []
+    for path in sorted(registry_root.glob("*.outcome.json")):
+        record = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(record, dict) and record.get("status") == "failed":
+            failures.append(record)
+    return failures
+
+
+def _failed_outcomes_at(registry_fd: int) -> list[dict[str, object]]:
+    names = tuple(
+        sorted(name for name in os.listdir(registry_fd) if name.endswith(".outcome.json"))
+    )
+    failures = []
+    for name in names:
+        try:
+            record = json.loads(
+                read_bytes_at(registry_fd, name, label="final-test outcome record")
+            )
+        except (FileNotFoundError, json.JSONDecodeError) as error:
+            raise ValueError("invalid final-test outcome record") from error
+        if not isinstance(record, dict):
+            raise ValueError("invalid final-test outcome record")
+        if record.get("status") == "failed":
+            failures.append(record)
+    current_names = tuple(
+        sorted(name for name in os.listdir(registry_fd) if name.endswith(".outcome.json"))
+    )
+    if current_names != names:
+        raise ValueError("final-test outcome registry changed during report rendering")
+    return failures
 
 
 def _metric_inputs(

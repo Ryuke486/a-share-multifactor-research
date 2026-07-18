@@ -998,6 +998,8 @@ def _verify_authorization(
     config: ResearchConfig,
     authorization: FinalTestAuthorization,
     code_root: Path,
+    *,
+    registry_fd: int | None = None,
 ) -> None:
     code_root = code_root.resolve()
     if _git(code_root, "status", "--porcelain=v1", "--untracked-files=all"):
@@ -1024,19 +1026,31 @@ def _verify_authorization(
     if sealed.get("sealed_protocol_sha256") != authorization.sealed_protocol_sha256:
         raise ValueError("current sealed protocol differs from final-test authorization")
 
-    attempts = config.paths.processed / "final_test/attempts"
-    record_path = attempts / f"{authorization.attempt_id}.json"
-    if (
-        attempts.is_symlink()
-        or record_path.is_symlink()
-        or record_path.parent != attempts
-        or not record_path.is_file()
-    ):
-        raise ValueError("canonical final-test attempt record is missing")
-    try:
-        record = json.loads(record_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise ValueError("invalid canonical final-test attempt record") from error
+    if registry_fd is None:
+        attempts = config.paths.processed / "final_test/attempts"
+        record_path = attempts / f"{authorization.attempt_id}.json"
+        if (
+            attempts.is_symlink()
+            or record_path.is_symlink()
+            or record_path.parent != attempts
+            or not record_path.is_file()
+        ):
+            raise ValueError("canonical final-test attempt record is missing")
+        try:
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError("invalid canonical final-test attempt record") from error
+    else:
+        try:
+            record = json.loads(
+                read_bytes_at(
+                    registry_fd,
+                    f"{authorization.attempt_id}.json",
+                    label="canonical final-test attempt record",
+                )
+            )
+        except (FileNotFoundError, json.JSONDecodeError) as error:
+            raise ValueError("invalid canonical final-test attempt record") from error
     expected = {
         "attempt_id": authorization.attempt_id,
         "approval_id": authorization.approval_id,

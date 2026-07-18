@@ -100,6 +100,47 @@ def test_signals_revalidate_execution_identity_before_resolving_data(
     assert resolved is False
 
 
+def test_signals_entry_uses_held_registry_before_data_resolution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frozen = load_config(Path("configs/research_protocol.yaml"))
+    frozen = replace(
+        frozen,
+        paths=replace(frozen.paths, processed=tmp_path / "processed"),
+    )
+    observed_registry_fd: int | None = None
+
+    def verify(*_args: object, registry_fd: int | None = None) -> None:
+        nonlocal observed_registry_fd
+        observed_registry_fd = registry_fd
+
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.signals._load_frozen_config",
+        lambda *_args: frozen,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.signals._verify_data_authorization",
+        verify,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.signals._resolve_authorized_data",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("stop after held-registry verification")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="stop after held-registry"):
+        build_final_test_signals(
+            _authorization(),
+            code_root=tmp_path / "code",
+            final_root=tmp_path / "processed/final_test",
+            registry_fd=17,
+        )
+
+    assert observed_registry_fd == 17
+
+
 def test_signals_load_frozen_config_from_authorized_code_root() -> None:
     parameters = inspect.signature(build_final_test_signals).parameters
 

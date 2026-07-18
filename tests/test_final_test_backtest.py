@@ -17,6 +17,10 @@ from ashare_multifactor.final_test.action_source_contract import (
     build_execution_input_manifest,
 )
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test.execution_binding import (
+    BoundExecutionInputs,
+    _validate_execution_input_tree,
+)
 from ashare_multifactor.final_test.registry import (
     append_attempt_state,
     bind_execution_identity,
@@ -193,6 +197,144 @@ def test_missing_authoritative_action_inputs_block_before_final_data_read(
     assert any("attempt" in item or "binding" in item for item in result.gate_failures)
     assert result.preflight["execution_started"] is False
     assert resolved_data is False
+
+
+def test_caller_supplied_execution_inputs_require_held_registry_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._load_frozen_config",
+        lambda *_args: config,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._verify_data_authorization",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._fee_coverage_failures",
+        lambda *_args: [],
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._resolve_authorized_data",
+        lambda *_args, **_kwargs: pytest.fail(
+            "unverified caller bytes must be rejected before final data resolution"
+        ),
+    )
+    forged = BoundExecutionInputs(
+        manifest={},
+        manifest_sha256="0" * 64,
+        files={
+            "corporate_actions.parquet": b"forged",
+            "security_events.parquet": b"forged",
+        },
+    )
+
+    with pytest.raises(ValueError, match="held registry"):
+        run_final_test_backtest(
+            _authorization(),
+            _signals(),
+            code_root=tmp_path / "code",
+            final_root=tmp_path / "processed/final_test",
+            execution_inputs=forged,
+        )
+
+
+def test_backtest_entry_reverifies_supplied_inputs_through_held_registry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    candidate = BoundExecutionInputs(
+        manifest={},
+        manifest_sha256="0" * 64,
+        files={"manifest.json": b"{}"},
+    )
+    observed: dict[str, object] = {}
+
+    def verify_authorization(
+        *_args: object,
+        registry_fd: int | None = None,
+    ) -> None:
+        observed["authorization_registry_fd"] = registry_fd
+
+    def verify_inputs(
+        registry_fd: int,
+        authorization: FinalTestAuthorization,
+        execution_inputs: BoundExecutionInputs,
+    ) -> BoundExecutionInputs:
+        observed["input_registry_fd"] = registry_fd
+        observed["authorization"] = authorization
+        observed["execution_inputs"] = execution_inputs
+        return execution_inputs
+
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._load_frozen_config",
+        lambda *_args: config,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._verify_data_authorization",
+        verify_authorization,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._fee_coverage_failures",
+        lambda *_args: [],
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest.verify_bound_execution_inputs_at",
+        verify_inputs,
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest.resolve_bound_execution_inputs",
+        lambda *_args: (_ for _ in ()).throw(
+            AssertionError("canonical execution-input path must not be reopened")
+        ),
+    )
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.backtest._resolve_authorized_data",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("stop after held-input verification")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="stop after held-input"):
+        run_final_test_backtest(
+            _authorization(),
+            _signals(),
+            code_root=tmp_path / "code",
+            final_root=tmp_path / "processed/final_test",
+            execution_inputs=candidate,
+            registry_fd=23,
+        )
+
+    assert observed == {
+        "authorization_registry_fd": 23,
+        "input_registry_fd": 23,
+        "authorization": _authorization(),
+        "execution_inputs": candidate,
+    }
+
+
+def test_verified_execution_inputs_detach_from_caller_mutable_mapping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = {"manifest.json": b"{}"}
+    monkeypatch.setattr(
+        "ashare_multifactor.final_test.execution_binding._verify_manifest_payload",
+        lambda *_args, **_kwargs: None,
+    )
+
+    verified = _validate_execution_input_tree(
+        source,
+        authorization=_authorization(),
+        identity={},
+        expected_manifest_sha256=None,
+        expected_primary_outputs={},
+    )
+    source["manifest.json"] = b"caller-mutated"
+
+    assert verified["manifest.json"] == b"{}"
 
 
 def test_tampered_execution_input_is_blocked_before_final_data_read(

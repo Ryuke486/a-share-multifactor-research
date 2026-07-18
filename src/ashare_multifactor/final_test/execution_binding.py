@@ -89,6 +89,35 @@ def resolve_bound_execution_inputs_at(
     )
 
 
+def verify_bound_execution_inputs_at(
+    registry_fd: int,
+    authorization: FinalTestAuthorization,
+    candidate: BoundExecutionInputs,
+) -> BoundExecutionInputs:
+    """Revalidate caller-held bytes against the anchored execution registry."""
+    if not isinstance(candidate, BoundExecutionInputs):
+        raise TypeError("candidate must be BoundExecutionInputs")
+    identity = assert_execution_identity_authorized(
+        resolve_execution_binding_at(
+            registry_fd, attempt_id=authorization.attempt_id
+        ),
+        authorization,
+    )
+    expected_hash = resolve_execution_input_manifest_hash_at(
+        registry_fd, identity=identity
+    )
+    expected_outputs = resolve_execution_output_intent_at(
+        registry_fd, identity=identity
+    )
+    return _validate_execution_input_tree(
+        candidate.files,
+        authorization=authorization,
+        identity=identity,
+        expected_manifest_sha256=expected_hash,
+        expected_primary_outputs=expected_outputs,
+    )
+
+
 def validate_execution_input_candidate(
     final_root: Path,
     authorization: FinalTestAuthorization,
@@ -173,6 +202,16 @@ def _validate_execution_input_tree(
     expected_manifest_sha256: str | None,
     expected_primary_outputs: Mapping[str, Mapping[str, object]],
 ) -> BoundExecutionInputs:
+    try:
+        frozen_tree = dict(tree.items())
+    except (RuntimeError, TypeError, ValueError) as error:
+        raise ValueError("execution-input byte mapping is unstable") from error
+    if any(
+        not isinstance(name, str) or not isinstance(payload, bytes)
+        for name, payload in frozen_tree.items()
+    ):
+        raise TypeError("execution-input byte mapping is invalid")
+    tree = frozen_tree
     manifest_bytes = tree.get("manifest.json")
     if manifest_bytes is None:
         raise ValueError("execution-input manifest is missing")
