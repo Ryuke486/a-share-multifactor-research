@@ -204,6 +204,7 @@ def _build_claimed_panel(
             end,
             output_root=temporary_target,
             discovered_pairs=list(pairs),
+            supported_markets=config.supported_markets,
         )
         load_bound_input_pairs(config, inventory, start=start, end=end)
         _write_json(temporary_target / "input_files.json", inventory)

@@ -267,6 +267,55 @@ def test_final_test_builder_reuses_canonical_schema_and_manifest_without_mutatin
     assert not (config.paths.processed / "validation_evaluation").exists()
 
 
+def test_final_test_builder_excludes_bse_before_publishing_panel(
+    tmp_path: Path,
+) -> None:
+    config = _config(tmp_path)
+    day = date(2022, 1, 3)
+    _write_pair(config, day)
+    raw_path = next(config.paths.raw_unadjusted.glob("*.csv"))
+    adjusted_path = next(config.paths.raw_backward_adjusted.glob("*.csv"))
+    raw_lines = raw_path.read_text(encoding="utf-8").splitlines()
+    adjusted_lines = adjusted_path.read_text(encoding="utf-8").splitlines()
+    raw_path.write_text(
+        "\n".join([raw_lines[0], raw_lines[1], raw_lines[1].replace("000001", "920001", 1)])
+        + "\n",
+        encoding="utf-8",
+    )
+    adjusted_path.write_text(
+        "\n".join(
+            [
+                adjusted_lines[0],
+                adjusted_lines[1],
+                adjusted_lines[1].replace("000001", "920001", 1),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    code_root, authorization = _authorized_context(tmp_path, config)
+
+    manifest = _build(config, authorization, code_root)
+
+    root = config.paths.processed / "final_test/daily_panel"
+    panel = pl.read_parquet(root / "year=2022/part-000.parquet")
+    issues = json.loads((root / "quality_issues.json").read_text(encoding="utf-8"))
+    assert manifest.rows == 1
+    assert panel.get_column("symbol").to_list() == ["000001"]
+    assert issues == [
+        {
+            "code": "outside_supported_markets_excluded",
+            "count": 1,
+            "date": day.isoformat(),
+            "message": (
+                "rows outside the configured supported market scope were excluded"
+            ),
+            "severity": "warning",
+            "supported_markets": ["sh", "sz"],
+        }
+    ]
+
+
 def test_final_test_builder_keeps_stage_seven_quality_policy(
     tmp_path: Path,
 ) -> None:

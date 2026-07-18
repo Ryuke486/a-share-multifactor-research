@@ -16,6 +16,7 @@ from ashare_multifactor.config import ResearchConfig, load_config
 from ashare_multifactor.data.discovery import DailyFilePair, discover_daily_pairs
 from ashare_multifactor.data.reader import read_daily_pair
 from ashare_multifactor.data.schema import SCHEMA_VERSION
+from ashare_multifactor.data.security import filter_supported_markets
 from ashare_multifactor.data.validation import (
     invalid_ohlc_expression,
     raise_on_errors,
@@ -203,6 +204,7 @@ def build_parquet_dataset(
     output_root: Path | None = None,
     *,
     discovered_pairs: list[DailyFilePair] | None = None,
+    supported_markets: tuple[str, ...] | None = None,
 ) -> BuildManifest:
     if end < start:
         raise ValueError("build end precedes start")
@@ -257,6 +259,29 @@ def build_parquet_dataset(
                 year_frames = []
             current_year = pair.trading_date.year
             frame = read_daily_pair(pair)
+            if supported_markets is not None:
+                filtered = filter_supported_markets(frame, supported_markets)
+                excluded_rows = frame.height - filtered.height
+                if excluded_rows:
+                    quality_records.append(
+                        {
+                            "date": pair.trading_date.isoformat(),
+                            "severity": "warning",
+                            "code": "outside_supported_markets_excluded",
+                            "count": excluded_rows,
+                            "message": (
+                                "rows outside the configured supported market scope "
+                                "were excluded"
+                            ),
+                            "supported_markets": list(supported_markets),
+                        }
+                    )
+                frame = filtered
+                if frame.is_empty():
+                    raise ValueError(
+                        f"no rows remain inside supported markets for "
+                        f"{pair.trading_date.isoformat()}"
+                    )
             original_issues = validate_daily_panel(frame, pair.trading_date)
             if quarantine_invalid_ohlc:
                 raise_on_errors(
