@@ -133,3 +133,12 @@
 - 经用户批准，提交`2607513a6eb4f04723fab893de54d3f64250fc96`在Parquet与manifest发布前执行沪深过滤，并逐日记录范围外行数；共享Stage-2默认行为保持不变。修复及事故归档通过994项全量测试、ruff和独立复核。
 - 失败现场已整体、无覆盖地归档到`processed/final_test_incidents/stage9-final-20260718-f3bfe4c/`。`incident_manifest.json`绑定16个原始证据文件，其SHA-256为`fca62861dc51af3735a346f49d79238b23062b5e74639932159b38f14deb334f`；旧开启账本继续保持`consumed`，不得复用。
 - 再次开启前必须以修复后的代码身份重建板块7/8 successor与新封印，并使用新的密钥内容签发只绑定该新封印的一次性令牌。首次失败尝试永久保持非权威失败记录。
+
+## 官方证据采集器缺失事故与归档（2026-07-19）
+
+- 用户授权后，`stage9-final-20260719-ce7c729` 在封印`766e94837ddcc32d648847863926ed6186a85ad7c96d3aea214ae6a43c3c87b3`和代码提交`ce7c72919bdd2c5a37c0e745ed7c9483e793ed6e`上完成了两阶段`prepare`，并稳定停在`awaiting_official_evidence`。
+- 该 attempt 仅发布2022–2025规范面板与沪深证券范围；没有`CURRENT.json`、信号、目标权重、订单、成交、NAV、指标、报告或权威release。它未运行`resume`，也未产生策略表现结果。
+- 根因不是官方证据被判定为空或不合格，而是仓库只有严格验证/核销合同，没有可恢复的生产采集器来构建完整的逐证券CNInfo查询包及官方原文证据工作区。静默伪造零事件或以查询标题替代事实证据均被拒绝。
+- 经用户批准，该 attempt 被记录为非权威失败，原因固定为`official evidence collector unavailable before evidence acquisition`，并整体、无覆盖地归档到`processed/final_test_incidents/stage9-final-20260719-ce7c729/`。
+- 归档`incident_manifest.json`绑定20个证据文件；清单SHA-256为`57a31e7f22dd61fa0fe3c284ca07dbc73e175250b39e560629263e7f60ca8f8d`。复核确认所有文件哈希一致、活动`processed/final_test`根已不存在、归档中也没有`CURRENT.json`、信号或回测产物。
+- 该 token和opening ledger保持已消费、不得复用。后续必须先实现并验证完整两链官方证据采集器，重新双run和发布Stage7/8 successor/new seal，之后才能请求新的独立开启授权。
