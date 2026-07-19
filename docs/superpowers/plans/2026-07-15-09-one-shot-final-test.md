@@ -142,3 +142,13 @@
 - 经用户批准，该 attempt 被记录为非权威失败，原因固定为`official evidence collector unavailable before evidence acquisition`，并整体、无覆盖地归档到`processed/final_test_incidents/stage9-final-20260719-ce7c729/`。
 - 归档`incident_manifest.json`绑定20个证据文件；清单SHA-256为`57a31e7f22dd61fa0fe3c284ca07dbc73e175250b39e560629263e7f60ca8f8d`。复核确认所有文件哈希一致、活动`processed/final_test`根已不存在、归档中也没有`CURRENT.json`、信号或回测产物。
 - 该 token和opening ledger保持已消费、不得复用。后续必须先实现并验证完整两链官方证据采集器，重新双run和发布Stage7/8 successor/new seal，之后才能请求新的独立开启授权。
+
+## 官方证据采集节流事故与归档（2026-07-19）
+
+- 用户授权后，`stage9-final-20260719-56c18bd` 在封印`867cb33f9c58669d24a6f5533d86131907d93bbe0b264bd0a226d077f4702d3b`和代码提交`56c18bd`上完成`prepare`，并停在`awaiting_official_evidence`。该 attempt 仅发布了规范面板和沪深证券范围；未运行`resume`，没有`CURRENT.json`、信号、目标权重、订单、成交、NAV、指标、报告或权威release。
+- 自动采集器开始顺序查询公开证据后，在生成覆盖索引前安全停止；已有745个查询包，但没有`official_query_coverage.json`、标准化最终执行输入或任何策略表现结果。
+- 根因是固定最小请求间隔只在瞬时失败重试后休眠，成功请求立即返回，未保证每次公开请求之间的最小间隔。这是采集审计/节流执行缺陷，不改变因子、参数、市场范围或评价口径。
+- 经用户批准，提交`a858514`在每次成功请求后同样执行固定间隔，并增加不可覆盖的部分证据归档器。全量1,171项测试、ruff和差异检查通过。
+- 该 attempt 的20个文件已归档至`processed/final_test_incidents/stage9-final-20260719-56c18bd/`；`incident_manifest.json`的SHA-256为`760b8f37ca6054637475b61367367e04cbe066b7929f8a09daf1242706f61613`。745个不完整查询包共2,982个文件已归档至`processed/final_test_evidence_incidents/stage9-final-20260719-56c18bd/`；`incomplete_query_incident_manifest.json`的SHA-256为`119a022a8d004c2fb1066101f117ce1cdc862a9ddb4826be8537f536dece751f`。
+- 两份归档均可重入复验；活动`processed/final_test`与该 attempt 的活动证据目录均已不存在。旧token、opening ledger和失败结果保留且不得复用；部分查询包不得作为后续attempt的证据。
+- 此修复和本次事故披露使旧封印失效。下一步仅可用修复后的干净身份重新双run、发布新的Stage7/8 successor和关闭状态seal；得到新的精确授权前不得再次打开最终测试期。
