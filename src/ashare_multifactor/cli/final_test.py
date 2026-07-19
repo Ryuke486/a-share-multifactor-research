@@ -7,6 +7,13 @@ from pathlib import Path
 from ashare_multifactor.final_test.action_source_contract import (
     load_action_source_contract,
 )
+from ashare_multifactor.final_test.official_announcement_catalog import (
+    build_announcement_catalog,
+)
+from ashare_multifactor.final_test.official_document_fetcher import (
+    UrllibOfficialDocumentTransport,
+    fetch_official_documents,
+)
 from ashare_multifactor.final_test.official_query_client import (
     RetryPolicy,
     UrllibOfficialQueryTransport,
@@ -59,6 +66,14 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common_arguments(collect)
     collect.add_argument("--output-root", type=Path, required=True)
     collect.add_argument("--max-scopes", type=_positive_int)
+
+    documents = commands.add_parser(
+        "collect-documents",
+        help="cache approved official documents for human review",
+    )
+    _add_common_arguments(documents)
+    documents.add_argument("--output-root", type=Path, required=True)
+    documents.add_argument("--max-documents", type=_positive_int)
     return parser
 
 
@@ -100,6 +115,37 @@ def main(argv: Sequence[str] | None = None) -> None:
             max_scopes=args.max_scopes,
         )
         print(result.index_path or result.root)
+        return
+
+    if args.command == "collect-documents":
+        authorization = load_registered_authorization(
+            code_root=args.root,
+            data_root=args.data_root,
+            attempt_id=args.attempt_id,
+            approval_key=approval_key,
+        )
+        preparation = verify_preparation(
+            args.data_root / "processed/final_test",
+            attempt_id=args.attempt_id,
+            authorization=authorization,
+        )
+        contract = load_action_source_contract(
+            args.root / "configs/final_execution_sources.yaml"
+        )
+        catalog_path = build_announcement_catalog(
+            args.output_root / "official_query_coverage/official_query_coverage.json",
+            preparation=preparation,
+            authorization=authorization,
+            contract=contract,
+            destination=args.output_root,
+        )
+        workspace = fetch_official_documents(
+            catalog_path,
+            destination=args.output_root,
+            transport=UrllibOfficialDocumentTransport(),
+            max_documents=args.max_documents,
+        )
+        print(workspace.review_queue_path)
         return
 
     result = resume_final_test_release(

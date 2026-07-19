@@ -72,6 +72,12 @@ class FailIfCalled:
         raise AssertionError("CLI must reject before starting collection")
 
 
+class DocumentTransport:
+    def fetch(self, url: str, *, timeout_seconds: float) -> bytes:
+        del timeout_seconds
+        return f"official document for {url}".encode()
+
+
 def _tree_bytes(root: Path) -> dict[str, bytes]:
     return {
         path.relative_to(root).as_posix(): path.read_bytes()
@@ -129,3 +135,34 @@ def test_collect_queries_rejects_foreign_output_before_network(
 
     with pytest.raises(ValueError, match="output root|attempt"):
         final_test.main(argv)
+
+
+def test_collect_documents_keeps_attempt_and_ledger_bytes_unchanged(
+    prepared_cli: PreparedCli,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ashare_multifactor.cli import final_test
+
+    attempts = prepared_cli.attempt.data_root / "processed/final_test/attempts"
+    before = _tree_bytes(attempts)
+    ledger_before = prepared_cli.attempt.consumption_ledger.read_bytes()
+    monkeypatch.setattr(
+        final_test,
+        "UrllibOfficialQueryTransport",
+        lambda: ZeroResultTransport(),
+        raising=False,
+    )
+    final_test.main(["collect-queries", *prepared_cli.argv])
+    monkeypatch.setattr(
+        final_test,
+        "UrllibOfficialDocumentTransport",
+        lambda: DocumentTransport(),
+        raising=False,
+    )
+
+    final_test.main(["collect-documents", *prepared_cli.argv])
+
+    assert _tree_bytes(attempts) == before
+    assert prepared_cli.attempt.consumption_ledger.read_bytes() == ledger_before
+    assert capsys.readouterr().out.strip().endswith("review_queue.parquet")

@@ -28,6 +28,7 @@
 | `src/ashare_multifactor/final_test/official_query_collection_root.py` | Attempt-bound evidence-root identity, lock and descriptor safety. |
 | `src/ashare_multifactor/final_test/official_query_packages.py` | Immutable package staging, pagination, recovery and exact index construction. |
 | `src/ashare_multifactor/final_test/official_announcement_catalog.py` | Converts completed packages into a hash-bound announcement catalog and review tasks without asserting event facts. |
+| `src/ashare_multifactor/final_test/official_announcement_pages.py` | Descriptor-bound raw-page parsing and URL normalization for catalog provenance rows. |
 | `src/ashare_multifactor/final_test/official_document_fetcher.py` | Downloads approved official URLs into immutable evidence cache files and verifies byte identity. |
 | `src/ashare_multifactor/final_test/official_evidence_workspace.py` | Coordinates public evidence roots, candidate snapshots, review input validation and ready-blocking manifests. |
 | `src/ashare_multifactor/cli/final_test.py` | Adds the narrow `collect-queries` and `collect-documents` subcommands. |
@@ -396,6 +397,8 @@ def build_announcement_catalog(
     index_path: Path,
     *,
     preparation: FinalTestPreparation,
+    authorization: FinalTestAuthorization,
+    contract: FinalActionSourceContract,
     destination: Path,
 ) -> Path:
     raise NotImplementedError
@@ -416,7 +419,7 @@ def validate_review_submission(
     raise NotImplementedError
 ```
 
-- [ ] **Step 1: Write failing catalog/download/review tests**
+- [x] **Step 1: Write failing catalog/download/review tests**
 
 ```python
 def test_catalog_preserves_query_provenance_but_does_not_create_event_facts(complete_index: Path, prepared: Prepared) -> None:
@@ -438,13 +441,13 @@ def test_document_fetcher_rejects_non_whitelisted_urls_and_never_overwrites_cach
         )
 ```
 
-- [ ] **Step 2: Run and observe RED**
+- [x] **Step 2: Run and observe RED**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest tests/test_final_test_official_evidence_workspace.py -q`
 
 Expected: FAIL because the catalog/workspace modules do not exist.
 
-- [ ] **Step 3: Implement catalog and immutable document cache**
+- [x] **Step 3: Implement catalog and immutable document cache**
 
 ```python
 def build_announcement_catalog(index_path: Path, *, preparation: FinalTestPreparation, destination: Path) -> Path:
@@ -470,7 +473,7 @@ def fetch_official_documents(
 
 For company-action candidates, reuse the existing BaoStock field normalizer only to create a candidate snapshot and review tasks. Do not publish `corporate_action_coverage/coverage.json` or `security_event_coverage.json` with `status: ready` from unreviewed data. The only way to create a ready manifest is a fully hashed, schema-valid reviewer submission that the existing validators accept.
 
-- [ ] **Step 4: Add CLI command and test no state transition**
+- [x] **Step 4: Add CLI command and test no state transition**
 
 ```text
 python -m ashare_multifactor.cli.final_test collect-documents \
@@ -481,7 +484,7 @@ python -m ashare_multifactor.cli.final_test collect-documents \
 
 The command must reconstruct the registered authorization and verify the prepare state, but must leave the append-only state files byte-identical.
 
-- [ ] **Step 5: Run focused tests and lint**
+- [x] **Step 5: Run focused tests and lint**
 
 Run:
 
@@ -492,7 +495,7 @@ PYTHONPATH=src ../../.venv/bin/python -m pytest tests/test_final_test_official_e
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit Task 5**
+- [x] **Step 6: Commit Task 5**
 
 ```bash
 git add src/ashare_multifactor/final_test/official_announcement_catalog.py src/ashare_multifactor/final_test/official_document_fetcher.py src/ashare_multifactor/final_test/official_evidence_workspace.py src/ashare_multifactor/cli/final_test.py tests/test_final_test_official_evidence_workspace.py tests/test_final_test_cli.py
