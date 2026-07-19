@@ -87,7 +87,7 @@ def copy_validated_official_query_coverage(
         raise FileExistsError("official query coverage destination index already exists")
     shutil.copy2(source, destination_index)
     for scope in scopes:
-        relative = PurePosixPath(_canonical_package_path(scope))
+        relative = PurePosixPath(canonical_package_path(scope))
         source_package = source.parent / relative
         destination_package = destination_root / relative
         if destination_package.exists() or destination_package.is_symlink():
@@ -185,7 +185,7 @@ def _validate_record(
     if _record_scope_key(record) != _scope_key(scope):
         raise ValueError("official query coverage package scope is incomplete or differs")
     relative_path = record.get("relative_path")
-    expected_path = _canonical_package_path(scope)
+    expected_path = canonical_package_path(scope)
     if relative_path != expected_path:
         raise ValueError("official query coverage package path is not canonical")
     package = validate_official_query_package(
@@ -229,5 +229,6 @@ def _scope_key(scope: OfficialQueryScope) -> tuple[str, str, str, str]:
     return scope.category, scope.market, scope.symbol, scope.query_category
 
 
-def _canonical_package_path(scope: OfficialQueryScope) -> str:
+def canonical_package_path(scope: OfficialQueryScope) -> str:
+    """Return the only permitted relative package location for one scope."""
     return f"packages/{scope.category}/{scope.market}/{scope.symbol}/query-package"
