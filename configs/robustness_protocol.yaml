@@ -2,7 +2,7 @@ protocol_version: 1
 random_seed: 20260715
 analysis_period: [2005-01-01, 2021-12-31]
 sealed_test_period: [2022-01-01, 2025-12-31]
-validation_release: a4e65bd_stage7_official_evidence_successor
+validation_release: 326f86f_stage7_validation_throttle_successor
 main_candidate: rolling_ic_family_size_stratified_buffered
 baseline_experiment: execution_full_cost
 required_metrics:

@@ -40,7 +40,7 @@ def test_sealed_protocol_binds_code_inputs_rules_metrics_and_one_shot_policy(
         protocol=protocol,
         code_identity=_identity(),
         validation_pointer={
-            "run_id": "a4e65bd_stage7_official_evidence_successor",
+            "run_id": "326f86f_stage7_validation_throttle_successor",
             "manifest_sha256": "c" * 64,
         },
         market_rules_sha256="d" * 64,
