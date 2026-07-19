@@ -303,7 +303,7 @@ python -m ashare_multifactor.cli.final_test collect-queries \
   [--max-scopes <positive-int>]
 ```
 
-- [ ] **Step 1: Write failing CLI tests**
+- [x] **Step 1: Write failing CLI tests**
 
 ```python
 def test_collect_queries_uses_registered_attempt_and_never_consumes_a_second_token(prepared_cli: PreparedCli) -> None:
@@ -317,13 +317,13 @@ def test_collect_queries_rejects_a_foreign_output_root_or_non_waiting_attempt(pr
         main(["collect-queries", *prepared_cli.foreign_output_argv])
 ```
 
-- [ ] **Step 2: Run and observe RED**
+- [x] **Step 2: Run and observe RED**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest tests/test_final_test_cli.py -q`
 
 Expected: FAIL because `collect-queries` is not a recognized command.
 
-- [ ] **Step 3: Add the narrow subcommand**
+- [x] **Step 3: Add the narrow subcommand**
 
 ```python
 collect = commands.add_parser("collect-queries", help="collect official query coverage")
@@ -358,13 +358,13 @@ if args.command == "collect-queries":
 
 Require output root to be exactly `data_root / "processed/final_test_evidence" / attempt_id`; reject symlinks and paths outside that root. Keep the HTTP transport construction in the collector module so CLI stays thin.
 
-- [ ] **Step 4: Run focused CLI and collector tests**
+- [x] **Step 4: Run focused CLI and collector tests**
 
 Run: `PYTHONPATH=src ../../.venv/bin/python -m pytest tests/test_final_test_cli.py tests/test_final_test_official_query_collector.py -q`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit Task 4**
+- [x] **Step 5: Commit Task 4**
 
 ```bash
 git add src/ashare_multifactor/cli/final_test.py tests/test_final_test_cli.py

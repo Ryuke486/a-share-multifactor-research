@@ -4,8 +4,22 @@ import argparse
 from collections.abc import Sequence
 from pathlib import Path
 
+from ashare_multifactor.final_test.action_source_contract import (
+    load_action_source_contract,
+)
+from ashare_multifactor.final_test.official_query_client import (
+    RetryPolicy,
+    UrllibOfficialQueryTransport,
+)
+from ashare_multifactor.final_test.official_query_collector import (
+    collect_official_query_coverage,
+)
 from ashare_multifactor.final_test.pipeline import resume_final_test_release
-from ashare_multifactor.final_test.preparation import prepare_final_test
+from ashare_multifactor.final_test.preparation import (
+    prepare_final_test,
+    verify_preparation,
+)
+from ashare_multifactor.final_test.resume import load_registered_authorization
 
 
 def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
@@ -13,6 +27,13 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--approval-key-file", type=Path, required=True)
     parser.add_argument("--attempt-id", required=True)
+
+
+def _positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be positive")
+    return parsed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -30,6 +51,14 @@ def _build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--security-event-coverage", type=Path, required=True)
     resume.add_argument("--corporate-action-coverage", type=Path, required=True)
     resume.add_argument("--run-id", required=True)
+
+    collect = commands.add_parser(
+        "collect-queries",
+        help="collect public official-query coverage for a prepared attempt",
+    )
+    _add_common_arguments(collect)
+    collect.add_argument("--output-root", type=Path, required=True)
+    collect.add_argument("--max-scopes", type=_positive_int)
     return parser
 
 
@@ -45,6 +74,32 @@ def main(argv: Sequence[str] | None = None) -> None:
             attempt_id=args.attempt_id,
         )
         print(result.root)
+        return
+
+    if args.command == "collect-queries":
+        authorization = load_registered_authorization(
+            code_root=args.root,
+            data_root=args.data_root,
+            attempt_id=args.attempt_id,
+            approval_key=approval_key,
+        )
+        preparation = verify_preparation(
+            args.data_root / "processed/final_test",
+            attempt_id=args.attempt_id,
+            authorization=authorization,
+        )
+        result = collect_official_query_coverage(
+            preparation=preparation,
+            authorization=authorization,
+            contract=load_action_source_contract(
+                args.root / "configs/final_execution_sources.yaml"
+            ),
+            output_root=args.output_root,
+            transport=UrllibOfficialQueryTransport(),
+            policy=RetryPolicy(),
+            max_scopes=args.max_scopes,
+        )
+        print(result.index_path or result.root)
         return
 
     result = resume_final_test_release(
