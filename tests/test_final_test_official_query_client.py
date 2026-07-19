@@ -63,7 +63,29 @@ def test_client_retries_transient_failure_and_returns_exact_raw_bytes() -> None:
 
     assert result == b'{"totalpages":0,"totalAnnouncement":0,"announcements":null}'
     assert transport.calls == 2
-    assert pauses == [0.5]
+    assert pauses == [0.5, 0.5]
+
+
+def test_client_waits_after_a_successful_public_request() -> None:
+    from ashare_multifactor.final_test.official_query_client import (
+        RetryPolicy,
+        fetch_with_retry,
+    )
+
+    pauses: list[float] = []
+
+    result = fetch_with_retry(
+        ScriptedTransport(
+            [b'{"totalpages":0,"totalAnnouncement":0,"announcements":null}']
+        ),
+        endpoint="https://www.cninfo.com.cn/new/hisAnnouncement/query",
+        form=_form(),
+        policy=RetryPolicy(minimum_interval_seconds=0.75),
+        sleep=pauses.append,
+    )
+
+    assert result == b'{"totalpages":0,"totalAnnouncement":0,"announcements":null}'
+    assert pauses == [0.75]
 
 
 def test_client_rejects_sensitive_form_keys_before_transport() -> None:

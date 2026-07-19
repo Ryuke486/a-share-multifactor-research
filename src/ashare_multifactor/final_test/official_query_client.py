@@ -63,7 +63,7 @@ class OfficialQueryTransport(Protocol):
 
 @dataclass(frozen=True)
 class RetryPolicy:
-    """Bounded retry policy for one public page request."""
+    """Bounded retry and inter-request interval policy."""
 
     attempts: int = 3
     timeout_seconds: float = 20.0
@@ -142,6 +142,9 @@ def fetch_with_retry(
             continue
         if not payload:
             raise ValueError("official query response is empty")
+        # Calls are sequential. Sleeping after every successful request
+        # establishes the minimum interval before the next public request.
+        sleep(policy.minimum_interval_seconds)
         return payload
     raise RuntimeError("official query retry loop terminated unexpectedly")
 
