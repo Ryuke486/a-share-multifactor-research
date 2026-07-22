@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from http.client import RemoteDisconnected
 
 import pytest
 
@@ -86,6 +87,51 @@ def test_client_waits_after_a_successful_public_request() -> None:
 
     assert result == b'{"totalpages":0,"totalAnnouncement":0,"announcements":null}'
     assert pauses == [0.75]
+
+
+def test_urllib_client_retries_remote_disconnect_as_transient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.final_test import official_query_client as client
+
+    payload = b'{"totalpages":0,"totalAnnouncement":0,"announcements":null}'
+    calls = 0
+
+    class Response:
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return payload
+
+    def urlopen(*_: object, **__: object) -> Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RemoteDisconnected("official endpoint closed the connection")
+        return Response()
+
+    monkeypatch.setattr(client.request, "urlopen", urlopen)
+    pauses: list[float] = []
+
+    result = client.fetch_with_retry(
+        client.UrllibOfficialQueryTransport(),
+        endpoint="https://www.cninfo.com.cn/new/hisAnnouncement/query",
+        form=_form(),
+        policy=client.RetryPolicy(
+            attempts=2,
+            timeout_seconds=1.0,
+            minimum_interval_seconds=0.5,
+        ),
+        sleep=pauses.append,
+    )
+
+    assert result == payload
+    assert calls == 2
+    assert pauses == [0.5, 0.5]
 
 
 def test_client_rejects_sensitive_form_keys_before_transport() -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from http.client import RemoteDisconnected
 import time
 from typing import Protocol
 from urllib import error, parse, request
@@ -98,7 +99,7 @@ class UrllibOfficialQueryTransport:
                     f"official query HTTP {failure.code}"
                 ) from failure
             raise OfficialQueryHttpError(failure.code, failure.reason) from failure
-        except (TimeoutError, error.URLError) as failure:
+        except (RemoteDisconnected, TimeoutError, error.URLError) as failure:
             raise OfficialQueryTransientError("official query transport failed") from failure
 
 
