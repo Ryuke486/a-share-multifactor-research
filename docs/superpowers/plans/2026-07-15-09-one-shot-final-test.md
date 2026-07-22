@@ -161,3 +161,13 @@
 - 经用户批准，该 attempt 以原因`original final-test approval key irrecoverable before official evidence acquisition`记录为非权威失败，并归档到`processed/final_test_incidents/stage9-final-20260722-6109cd8/`。`incident_manifest.json`绑定20个文件，SHA-256为`c548f988d32b4f0e7c0958a09b450daa3236ceb992b7dc5e75bfe3f7088c09a5`；重入复验通过且活动`processed/final_test`根已不存在。
 - 已在干净提交`6109cd8`上完成新的Stage7双run：98个核心文件完全一致，`release_eligible=true`；新验证release为`6109cd8_stage7_validation_key_recovery_successor`，manifest SHA-256为`323d6a2735a90ae6bf3f8cf4eaf98d490b9130941ad7aa04ba481c3f13a1087a`，并明确supersede旧Stage7 release。
 - 新Stage8仍必须在重绑该精确Stage7身份、完成双run与关闭状态seal后，才能请求用户以替换密钥对新封印作单独开启确认。
+
+## 官方查询连接断连事故与归档（2026-07-22）
+
+- 用户授权后，`stage9-final-20260722-697853a`在封印`df9d72299499b8197ccfcf35885d35cd03269bd37133eb1b7d59c2b816058cef`和干净提交`697853a`上完成`prepare`，并停在`awaiting_official_evidence`。该 attempt 只发布2022–2025规范面板和沪深证券范围；未运行`resume`，没有`CURRENT.json`、信号、目标权重、订单、成交、NAV、指标、报告或权威release。
+- 采集器在生成完整覆盖索引前，已写入1,287个查询包；公开CNInfo连接随后以`http.client.RemoteDisconnected`关闭。没有`official_query_coverage.json`、标准化最终执行输入或任何策略表现结果。
+- 根因是传输层只将`HTTPError`、`TimeoutError`和`URLError`归类为可重试异常，未把远端主动断连映射为同一有界重试路径。这是连接恢复缺陷，不改变因子、参数、市场范围、成本或评价口径。
+- 经用户批准，提交`20aa54b`将`RemoteDisconnected`映射为`OfficialQueryTransientError`；新增反例确认首次断连后按既定重试策略恢复。定向46项测试、全量1,172项测试、Ruff和差异检查均通过。
+- 该 attempt 的20个文件已归档至`processed/final_test_incidents/stage9-final-20260722-697853a/`；`incident_manifest.json`的SHA-256为`5f05891cfd27c94bdf9284dbe06c1a22833422549b22afda20bc58f2537688db`。1,287个不完整查询包共5,150个文件已归档至`processed/final_test_evidence_incidents/stage9-final-20260722-697853a/`；`incomplete_query_incident_manifest.json`的SHA-256为`135fb4c62d9de14ac8b0cdaac7c1f218248e41cee76be9ce560d24fa18226be5`。
+- 两份归档均已重入复验；活动`processed/final_test`与该 attempt 的活动证据目录均不存在。旧token、opening ledger和失败结果保留且不得复用；部分查询包不得作为后续attempt的证据。
+- 此修复与事故披露使旧封印失效。下一步只能以本次干净身份重建Stage7/8 successor和新的关闭状态seal，之后再请求用户对新封印作独立开启授权。
