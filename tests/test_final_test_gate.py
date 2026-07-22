@@ -120,7 +120,7 @@ def _fixture(tmp_path: Path, *, successor: bool = True) -> dict[str, Path]:
     validation_staging = _staging(tmp_path / "validation-staging", artifact="report.md")
     validation = publish_release(
         validation_root,
-        run_id="326f86f_stage7_validation_throttle_successor",
+        run_id="6109cd8_stage7_validation_key_recovery_successor",
         staged_datasets=validation_staging[0],
         staged_artifacts=validation_staging[1],
         lineage={"stage": "validation"},

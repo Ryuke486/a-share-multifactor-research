@@ -152,3 +152,12 @@
 - 该 attempt 的20个文件已归档至`processed/final_test_incidents/stage9-final-20260719-56c18bd/`；`incident_manifest.json`的SHA-256为`760b8f37ca6054637475b61367367e04cbe066b7929f8a09daf1242706f61613`。745个不完整查询包共2,982个文件已归档至`processed/final_test_evidence_incidents/stage9-final-20260719-56c18bd/`；`incomplete_query_incident_manifest.json`的SHA-256为`119a022a8d004c2fb1066101f117ce1cdc862a9ddb4826be8537f536dece751f`。
 - 两份归档均可重入复验；活动`processed/final_test`与该 attempt 的活动证据目录均已不存在。旧token、opening ledger和失败结果保留且不得复用；部分查询包不得作为后续attempt的证据。
 - 此修复和本次事故披露使旧封印失效。下一步仅可用修复后的干净身份重新双run、发布新的Stage7/8 successor和关闭状态seal；得到新的精确授权前不得再次打开最终测试期。
+
+## 开启密钥丢失与无结果归档（2026-07-22）
+
+- 用户授权后，`stage9-final-20260722-6109cd8` 在封印`7d860d07cc6f25c331a44719366896ee69760adb4dcc692c3c6428fd9fc3af26`和干净代码提交`6109cd8`上完成`prepare`，并停在`awaiting_official_evidence`。
+- 该 attempt 只生成2022–2025规范面板和5,351只沪深证券范围；未启动官方查询采集，也没有`CURRENT.json`、信号、目标权重、订单、成交、NAV、指标、报告或权威release。
+- 原开启密钥在官方证据获取前丢失。替换密钥不能验证或恢复已消费的旧授权，因此不能继续同一 attempt；这不涉及对任何最终期结果、因子、参数、成本或评价口径的调整。
+- 经用户批准，该 attempt 以原因`original final-test approval key irrecoverable before official evidence acquisition`记录为非权威失败，并归档到`processed/final_test_incidents/stage9-final-20260722-6109cd8/`。`incident_manifest.json`绑定20个文件，SHA-256为`c548f988d32b4f0e7c0958a09b450daa3236ceb992b7dc5e75bfe3f7088c09a5`；重入复验通过且活动`processed/final_test`根已不存在。
+- 已在干净提交`6109cd8`上完成新的Stage7双run：98个核心文件完全一致，`release_eligible=true`；新验证release为`6109cd8_stage7_validation_key_recovery_successor`，manifest SHA-256为`323d6a2735a90ae6bf3f8cf4eaf98d490b9130941ad7aa04ba481c3f13a1087a`，并明确supersede旧Stage7 release。
+- 新Stage8仍必须在重绑该精确Stage7身份、完成双run与关闭状态seal后，才能请求用户以替换密钥对新封印作单独开启确认。
