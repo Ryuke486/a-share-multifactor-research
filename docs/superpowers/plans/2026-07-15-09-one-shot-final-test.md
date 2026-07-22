@@ -171,3 +171,12 @@
 - 该 attempt 的20个文件已归档至`processed/final_test_incidents/stage9-final-20260722-697853a/`；`incident_manifest.json`的SHA-256为`5f05891cfd27c94bdf9284dbe06c1a22833422549b22afda20bc58f2537688db`。1,287个不完整查询包共5,150个文件已归档至`processed/final_test_evidence_incidents/stage9-final-20260722-697853a/`；`incomplete_query_incident_manifest.json`的SHA-256为`135fb4c62d9de14ac8b0cdaac7c1f218248e41cee76be9ce560d24fa18226be5`。
 - 两份归档均已重入复验；活动`processed/final_test`与该 attempt 的活动证据目录均不存在。旧token、opening ledger和失败结果保留且不得复用；部分查询包不得作为后续attempt的证据。
 - 此修复与事故披露使旧封印失效。下一步只能以本次干净身份重建Stage7/8 successor和新的关闭状态seal，之后再请求用户对新封印作独立开启授权。
+
+## 官方查询连接恢复重封（2026-07-22）
+
+- 修复与事故记录的干净代码身份为`ac4ae36`；全量1,172项测试、Ruff和差异检查均通过。该验证只使用代码和合成/开放期夹具，未重新读取最终测试期。
+- 新Stage7双run的98个核心文件完全一致，`release_eligible=true`。新验证release为`7ccdc2c_stage7_validation_connection_retry_successor`，manifest SHA-256为`96c2a39065c209da579633dbaf97e3acc375d6fe0ddda2460c9e9963ff1437e6`，其`supersedes`记录精确绑定前任。
+- 验证期公司行动审计已按该新Stage7 manifest重建：2,718只证券、13,590个查询范围均完整；10,522条候选与发布事件差异为0，10组官方样本无缺口。四个审计内容文件与前任逐字节相同；新审计manifest SHA-256为`9400bf75f0e18d5c2fb497caa937993a18b5f8d2b3f439300b3d02736a0fe018`。
+- 新Stage8双run的3个核心文件完全一致，`release_eligible=true`。新release为`ac4ae36_stage8_robustness_connection_retry_successor`，manifest SHA-256为`f5d85bad72a0bd8371d0fd37a2b08678f2281a97d8c27afd07a6fa1019747bc0`，lineage SHA-256为`c81e95c1c6f60b7df85bee30f5bcd257f30e218f796094fa3aed35165f415d03`，新seal为`e04c5806ea703fb091048b6f83d758a82d1d941473bd034d32251feb33a299db`。
+- 新seal为protocol v2、`opening_token_status=closed`、市场范围仅`sh`/`sz`；前任Stage8 manifest和lineage哈希均保持不变。当前没有`processed/final_test`、活动attempt或该新seal的opening ledger。
+- 板块9仍未完成，不能开启板块10。下一步必须由用户使用新密钥对上述新seal作独立开启确认；确认后才可重新执行`prepare`，并以修复后的有界连接重试从零开始采集两条官方证据链。
