@@ -180,3 +180,12 @@
 - 新Stage8双run的3个核心文件完全一致，`release_eligible=true`。新release为`ac4ae36_stage8_robustness_connection_retry_successor`，manifest SHA-256为`f5d85bad72a0bd8371d0fd37a2b08678f2281a97d8c27afd07a6fa1019747bc0`，lineage SHA-256为`c81e95c1c6f60b7df85bee30f5bcd257f30e218f796094fa3aed35165f415d03`，新seal为`e04c5806ea703fb091048b6f83d758a82d1d941473bd034d32251feb33a299db`。
 - 新seal为protocol v2、`opening_token_status=closed`、市场范围仅`sh`/`sz`；前任Stage8 manifest和lineage哈希均保持不变。当前没有`processed/final_test`、活动attempt或该新seal的opening ledger。
 - 板块9仍未完成，不能开启板块10。下一步必须由用户使用新密钥对上述新seal作独立开启确认；确认后才可重新执行`prepare`，并以修复后的有界连接重试从零开始采集两条官方证据链。
+
+## CNInfo 查询身份缺陷与完整无效覆盖归档（2026-07-23）
+
+- 用户授权后，`stage9-final-20260722-641b086`在封印`e04c5806ea703fb091048b6f83d758a82d1d941473bd034d32251feb33a299db`上完成`prepare`，并停在`awaiting_official_evidence`。该 attempt 仅发布最终期规范面板和沪深证券范围；从未运行`resume`，没有`CURRENT.json`、信号、权重、订单、成交、NAV、指标、报告或权威release。
+- 采集器写出了完整的10,702个查询包和`official_query_coverage.json`（SHA-256：`d4df6e8da4a211eb3cb7a482614475d5f53a431ab4aba9e3731d54870fa4234c`），但查询条件只传递证券代码。CNInfo 的公开查询语义要求`代码,orgId`；代码单独返回零条不能证明零事件，因此该覆盖在语义上无效、绝不允许进入`resume`。
+- 经用户批准，采集器现先对每只冻结证券获取并验证唯一 CNInfo `orgId`，再固定为`stock=代码,orgId`；文档下载也补齐公开传输的固定间隔、有界重试和按未缓存 URL 断点续取。该修订不改变任何研究规则或结果口径。
+- 该 attempt 已被写为非权威失败，20个 attempt 文件归档至`processed/final_test_incidents/stage9-final-20260722-641b086/`，`incident_manifest.json` SHA-256为`87013e9a99a36ed40b0be41710c5cb95d108cba2dfea6e9673f55effd6a06b68`。
+- 全部无效覆盖证据已归档至`processed/final_test_evidence_incidents/stage9-final-20260722-641b086/`：42,813个文件、10,702个查询包，`invalid_complete_query_incident_manifest.json` SHA-256为`1645adc1ae6333a3857ff442c6dcde0f4d49b87e5568f5e99575a0fa02f76341`，并固定`reuse_permitted: false`。归档重入复验通过，活动`processed/final_test`与活动证据根均已不存在。
+- 修订后全仓验证为1,184项测试通过，Ruff和差异检查通过。该代码身份尚未重封；下一步必须重新双跑Stage7/8并发布新的关闭seal，之后才能以新密钥请求独立开启授权。

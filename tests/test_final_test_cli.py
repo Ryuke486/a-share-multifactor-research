@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 
 import pytest
@@ -56,7 +57,13 @@ class ZeroResultTransport:
         *,
         timeout_seconds: float,
     ) -> bytes:
-        del endpoint, form, timeout_seconds
+        del timeout_seconds
+        if endpoint.endswith("/information/topSearch/query"):
+            symbol = form["keyWord"]
+            return json.dumps(
+                [{"code": symbol, "orgId": f"fixture-{symbol}"}],
+                separators=(",", ":"),
+            ).encode()
         return b'{"totalpages":0,"totalAnnouncement":0,"announcements":null}'
 
 

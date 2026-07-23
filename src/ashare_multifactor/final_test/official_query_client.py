@@ -1,4 +1,4 @@
-"""Bounded public transport for CNInfo announcement queries."""
+"""Bounded unauthenticated transport for CNInfo public POST endpoints."""
 
 from __future__ import annotations
 
@@ -13,6 +13,10 @@ from ashare_multifactor.final_test.official_query_coverage import (
     OFFICIAL_QUERY_ENDPOINT,
 )
 
+
+OFFICIAL_SECURITY_IDENTITY_ENDPOINT = (
+    "https://www.cninfo.com.cn/new/information/topSearch/query"
+)
 
 _PAGE_FORM_FIELDS = frozenset(
     {
@@ -31,6 +35,7 @@ _PAGE_FORM_FIELDS = frozenset(
 _SENSITIVE_FORM_FIELDS = frozenset(
     {"authorization", "approval_key", "cookie", "token"}
 )
+_IDENTITY_FORM_FIELDS = frozenset({"keyWord", "maxNum", "plate"})
 
 
 class OfficialQueryError(RuntimeError):
@@ -105,9 +110,12 @@ class UrllibOfficialQueryTransport:
 
 def build_request(endpoint: str, form: Mapping[str, str]) -> request.Request:
     """Create the sole permitted unauthenticated public CNInfo POST request."""
-    if endpoint != OFFICIAL_QUERY_ENDPOINT:
+    if endpoint == OFFICIAL_QUERY_ENDPOINT:
+        normalized = _validate_page_form(form)
+    elif endpoint == OFFICIAL_SECURITY_IDENTITY_ENDPOINT:
+        normalized = _validate_identity_form(form)
+    else:
         raise ValueError("official query endpoint is invalid")
-    normalized = _validate_page_form(form)
     return request.Request(
         endpoint,
         data=parse.urlencode(normalized).encode("utf-8"),
@@ -160,4 +168,24 @@ def _validate_page_form(form: Mapping[str, str]) -> dict[str, str]:
         for field, value in normalized.items()
     ):
         raise ValueError("official query form is invalid")
+    return normalized
+
+
+def _validate_identity_form(form: Mapping[str, str]) -> dict[str, str]:
+    normalized = dict(form)
+    fields = {str(field) for field in normalized}
+    if fields.intersection(_SENSITIVE_FORM_FIELDS):
+        raise ValueError("CNInfo identity form contains a sensitive field")
+    if (
+        fields != _IDENTITY_FORM_FIELDS
+        or any(
+            not isinstance(field, str) or not isinstance(value, str)
+            for field, value in normalized.items()
+        )
+        or len(normalized["keyWord"]) != 6
+        or not normalized["keyWord"].isdigit()
+        or normalized["maxNum"] != "10"
+        or normalized["plate"] != ""
+    ):
+        raise ValueError("CNInfo identity form is invalid")
     return normalized

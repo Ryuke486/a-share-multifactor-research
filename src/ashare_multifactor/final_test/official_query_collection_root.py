@@ -28,6 +28,7 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
 
 COLLECTION_MANIFEST = "official_query_collection.json"
 COVERAGE_DIRECTORY = "official_query_coverage"
+IDENTITIES_DIRECTORY = "official_security_identities"
 _EVIDENCE_PARENT = "final_test_evidence"
 _LOCK_NAME = ".official-query-collection.lock"
 _SCHEMA_VERSION = "1"
@@ -44,6 +45,8 @@ class EvidenceRoot:
     root_identity: tuple[int, int]
     coverage_fd: int
     coverage_identity: tuple[int, int]
+    identities_fd: int
+    identities_identity: tuple[int, int]
 
 
 def expected_output_root(final_root: Path, attempt_id: str) -> Path:
@@ -65,6 +68,7 @@ def open_evidence_root(
     )
     root_fd: int | None = None
     coverage_fd: int | None = None
+    identities_fd: int | None = None
     try:
         root_fd = _open_or_create_directory(
             parent_fd,
@@ -76,6 +80,11 @@ def open_evidence_root(
             COVERAGE_DIRECTORY,
             label="official query coverage root",
         )
+        identities_fd = _open_or_create_directory(
+            root_fd,
+            IDENTITIES_DIRECTORY,
+            label="CNInfo security identity root",
+        )
         yield EvidenceRoot(
             output_root=expected_output_root(root_binding.final_root, attempt_id),
             parent_fd=parent_fd,
@@ -84,8 +93,12 @@ def open_evidence_root(
             root_identity=directory_identity(root_fd),
             coverage_fd=coverage_fd,
             coverage_identity=directory_identity(coverage_fd),
+            identities_fd=identities_fd,
+            identities_identity=directory_identity(identities_fd),
         )
     finally:
+        if identities_fd is not None:
+            os.close(identities_fd)
         if coverage_fd is not None:
             os.close(coverage_fd)
         if root_fd is not None:
@@ -138,6 +151,12 @@ def assert_directory_identities(
         COVERAGE_DIRECTORY,
         expected=evidence.coverage_identity,
         label="official query coverage root",
+    )
+    assert_directory_entry(
+        evidence.root_fd,
+        IDENTITIES_DIRECTORY,
+        expected=evidence.identities_identity,
+        label="CNInfo security identity root",
     )
 
 

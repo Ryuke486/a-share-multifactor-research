@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 from io import BytesIO
 import json
+import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -24,6 +25,7 @@ from ashare_multifactor.final_test.action_source_contract import (
 )
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
 from ashare_multifactor.final_test.official_query_collection_root import (
+    IDENTITIES_DIRECTORY,
     opened_safe_directory,
 )
 from ashare_multifactor.final_test.official_query_collector import (
@@ -37,7 +39,13 @@ from ashare_multifactor.final_test.official_query_coverage import canonical_json
 from ashare_multifactor.final_test.official_query_index import (
     validate_official_query_coverage_index,
 )
+from ashare_multifactor.final_test.official_security_identity import (
+    IDENTITY_INDEX_NAME,
+    load_verified_cninfo_security_identities,
+)
 from ashare_multifactor.final_test.preparation import FinalTestPreparation
+from ashare_multifactor.final_test.recovery_secure_fs import open_directory_at
+from ashare_multifactor.final_test.resume import load_bound_symbol_scope
 
 
 CATALOG_DIRECTORY = "official_announcement_catalog"
@@ -112,7 +120,23 @@ def build_announcement_catalog(
     expected_index = coverage_root / "official_query_coverage.json"
     if index_path.absolute() != expected_index.absolute():
         raise ValueError("official announcement catalog index path differs from collection")
-    scopes = expected_scopes(preparation, contract)
+    with opened_safe_directory(destination, label="official evidence destination") as root_fd:
+        identities_fd = open_directory_at(
+            root_fd,
+            IDENTITIES_DIRECTORY,
+            label="CNInfo security identity root",
+        )
+        try:
+            identities = load_verified_cninfo_security_identities(
+                identities_fd=identities_fd,
+                identity_root=destination / IDENTITIES_DIRECTORY,
+                symbols=load_bound_symbol_scope(preparation),
+                preparation=preparation,
+                authorization=authorization,
+            )
+        finally:
+            os.close(identities_fd)
+    scopes = expected_scopes(preparation, contract, identities=identities)
     verified_index = validate_official_query_coverage_index(
         expected_index,
         expected_scopes=scopes,
@@ -133,6 +157,7 @@ def build_announcement_catalog(
         row_count=frame.height,
         index_sha256=verified_index.index_sha256,
         collection_sha256=collection_sha256,
+        identity_index_sha256=identities.index_sha256,
         contract=contract,
     )
     with opened_safe_directory(destination, label="official evidence destination") as root_fd:
@@ -183,6 +208,7 @@ def _catalog_manifest(
     row_count: int,
     index_sha256: str,
     collection_sha256: str,
+    identity_index_sha256: str,
     contract: FinalActionSourceContract,
 ) -> dict[str, object]:
     return {
@@ -196,6 +222,7 @@ def _catalog_manifest(
         "row_count": row_count,
         "official_query_coverage_sha256": index_sha256,
         "official_query_collection_sha256": collection_sha256,
+        "cninfo_security_identities_sha256": identity_index_sha256,
         "allowed_url_prefixes": list(contract.allowed_url_prefixes),
         "market_sources": [
             {"market": market, "source": source}
@@ -257,6 +284,7 @@ def _validate_manifest(manifest: dict[str, object], *, catalog_bytes: bytes) -> 
         "row_count",
         "official_query_coverage_sha256",
         "official_query_collection_sha256",
+        "cninfo_security_identities_sha256",
         "allowed_url_prefixes",
         "market_sources",
         "contains_execution_event_facts",
@@ -274,6 +302,7 @@ def _validate_manifest(manifest: dict[str, object], *, catalog_bytes: bytes) -> 
         or manifest["row_count"] < 0
         or not _sha256(manifest.get("official_query_coverage_sha256"))
         or not _sha256(manifest.get("official_query_collection_sha256"))
+        or not _sha256(manifest.get("cninfo_security_identities_sha256"))
         or not isinstance(manifest.get("allowed_url_prefixes"), list)
         or not isinstance(manifest.get("market_sources"), list)
         or manifest.get("contains_execution_event_facts") is not False
@@ -284,6 +313,7 @@ def _validate_manifest(manifest: dict[str, object], *, catalog_bytes: bytes) -> 
 def _validate_source_bindings(destination: Path, manifest: dict[str, object]) -> None:
     collection = destination / "official_query_collection.json"
     index = destination / "official_query_coverage/official_query_coverage.json"
+    identities = destination / IDENTITIES_DIRECTORY / IDENTITY_INDEX_NAME
     for path, expected, label in (
         (
             collection,
@@ -294,6 +324,11 @@ def _validate_source_bindings(destination: Path, manifest: dict[str, object]) ->
             index,
             manifest["official_query_coverage_sha256"],
             "official query coverage",
+        ),
+        (
+            identities,
+            manifest["cninfo_security_identities_sha256"],
+            "CNInfo security identity index",
         ),
     ):
         _assert_safe_regular_file(path, label=label)

@@ -40,6 +40,12 @@ class ZeroResultTransport:
         timeout_seconds: float,
     ) -> bytes:
         self.calls.append((endpoint, dict(form), timeout_seconds))
+        if endpoint.endswith("/information/topSearch/query"):
+            symbol = form["keyWord"]
+            return json.dumps(
+                [{"code": symbol, "orgId": f"fixture-{symbol}"}],
+                separators=(",", ":"),
+            ).encode()
         return b'{"totalpages":0,"totalAnnouncement":0,"announcements":null}'
 
 
@@ -67,7 +73,13 @@ class TwoPageTransport:
         *,
         timeout_seconds: float,
     ) -> bytes:
-        del endpoint, timeout_seconds
+        del timeout_seconds
+        if endpoint.endswith("/information/topSearch/query"):
+            symbol = form["keyWord"]
+            return json.dumps(
+                [{"code": symbol, "orgId": f"fixture-{symbol}"}],
+                separators=(",", ":"),
+            ).encode()
         page = form["pageNum"]
         self.calls.append(page)
         total = 3 if page == "2" and self.inconsistent_second_page else 2
@@ -148,8 +160,13 @@ def test_collector_derives_exact_two_category_scope_from_verified_preparation(
         result.index_path,
         expected_scopes=expected_scopes,
     ).packages
-    assert len(transport.calls) == result.total_scopes
-    assert all(endpoint == OFFICIAL_QUERY_ENDPOINT for endpoint, _form, _timeout in transport.calls)
+    query_calls = [
+        call
+        for call in transport.calls
+        if call[0] == OFFICIAL_QUERY_ENDPOINT
+    ]
+    assert len(query_calls) == result.total_scopes
+    assert len(transport.calls) == result.total_scopes + 2
 
 
 def test_collector_partial_run_has_no_index_and_resume_preserves_packages(

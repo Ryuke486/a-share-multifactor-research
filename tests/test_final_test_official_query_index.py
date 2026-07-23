@@ -44,6 +44,7 @@ def _write_index(root: Path, scopes: list[OfficialQueryScope]) -> Path:
             {
                 "symbol": scope.symbol,
                 "market": scope.market,
+                "org_id": verified.scope.org_id,
                 "category": scope.category,
                 "query_category": scope.query_category,
                 "relative_path": package.relative_to(root).as_posix(),

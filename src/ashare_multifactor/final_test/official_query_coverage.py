@@ -30,7 +30,9 @@ _SCHEMA_VERSION = "1"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _CATEGORY = re.compile(r"[a-z][a-z0-9_]{0,63}")
 _REQUEST_FIELDS = frozenset({"schema_version", "endpoint", "method", "scope", "page_size", "form"})
-_SCOPE_FIELDS = frozenset({"symbol", "market", "category", "query_category", "start", "end"})
+_SCOPE_FIELDS = frozenset(
+    {"symbol", "market", "category", "query_category", "start", "end", "org_id"}
+)
 _PAGE_FIELDS = frozenset(
     {
         "page",
@@ -79,6 +81,7 @@ class OfficialQueryScope:
     query_category: str
     start: date
     end: date
+    org_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -184,7 +187,7 @@ def _validate_package_tree(
         label="official query request",
     )
     scope = _validate_request(request)
-    if expected_scope is not None and scope != expected_scope:
+    if expected_scope is not None and not _scope_matches(scope, expected_scope):
         raise ValueError("official query scope differs from expected scope")
 
     pages_payload, pages_bytes = _load_canonical_json(
@@ -319,6 +322,7 @@ def _validate_request(payload: dict[str, Any]) -> OfficialQueryScope:
     market = scope.get("market")
     category = scope.get("category")
     query_category = scope.get("query_category")
+    org_id = scope.get("org_id")
     start = _parse_date(scope.get("start"), label="official query scope")
     end = _parse_date(scope.get("end"), label="official query scope")
     if (
@@ -326,6 +330,8 @@ def _validate_request(payload: dict[str, Any]) -> OfficialQueryScope:
         or not isinstance(market, str)
         or not isinstance(category, str)
         or not isinstance(query_category, str)
+        or not isinstance(org_id, str)
+        or not _valid_org_id(org_id)
         or _CATEGORY.fullmatch(category) is None
         or "\n" in query_category
         or start > end
@@ -337,7 +343,7 @@ def _validate_request(payload: dict[str, Any]) -> OfficialQueryScope:
         raise ValueError("official query scope symbol is invalid") from error
     if market not in {"sh", "sz"} or actual_market != market:
         raise ValueError("official query scope market is invalid")
-    if form.get("stock") != symbol:
+    if form.get("stock") != f"{symbol},{org_id}":
         raise ValueError("official query form symbol differs from query scope")
     if form.get("column") != {"sh": "sse", "sz": "szse"}[market]:
         raise ValueError("official query form market differs from query scope")
@@ -356,7 +362,28 @@ def _validate_request(payload: dict[str, Any]) -> OfficialQueryScope:
         query_category=query_category,
         start=start,
         end=end,
+        org_id=org_id,
     )
+
+
+def _scope_matches(
+    actual: OfficialQueryScope,
+    expected: OfficialQueryScope,
+) -> bool:
+    """Allow legacy readers to omit orgId, never package writers or collectors."""
+    return (
+        actual.symbol == expected.symbol
+        and actual.market == expected.market
+        and actual.category == expected.category
+        and actual.query_category == expected.query_category
+        and actual.start == expected.start
+        and actual.end == expected.end
+        and (expected.org_id is None or actual.org_id == expected.org_id)
+    )
+
+
+def _valid_org_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", value))
 
 
 def _validate_manifest(

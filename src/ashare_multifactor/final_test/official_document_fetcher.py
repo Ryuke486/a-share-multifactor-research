@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+from http.client import RemoteDisconnected
 from pathlib import Path
+import time
 from typing import Protocol
+from urllib import error
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from ashare_multifactor.final_test.official_announcement_catalog import (
@@ -20,7 +25,47 @@ from ashare_multifactor.final_test.official_evidence_workspace import (
 )
 
 
-DEFAULT_DOCUMENT_TIMEOUT_SECONDS = 30.0
+
+@dataclass(frozen=True)
+class DocumentFetchPolicy:
+    """Bounded retry and spacing rules for public document downloads."""
+
+    attempts: int = 3
+    timeout_seconds: float = 30.0
+    minimum_interval_seconds: float = 1.0
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.attempts, int)
+            or isinstance(self.attempts, bool)
+            or self.attempts <= 0
+            or not isinstance(self.timeout_seconds, (int, float))
+            or isinstance(self.timeout_seconds, bool)
+            or self.timeout_seconds <= 0
+            or not isinstance(self.minimum_interval_seconds, (int, float))
+            or isinstance(self.minimum_interval_seconds, bool)
+            or self.minimum_interval_seconds < 0
+        ):
+            raise ValueError("official document fetch policy is invalid")
+
+
+DEFAULT_DOCUMENT_TIMEOUT_SECONDS = DocumentFetchPolicy().timeout_seconds
+
+
+class OfficialDocumentError(RuntimeError):
+    """Base error for one public official-document request."""
+
+
+class OfficialDocumentTransientError(OfficialDocumentError):
+    """A document request that can be retried within the fixed policy."""
+
+
+class OfficialDocumentHttpError(OfficialDocumentError):
+    """A non-retryable public document HTTP response."""
+
+    def __init__(self, status: int, message: str) -> None:
+        self.status = status
+        super().__init__(f"official document HTTP {status}: {message}")
 
 
 class OfficialDocumentTransport(Protocol):
@@ -40,8 +85,19 @@ class UrllibOfficialDocumentTransport:
             headers={"User-Agent": "ashare-multifactor-research/1.0"},
         )
         opener = build_opener(_RejectRedirect())
-        with opener.open(request, timeout=timeout_seconds) as response:  # noqa: S310
-            return response.read()
+        try:
+            with opener.open(request, timeout=timeout_seconds) as response:  # noqa: S310
+                return response.read()
+        except error.HTTPError as failure:
+            if failure.code == 429 or 500 <= failure.code <= 599:
+                raise OfficialDocumentTransientError(
+                    f"official document HTTP {failure.code}"
+                ) from failure
+            raise OfficialDocumentHttpError(failure.code, failure.reason) from failure
+        except (RemoteDisconnected, TimeoutError, error.URLError) as failure:
+            raise OfficialDocumentTransientError(
+                "official document transport failed"
+            ) from failure
 
 
 class _RejectRedirect(HTTPRedirectHandler):
@@ -58,6 +114,8 @@ def fetch_official_documents(
     destination: Path,
     transport: OfficialDocumentTransport,
     max_documents: int | None = None,
+    policy: DocumentFetchPolicy | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> EvidenceWorkspace:
     """Cache bounded public documents and publish an unready review snapshot."""
     if max_documents is not None and (
@@ -66,10 +124,14 @@ def fetch_official_documents(
         or max_documents <= 0
     ):
         raise ValueError("official document maximum is invalid")
+    active_policy = DocumentFetchPolicy() if policy is None else policy
+    if not isinstance(active_policy, DocumentFetchPolicy):
+        raise TypeError("official document fetch policy is invalid")
+    if not callable(sleep):
+        raise TypeError("official document sleep function is invalid")
     catalog = load_verified_announcement_catalog(catalog_path)
     _assert_catalog_belongs_to_destination(catalog, destination)
     urls = _catalog_urls(catalog)
-    selected = urls if max_documents is None else urls[:max_documents]
     with open_workspace(destination) as (
         workspace_root,
         _workspace_fd,
@@ -77,17 +139,23 @@ def fetch_official_documents(
         sessions_fd,
     ):
         cached = {
-            url: _obtain_document(
+            url: document
+            for url in urls
+            if (
+                document := load_cached_document(documents_fd, source_url=url)
+            )
+            is not None
+        }
+        uncached = [url for url in urls if url not in cached]
+        selected = uncached if max_documents is None else uncached[:max_documents]
+        for url in selected:
+            cached[url] = _obtain_document(
                 documents_fd,
                 url=url,
                 transport=transport,
+                policy=active_policy,
+                sleep=sleep,
             )
-            for url in selected
-        }
-        for url in urls:
-            existing = load_cached_document(documents_fd, source_url=url)
-            if existing is not None:
-                cached[url] = existing
         return publish_review_workspace(
             workspace_root=workspace_root,
             sessions_fd=sessions_fd,
@@ -101,12 +169,44 @@ def _obtain_document(
     *,
     url: str,
     transport: OfficialDocumentTransport,
+    policy: DocumentFetchPolicy,
+    sleep: Callable[[float], None],
 ) -> CachedOfficialDocument:
     cached = load_cached_document(documents_fd, source_url=url)
     if cached is not None:
         return cached
-    payload = transport.fetch(url, timeout_seconds=DEFAULT_DOCUMENT_TIMEOUT_SECONDS)
+    payload = _fetch_document_with_retry(
+        transport,
+        url=url,
+        policy=policy,
+        sleep=sleep,
+    )
     return publish_document_cache(documents_fd, source_url=url, payload=payload)
+
+
+def _fetch_document_with_retry(
+    transport: OfficialDocumentTransport,
+    *,
+    url: str,
+    policy: DocumentFetchPolicy,
+    sleep: Callable[[float], None],
+) -> bytes:
+    """Fetch a cache miss with bounded retries and a post-success interval."""
+    for attempt in range(policy.attempts):
+        try:
+            payload = transport.fetch(url, timeout_seconds=policy.timeout_seconds)
+        except OfficialDocumentTransientError:
+            if attempt + 1 == policy.attempts:
+                raise
+            sleep(policy.minimum_interval_seconds * (2**attempt))
+            continue
+        if not isinstance(payload, bytes) or not payload:
+            raise ValueError("official document response is empty")
+        # The collector is sequential. Sleeping after every successful request
+        # enforces the fixed minimum interval before another public download.
+        sleep(policy.minimum_interval_seconds)
+        return payload
+    raise RuntimeError("official document retry loop terminated unexpectedly")
 
 
 def _catalog_urls(catalog: VerifiedAnnouncementCatalog) -> list[str]:

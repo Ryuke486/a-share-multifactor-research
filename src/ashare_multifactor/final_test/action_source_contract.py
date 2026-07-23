@@ -110,6 +110,7 @@ def official_query_scope(
     *,
     symbol: str,
     category: str,
+    org_id: str | None = None,
 ) -> OfficialQueryScope:
     """Return one pre-registered coverage query; never an event-fact source."""
     try:
@@ -126,6 +127,7 @@ def official_query_scope(
         query_category=query_category,
         start=contract.start,
         end=contract.end,
+        org_id=org_id,
     )
 
 

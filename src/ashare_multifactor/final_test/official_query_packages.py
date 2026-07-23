@@ -339,6 +339,7 @@ def _request_payload(scope: OfficialQueryScope) -> dict[str, object]:
             "query_category": scope.query_category,
             "start": scope.start.isoformat(),
             "end": scope.end.isoformat(),
+            "org_id": _required_org_id(scope),
         },
         "page_size": _PAGE_SIZE,
         "form": {
@@ -347,11 +348,17 @@ def _request_payload(scope: OfficialQueryScope) -> dict[str, object]:
             "plate": scope.market,
             "searchkey": "",
             "seDate": f"{scope.start.isoformat()}~{scope.end.isoformat()}",
-            "stock": scope.symbol,
+            "stock": f"{scope.symbol},{_required_org_id(scope)}",
             "tabName": "fulltext",
             "trade": "",
         },
     }
+
+
+def _required_org_id(scope: OfficialQueryScope) -> str:
+    if not isinstance(scope.org_id, str) or not scope.org_id:
+        raise ValueError("official query scope orgId is missing")
+    return scope.org_id
 
 
 def _fetch_page(
@@ -435,6 +442,7 @@ def _index_record(
     return {
         "symbol": scope.symbol,
         "market": scope.market,
+        "org_id": _required_org_id(scope),
         "category": scope.category,
         "query_category": scope.query_category,
         "relative_path": package_relative_path(scope).as_posix(),

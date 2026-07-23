@@ -190,3 +190,30 @@ def test_request_has_only_public_headers_and_urlencoded_form() -> None:
     assert request.get_header("Authorization") is None
     assert request.get_header("Content-type") == "application/x-www-form-urlencoded"
     assert request.data == b"category=&column=szse&plate=sz&searchkey=&seDate=2021-01-01~2021-12-31&stock=000001&tabName=fulltext&trade=&pageNum=1&pageSize=30"
+
+
+def test_identity_request_accepts_only_the_public_cninfo_search_form() -> None:
+    from ashare_multifactor.final_test.official_query_client import (
+        OFFICIAL_SECURITY_IDENTITY_ENDPOINT,
+        build_request,
+    )
+
+    request = build_request(
+        OFFICIAL_SECURITY_IDENTITY_ENDPOINT,
+        {"keyWord": "600000", "maxNum": "10", "plate": ""},
+    )
+
+    assert request.get_method() == "POST"
+    assert request.get_header("Cookie") is None
+    assert request.get_header("Authorization") is None
+    assert request.data == b"keyWord=600000&maxNum=10&plate="
+    with pytest.raises(ValueError, match="sensitive|identity form"):
+        build_request(
+            OFFICIAL_SECURITY_IDENTITY_ENDPOINT,
+            {
+                "keyWord": "600000",
+                "maxNum": "10",
+                "plate": "",
+                "token": "secret",
+            },
+        )

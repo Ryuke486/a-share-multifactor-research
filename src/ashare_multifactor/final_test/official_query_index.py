@@ -24,6 +24,7 @@ _PACKAGE_FIELDS = frozenset(
     {
         "symbol",
         "market",
+        "org_id",
         "category",
         "query_category",
         "relative_path",
@@ -192,6 +193,12 @@ def _validate_record(
         root / PurePosixPath(expected_path),
         expected_scope=scope,
     )
+    if (
+        not isinstance(record.get("org_id"), str)
+        or record["org_id"] != package.scope.org_id
+        or (scope.org_id is not None and record["org_id"] != scope.org_id)
+    ):
+        raise ValueError("official query coverage package orgId differs from scope")
     if any(
         record.get(field) != value
         for field, value in (

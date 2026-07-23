@@ -7,6 +7,7 @@ from datetime import date
 import os
 from pathlib import Path
 
+from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.action_source_contract import (
     FinalActionSourceContract,
     official_query_scope,
@@ -20,6 +21,7 @@ from ashare_multifactor.final_test.official_query_client import (
 from ashare_multifactor.final_test.official_query_collection_root import (
     COLLECTION_MANIFEST,
     COVERAGE_DIRECTORY,
+    IDENTITIES_DIRECTORY,
     assert_directory_identities,
     collection_lock,
     expected_output_root,
@@ -30,6 +32,10 @@ from ashare_multifactor.final_test.official_query_collection_root import (
 )
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.official_query_packages import collect_coverage
+from ashare_multifactor.final_test.official_security_identity import (
+    VerifiedCNInfoSecurityIdentityIndex,
+    collect_cninfo_security_identities,
+)
 from ashare_multifactor.final_test.preparation import (
     FinalTestPreparation,
     verify_preparation,
@@ -50,6 +56,7 @@ class QueryCollectionResult:
     total_scopes: int
     index_path: Path | None
     binding_path: Path
+    identity_index_path: Path
 
 
 def collect_official_query_coverage(
@@ -60,6 +67,7 @@ def collect_official_query_coverage(
     output_root: Path,
     transport: OfficialQueryTransport,
     policy: RetryPolicy,
+    identity_transport: OfficialQueryTransport | None = None,
     max_scopes: int | None = None,
 ) -> QueryCollectionResult:
     """Collect exact public query coverage without changing attempt state."""
@@ -86,7 +94,9 @@ def collect_official_query_coverage(
         )
         if preparation != verified:
             raise ValueError("official query preparation identity differs")
-        scopes = expected_scopes(verified, contract)
+        symbols = load_bound_symbol_scope(verified)
+        if not symbols:
+            raise ValueError("official query preparation symbol scope is empty")
         with open_evidence_root(
             root_binding,
             attempt_id=authorization.attempt_id,
@@ -98,6 +108,18 @@ def collect_official_query_coverage(
                     authorization=authorization,
                     contract=contract,
                 )
+                identities = collect_cninfo_security_identities(
+                    identities_fd=evidence.identities_fd,
+                    identity_root=evidence.output_root / IDENTITIES_DIRECTORY,
+                    symbols=symbols,
+                    preparation=verified,
+                    authorization=authorization,
+                    transport=(
+                        transport if identity_transport is None else identity_transport
+                    ),
+                    policy=policy,
+                )
+                scopes = expected_scopes(verified, contract, identities=identities)
                 assert_directory_identities(
                     root_binding,
                     evidence,
@@ -123,6 +145,7 @@ def collect_official_query_coverage(
                     total_scopes=len(scopes),
                     index_path=progress.index_path,
                     binding_path=evidence.output_root / COLLECTION_MANIFEST,
+                    identity_index_path=identities.index_path,
                 )
 
 
@@ -158,6 +181,8 @@ def verify_official_query_collection_binding(
 def expected_scopes(
     preparation: FinalTestPreparation,
     contract: FinalActionSourceContract,
+    *,
+    identities: VerifiedCNInfoSecurityIdentityIndex,
 ) -> tuple[OfficialQueryScope, ...]:
     """Derive the immutable two-category scope set from a verified preparation."""
     if tuple(category for category, _query in contract.official_query_categories) != _CATEGORIES:
@@ -168,7 +193,12 @@ def expected_scopes(
     return tuple(
         sorted(
             (
-                official_query_scope(contract, symbol=symbol, category=category)
+                official_query_scope(
+                    contract,
+                    symbol=symbol,
+                    category=category,
+                    org_id=identities.org_id_for(symbol, market_for_symbol(symbol)),
+                )
                 for category in _CATEGORIES
                 for symbol in symbols
             ),

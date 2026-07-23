@@ -24,6 +24,7 @@ def _scope() -> OfficialQueryScope:
         query_category="",
         start=date(2022, 1, 1),
         end=date(2025, 12, 31),
+        org_id="fixture-000001",
     )
 
 
@@ -36,6 +37,7 @@ def _write_package(
     pages: list[dict[str, object]] | None = None,
 ) -> Path:
     selected_scope = scope or _scope()
+    org_id = selected_scope.org_id or f"fixture-{selected_scope.symbol}"
     root = tmp_path / "query-package"
     pages_root = root / "pages"
     pages_root.mkdir(parents=True)
@@ -50,6 +52,7 @@ def _write_package(
             "query_category": selected_scope.query_category,
             "start": selected_scope.start.isoformat(),
             "end": selected_scope.end.isoformat(),
+            "org_id": org_id,
         },
         "page_size": 30,
         "form": {
@@ -58,7 +61,7 @@ def _write_package(
             "plate": selected_scope.market,
             "searchkey": "",
             "seDate": (f"{selected_scope.start.isoformat()}~{selected_scope.end.isoformat()}"),
-            "stock": selected_scope.symbol,
+            "stock": f"{selected_scope.symbol},{org_id}",
             "tabName": "fulltext",
             "trade": "",
         },
@@ -146,6 +149,7 @@ def test_query_package_accepts_a_supported_sh_market_scope(tmp_path: Path) -> No
         query_category="",
         start=date(2022, 1, 1),
         end=date(2025, 12, 31),
+        org_id="fixture-600000",
     )
 
     verified = validate_official_query_package(
