@@ -200,6 +200,7 @@ def _validate_package_tree(
     )
     totals = _validate_manifest(
         manifest,
+        request=request,
         request_bytes=request_bytes,
         pages_bytes=pages_bytes,
     )
@@ -389,6 +390,7 @@ def _valid_org_id(value: str) -> bool:
 def _validate_manifest(
     payload: dict[str, Any],
     *,
+    request: dict[str, Any],
     request_bytes: bytes,
     pages_bytes: bytes,
 ) -> tuple[int, int, int]:
@@ -418,7 +420,14 @@ def _validate_manifest(
     if not all(_nonnegative_int(value) for value in totals):
         raise ValueError("official query manifest totals are invalid")
     total_pages, total_results, page_count = totals
-    expected_count = max(1, total_pages)
+    page_size = request.get("page_size")
+    if not _positive_int(page_size):
+        raise ValueError("official query page size is invalid")
+    expected_count = max(
+        1,
+        total_pages,
+        (total_results + page_size - 1) // page_size,
+    )
     if page_count != expected_count or (total_results > 0 and total_pages == 0):
         raise ValueError("official query pagination is incomplete")
     return total_pages, total_results, page_count

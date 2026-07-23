@@ -197,3 +197,11 @@
 - Stage8上游绑定提交为`857fea4`。新Stage8双run的3个核心文件完全一致、`release_eligible=true`；新release为`857fea4_stage8_robustness_orgid_successor`，manifest SHA-256为`e3c3caf696004248460116e47ef3c0b849331551f3f6bd6eefc774dd4ba0ffd8`，lineage SHA-256为`00316da13e2b8a0e2fd7defddd722e8c5c5ad1ae94fa54db2c52818de6f3738a`。
 - 新seal为`c2dbb906574ce43375e9869516e0839c669257c2f70a2385c7526f3eda475412`，protocol v2、`opening_token_status=closed`、市场范围仅`sh`/`sz`，并绑定CNInfo身份查询和文档传输修订后的代码身份。前任Stage8 manifest、lineage和seal文件哈希均保持不变。
 - 发布后复核确认`processed/final_test`不存在，新seal对应opening ledger不存在，也没有新attempt、token或最终测试结果。板块9仍未完成，不能开启板块10；下一步必须由用户对上述精确seal作新的独立开启确认，之后才可执行`prepare`。
+
+## CNInfo 分页计数事故与采集巡检（2026-07-23）
+
+- 用户授权后，`stage9-final-20260723-857fea4`在seal `c2dbb906574ce43375e9869516e0839c669257c2f70a2385c7526f3eda475412`上完成`prepare`：最终期面板4,837,769行、5,351只沪深证券，状态停在`awaiting_official_evidence`，没有信号、回测、指标、报告、`CURRENT.json`或权威release。
+- 采集器完成全部5,351个CNInfo `orgId`身份包后，在首个公告查询包发布前失败关闭。真实响应对`600000,gssh0600000`声明`totalAnnouncement=429`、`totalpages=14`；第1至14页各30条，而第15页仍返回9条且`hasMore=false`。因此CNInfo的`totalpages`在该响应中是向下取整，不能单独作为终止页。
+- 经用户批准，该attempt已记录为非权威失败并归档：20个attempt文件的`incident_manifest.json` SHA-256为`64c91ebc2bb1dc44ed541f18f9f1569c67917961a8bda0ae2ee41fbd230add78`。5,351个身份包及其他证据共16,056个文件归档至`processed/final_test_evidence_incidents/stage9-final-20260723-857fea4/`，`incomplete_query_incident_manifest.json` SHA-256为`153c5f3f9c8d63561ac6a47aeb6abbd8ce8e474d629bef86e49e1a4527aeeb03`，查询包数为0；这些证据不得被新attempt复用。
+- 分页修复保留官方声明值，同时按`max(1, totalpages, ceil(totalAnnouncement/pageSize))`取得必须请求的页数；全部响应仍必须满足总数稳定、公告ID不重复、缓存哈希完整且最终逐页条数之和等于`totalAnnouncement`。新增公开采集接口反例精确覆盖“声明1页、31条、第2页仍有1条”的生产故障。
+- 下一次采集将绑定5分钟心跳巡检：读取进程、日志、身份/查询包数量、最新证据时间和完整索引。进度超过10分钟不更新即诊断；只有不改变代码、seal和attempt的网络/进程中断允许安全续跑。任何代码缺陷必须立即告警并重新归档、重封、授权；巡检绝不执行`resume`。

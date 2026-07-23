@@ -93,6 +93,44 @@ class TwoPageTransport:
         ).encode()
 
 
+class UnderreportedFinalPageTransport:
+    """CNInfo can report floor(total/page_size) while a final page still exists."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def fetch(
+        self,
+        endpoint: str,
+        form: dict[str, str],
+        *,
+        timeout_seconds: float,
+    ) -> bytes:
+        del timeout_seconds
+        if endpoint.endswith("/information/topSearch/query"):
+            symbol = form["keyWord"]
+            return json.dumps(
+                [{"code": symbol, "orgId": f"fixture-{symbol}"}],
+                separators=(",", ":"),
+            ).encode()
+        page = form["pageNum"]
+        self.calls.append(page)
+        count = 30 if page == "1" else 1
+        start = 0 if page == "1" else 30
+        return json.dumps(
+            {
+                "totalpages": 1,
+                "totalAnnouncement": 31,
+                "announcements": [
+                    {"announcementId": f"announcement-{index}"}
+                    for index in range(start, start + count)
+                ],
+                "hasMore": page == "1",
+            },
+            separators=(",", ":"),
+        ).encode()
+
+
 def _prepared_inputs(attempt: PreparedAttempt) -> dict[str, object]:
     authorization = load_registered_authorization(
         code_root=attempt.code_root,
@@ -264,6 +302,34 @@ def test_collector_paginates_before_publishing_one_immutable_package(
     assert transport.calls == ["1", "2"]
     assert result.index_path is None
     assert validate_official_query_package(package, expected_scope=scope).total_results == 2
+
+
+def test_collector_fetches_a_nonempty_page_beyond_cninfo_totalpages(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    from ashare_multifactor.final_test.official_query_collector import (
+        collect_official_query_coverage,
+    )
+
+    inputs = _prepared_inputs(prepared_attempt)
+    transport = UnderreportedFinalPageTransport()
+    result = collect_official_query_coverage(
+        **inputs,
+        transport=transport,
+        max_scopes=1,
+    )
+
+    package = result.root / "packages/corporate_actions/sh/600000/query-package"
+    scope = next(
+        scope
+        for scope in _expected_scopes(inputs)
+        if (scope.category, scope.market, scope.symbol)
+        == ("corporate_actions", "sh", "600000")
+    )
+    verified = validate_official_query_package(package, expected_scope=scope)
+    assert transport.calls == ["1", "2"]
+    assert verified.total_pages == 1
+    assert verified.total_results == 31
 
 
 def test_collector_rejects_inconsistent_pagination_without_publishing_package(

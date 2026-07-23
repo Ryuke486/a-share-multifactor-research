@@ -260,11 +260,15 @@ def _package_files(
         policy=policy,
     )
     total_pages, total_results, first_count, first_ids = _response_summary(first)
-    if total_pages > _MAX_PAGES_PER_SCOPE:
+    page_count = max(
+        1,
+        total_pages,
+        (total_results + page_size - 1) // page_size,
+    )
+    if page_count > _MAX_PAGES_PER_SCOPE:
         raise ValueError("official query page count exceeds the frozen collector bound")
     if total_results > 0 and total_pages == 0:
         raise ValueError("official query response declares results without pages")
-    page_count = max(1, total_pages)
     page_payloads = [first]
     records = [
         _page_record(
