@@ -579,6 +579,6 @@ Do not mark Stage9 complete. Request a new, explicit user authorization for the 
 ## CNInfo 分页与运行巡检修订（2026-07-23）
 
 - CNInfo真实响应可能令`totalpages=floor(totalAnnouncement/pageSize)`；即使声明页全部为满页，下一页仍可能存在剩余公告。采集器必须请求`max(1, totalpages, ceil(totalAnnouncement/pageSize))`页，并继续执行稳定总数、公告ID唯一性和最终条数核销。
-- 采集任务启动后必须绑定5分钟巡检。巡检不依赖采集器主动输出：直接核对进程、日志、身份包、查询包、最新证据文件时间及完整索引；10分钟无进度视为需诊断。
+- 采集任务启动后必须绑定1分钟巡检。巡检不依赖采集器主动输出：直接核对进程、日志、身份包、查询包、最新证据文件时间及完整索引；连续两次无新增视为需诊断。
 - 只有代码、seal、attempt和授权身份未改变时，网络或进程中断才允许同一attempt可恢复续跑。需要修改采集代码的故障仍必须归档、重新双跑Stage7/8、发布关闭seal并取得新授权。
 - 巡检可在查询完整后进入`collect-documents`，但不得自动执行`resume`、回测或最终发布。
