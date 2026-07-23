@@ -588,4 +588,5 @@ Do not mark Stage9 complete. Request a new, explicit user authorization for the 
 - CNInfo历史公告目录在一个范围的多页请求期间仍可能短暂改变`totalpages`或`totalAnnouncement`。采集器不得把不同总数的页面拼成同一个包，也不得覆盖任何已经发布的不可变包。
 - 当且仅当跨页总数发生漂移时，当前整轮内存页全部作废，并按既有`RetryPolicy.attempts`从第1页有界重启。每次成功公开请求后的固定最小间隔仍生效；不新增无限重试或后台自动重启。
 - 只有一整轮的总数稳定、公告ID无重复且逐页条数之和精确等于声明总数时，才允许原子发布查询包。持续漂移、重复ID、条数不符、超页数或身份/哈希异常均继续失败关闭。
-- 该修订只加强官方证据快照一致性，不改变研究样本、因子、组合、成本、评价指标或最终测试规则。因代码身份变化，仍需归档失败attempt、全量验证、Stage7/8双跑、新关闭seal与新的独立开启授权。
+- 该修订只加强官方证据快照一致性，不改变研究样本、因子、组合、成本、评价指标或最终测试规则。失败attempt及部分证据已不可复用归档；全仓1,186项测试、Ruff和差异检查通过。
+- Stage7/8双跑与重封已完成：Stage7为`d08ec2b_stage7_validation_snapshot_retry_successor`，Stage8为`62a2cb7_stage8_robustness_snapshot_retry_successor`，新关闭seal为`f00605a11600d73b9fc07fdce5f392d44b701f120ea368efe94e607b261aa9f9`。新attempt、opening ledger和最终测试结果均不存在，重新采集前仍需用户对该精确seal作独立授权。

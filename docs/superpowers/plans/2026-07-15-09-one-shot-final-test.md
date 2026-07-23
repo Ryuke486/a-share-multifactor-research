@@ -217,4 +217,12 @@
 - 新增公开采集接口反例验证：首轮漂移时不会发布或混入旧页，第二轮稳定后只发布稳定快照；若两轮持续漂移，则请求序列有界结束且不生成查询包。修复提交为`33f4d70`；相关65项、全仓1,186项测试、Ruff和差异检查通过。
 - 经用户批准，该attempt已记录为非权威失败并归档。`processed/final_test_incidents/stage9-final-20260723-c1e249c/incident_manifest.json` SHA-256为`5d896496f4248bf6ba3fcdbae24bddbf5b040035f263af7a5c8194e241fe690e`。
 - 身份和部分查询证据已不可覆盖归档至`processed/final_test_evidence_incidents/stage9-final-20260723-c1e249c/`：共16,142个文件、5,351个身份包、5个查询包；`incomplete_query_incident_manifest.json` SHA-256为`b18c96d48f413e298012929cbc5fe08ace8323e9889cd2bdc674ae64cc3a5302`，`coverage_index_present: false`。两份归档重入复验通过，活动`processed/final_test`和该attempt证据根均已不存在。
-- 此修复改变封印代码身份。下一步必须重新双跑Stage7/8并发布新的关闭seal；取得用户对新seal的独立授权前，不得创建新attempt或重新采集。
+- 整轮快照重试修复提交为`33f4d70`，事故披露提交为`d08ec2b`；全仓1,186项测试、Ruff和差异检查通过。
+
+## CNInfo 分页快照漂移修复重封（2026-07-23）
+
+- 新Stage7双run的98个核心文件完全一致且`release_eligible=true`。新验证release为`d08ec2b_stage7_validation_snapshot_retry_successor`，manifest SHA-256为`26e19e776c75d2da185bd78b018222095d7b375ee66d89dead1a87789c387c61`。
+- 验证期公司行动审计已按新Stage7身份重建：2,718只证券、13,590个查询范围完整，10,522条候选与发布事件差异为0，10组官方样本无缺口；审计manifest SHA-256为`902eafdbb6e6681157ad2e8e772d2b605152b2273fc0e875eea9142463e98e8d`。
+- Stage8上游绑定提交为`62a2cb7`。新Stage8双run的3个核心文件完全一致且`release_eligible=true`；新release为`62a2cb7_stage8_robustness_snapshot_retry_successor`，manifest SHA-256为`a402e241437aa22da15058f38dbeb7af4ebbe845b8dd3614d472d33a1b8d4ae0`，lineage SHA-256为`1b811498dfb833413263e478b5720b0204b1fa9bcaa575f718eeee2bb27f37b3`。
+- 新seal为`f00605a11600d73b9fc07fdce5f392d44b701f120ea368efe94e607b261aa9f9`，protocol v2、`opening_token_status=closed`、市场范围仅`sh`/`sz`；前任Stage8 manifest和lineage哈希保持不变。
+- 发布后复核确认`processed/final_test`不存在，新seal对应opening ledger不存在，也没有新attempt、token或最终测试结果。板块9仍未完成，不能开启板块10；下一步必须由用户对上述精确seal作新的独立开启确认，之后才可执行`prepare`。
