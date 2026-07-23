@@ -188,4 +188,12 @@
 - 经用户批准，采集器现先对每只冻结证券获取并验证唯一 CNInfo `orgId`，再固定为`stock=代码,orgId`；文档下载也补齐公开传输的固定间隔、有界重试和按未缓存 URL 断点续取。该修订不改变任何研究规则或结果口径。
 - 该 attempt 已被写为非权威失败，20个 attempt 文件归档至`processed/final_test_incidents/stage9-final-20260722-641b086/`，`incident_manifest.json` SHA-256为`87013e9a99a36ed40b0be41710c5cb95d108cba2dfea6e9673f55effd6a06b68`。
 - 全部无效覆盖证据已归档至`processed/final_test_evidence_incidents/stage9-final-20260722-641b086/`：42,813个文件、10,702个查询包，`invalid_complete_query_incident_manifest.json` SHA-256为`1645adc1ae6333a3857ff442c6dcde0f4d49b87e5568f5e99575a0fa02f76341`，并固定`reuse_permitted: false`。归档重入复验通过，活动`processed/final_test`与活动证据根均已不存在。
-- 修订后全仓验证为1,184项测试通过，Ruff和差异检查通过。该代码身份尚未重封；下一步必须重新双跑Stage7/8并发布新的关闭seal，之后才能以新密钥请求独立开启授权。
+- 修订后全仓验证为1,184项测试通过，Ruff和差异检查通过。随后已完成Stage7/8重新双跑与关闭seal发布，结果见下节。
+
+## CNInfo orgId 修复重封（2026-07-23）
+
+- 修复提交为`4869663`；新Stage7双run的98个核心文件完全一致且`release_eligible=true`。新验证release为`4869663_stage7_validation_orgid_successor`，manifest SHA-256为`8b5f92b96068b583deb4ed5bb8075dc4ba4a151118713b4ac348e9e38c4a6037`。
+- 验证期公司行动审计已按新Stage7身份重建：2,718只证券、13,590个查询范围完整，10,522条候选与发布事件差异为0，10组官方样本无缺口；审计manifest SHA-256为`ebba76bffbb792186628e69e1805964c0750222aab6c3463bbe129ebe5ed5e71`。
+- Stage8上游绑定提交为`857fea4`。新Stage8双run的3个核心文件完全一致、`release_eligible=true`；新release为`857fea4_stage8_robustness_orgid_successor`，manifest SHA-256为`e3c3caf696004248460116e47ef3c0b849331551f3f6bd6eefc774dd4ba0ffd8`，lineage SHA-256为`00316da13e2b8a0e2fd7defddd722e8c5c5ad1ae94fa54db2c52818de6f3738a`。
+- 新seal为`c2dbb906574ce43375e9869516e0839c669257c2f70a2385c7526f3eda475412`，protocol v2、`opening_token_status=closed`、市场范围仅`sh`/`sz`，并绑定CNInfo身份查询和文档传输修订后的代码身份。前任Stage8 manifest、lineage和seal文件哈希均保持不变。
+- 发布后复核确认`processed/final_test`不存在，新seal对应opening ledger不存在，也没有新attempt、token或最终测试结果。板块9仍未完成，不能开启板块10；下一步必须由用户对上述精确seal作新的独立开启确认，之后才可执行`prepare`。
