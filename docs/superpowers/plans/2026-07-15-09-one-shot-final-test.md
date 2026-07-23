@@ -209,3 +209,12 @@
 - Stage8上游绑定提交为`c1e249c`。新Stage8双run的3个核心文件完全一致且`release_eligible=true`；新release为`c1e249c_stage8_robustness_pagination_successor`，manifest SHA-256为`8bdfb0ae565f2c44c9c9baacf4ae46cd4199f0d8d85749904d988ec716c61344`，lineage SHA-256为`2f600d854a7e1f57f9804a1a9fba1eb1403bed9e5ed684f0fc586150f71b7f89`，新seal为`cf65c485bbd1423912d9900c34c718e7839382a356ebc3cd5ef8fd652bf8bbda`。
 - 新seal为protocol v2、`opening_token_status=closed`、市场范围仅`sh`/`sz`。发布后复核确认`processed/final_test`不存在，新seal对应opening ledger不存在，也没有新attempt、token或最终测试结果。
 - 下一次采集将绑定1分钟心跳巡检：读取进程、日志、身份/查询包数量、最新证据时间和完整索引。连续两次无新增即诊断；只有不改变代码、seal和attempt的网络/进程中断允许安全续跑。任何代码缺陷必须立即告警并重新归档、重封、授权；巡检绝不执行`resume`。
+
+## CNInfo 分页快照漂移事故与有界整轮重试（2026-07-23）
+
+- 用户授权后，`stage9-final-20260723-c1e249c`在seal `cf65c485bbd1423912d9900c34c718e7839382a356ebc3cd5ef8fd652bf8bbda`上完成`prepare`并启动受监控采集。采集器完成全部5,351个CNInfo身份包和5个完整查询包后，下一范围的不同页面返回了不一致的`totalpages`/`totalAnnouncement`，因此在完整coverage index发布前失败关闭；未执行`resume`，没有信号、回测、指标、报告、`CURRENT.json`或权威release。
+- 根因是采集器把跨页总数漂移作为永久失败处理，没有在公开目录短暂变化时丢弃整轮内存页并重新建立一致快照。修复仅对该精确漂移执行现有次数约束下的整轮重试；已发布包仍不可覆盖，重复公告、最终条数不符、持续漂移及其他证据门禁继续失败关闭。
+- 新增公开采集接口反例验证：首轮漂移时不会发布或混入旧页，第二轮稳定后只发布稳定快照；若两轮持续漂移，则请求序列有界结束且不生成查询包。修复提交为`33f4d70`；相关65项、全仓1,186项测试、Ruff和差异检查通过。
+- 经用户批准，该attempt已记录为非权威失败并归档。`processed/final_test_incidents/stage9-final-20260723-c1e249c/incident_manifest.json` SHA-256为`5d896496f4248bf6ba3fcdbae24bddbf5b040035f263af7a5c8194e241fe690e`。
+- 身份和部分查询证据已不可覆盖归档至`processed/final_test_evidence_incidents/stage9-final-20260723-c1e249c/`：共16,142个文件、5,351个身份包、5个查询包；`incomplete_query_incident_manifest.json` SHA-256为`b18c96d48f413e298012929cbc5fe08ace8323e9889cd2bdc674ae64cc3a5302`，`coverage_index_present: false`。两份归档重入复验通过，活动`processed/final_test`和该attempt证据根均已不存在。
+- 此修复改变封印代码身份。下一步必须重新双跑Stage7/8并发布新的关闭seal；取得用户对新seal的独立授权前，不得创建新attempt或重新采集。
