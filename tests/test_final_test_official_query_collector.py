@@ -93,6 +93,43 @@ class TwoPageTransport:
         ).encode()
 
 
+class DriftingThenStableTransport:
+    """The first pagination snapshot drifts; the second is stable."""
+
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def fetch(
+        self,
+        endpoint: str,
+        form: dict[str, str],
+        *,
+        timeout_seconds: float,
+    ) -> bytes:
+        del timeout_seconds
+        if endpoint.endswith("/information/topSearch/query"):
+            symbol = form["keyWord"]
+            return json.dumps(
+                [{"code": symbol, "orgId": f"fixture-{symbol}"}],
+                separators=(",", ":"),
+            ).encode()
+        page = form["pageNum"]
+        self.calls.append(page)
+        first_snapshot = len(self.calls) <= 2
+        total = 3 if first_snapshot and page == "2" else 2
+        snapshot = "stale" if first_snapshot else "stable"
+        return json.dumps(
+            {
+                "totalpages": total,
+                "totalAnnouncement": 2,
+                "announcements": [
+                    {"announcementId": f"{snapshot}-announcement-{page}"}
+                ],
+            },
+            separators=(",", ":"),
+        ).encode()
+
+
 class UnderreportedFinalPageTransport:
     """CNInfo can report floor(total/page_size) while a final page still exists."""
 
@@ -340,10 +377,18 @@ def test_collector_rejects_inconsistent_pagination_without_publishing_package(
     )
 
     inputs = _prepared_inputs(prepared_attempt)
+    transport = TwoPageTransport(inconsistent_second_page=True)
     with pytest.raises(ValueError, match="totals"):
         collect_official_query_coverage(
-            **inputs,
-            transport=TwoPageTransport(inconsistent_second_page=True),
+            **{
+                **inputs,
+                "policy": RetryPolicy(
+                    attempts=2,
+                    timeout_seconds=0.1,
+                    minimum_interval_seconds=0,
+                ),
+            },
+            transport=transport,
             max_scopes=1,
         )
 
@@ -351,7 +396,45 @@ def test_collector_rejects_inconsistent_pagination_without_publishing_package(
         Path(inputs["output_root"])
         / "official_query_coverage/packages/corporate_actions/sh/600000/query-package"
     )
+    assert transport.calls == ["1", "2", "1", "2"]
     assert not package.exists()
+
+
+def test_collector_restarts_a_scope_after_transient_pagination_drift(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    from ashare_multifactor.final_test.official_query_collector import (
+        collect_official_query_coverage,
+    )
+
+    inputs = _prepared_inputs(prepared_attempt)
+    transport = DriftingThenStableTransport()
+    result = collect_official_query_coverage(
+        **{
+            **inputs,
+            "policy": RetryPolicy(
+                attempts=2,
+                timeout_seconds=0.1,
+                minimum_interval_seconds=0,
+            ),
+        },
+        transport=transport,
+        max_scopes=1,
+    )
+
+    package = result.root / "packages/corporate_actions/sh/600000/query-package"
+    scope = next(
+        scope
+        for scope in _expected_scopes(inputs)
+        if (scope.category, scope.market, scope.symbol)
+        == ("corporate_actions", "sh", "600000")
+    )
+    assert transport.calls == ["1", "2", "1", "2"]
+    assert validate_official_query_package(package, expected_scope=scope).total_results == 2
+    first_page = json.loads((package / "pages/page-0001.json").read_bytes())
+    assert first_page["announcements"] == [
+        {"announcementId": "stable-announcement-1"}
+    ]
 
 
 def test_collector_resumes_a_completed_staging_package_without_network(

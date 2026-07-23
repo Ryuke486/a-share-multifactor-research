@@ -47,6 +47,10 @@ _PAGE_SIZE = 30
 _MAX_PAGES_PER_SCOPE = 1_000
 
 
+class _PaginationDrift(ValueError):
+    """One in-memory query snapshot changed while its pages were fetched."""
+
+
 @dataclass(frozen=True)
 class CollectionProgress:
     """The completed part of an exact, immutable query scope set."""
@@ -251,6 +255,27 @@ def _package_files(
     policy: RetryPolicy,
     created_at: str,
 ) -> dict[str, bytes]:
+    for attempt in range(policy.attempts):
+        try:
+            return _stable_package_files(
+                request,
+                transport=transport,
+                policy=policy,
+                created_at=created_at,
+            )
+        except _PaginationDrift:
+            if attempt + 1 == policy.attempts:
+                raise
+    raise RuntimeError("official query snapshot retry loop terminated unexpectedly")
+
+
+def _stable_package_files(
+    request: dict[str, object],
+    *,
+    transport: OfficialQueryTransport,
+    policy: RetryPolicy,
+    created_at: str,
+) -> dict[str, bytes]:
     page_size = int(request["page_size"])
     first = _fetch_page(
         request,
@@ -291,7 +316,7 @@ def _package_files(
         )
         observed_pages, observed_results, result_count, identifiers = _response_summary(payload)
         if (observed_pages, observed_results) != (total_pages, total_results):
-            raise ValueError("official query response totals differ between pages")
+            raise _PaginationDrift("official query response totals differ between pages")
         if seen_ids.intersection(identifiers):
             raise ValueError("official query pagination repeats an announcement")
         seen_ids.update(identifiers)
