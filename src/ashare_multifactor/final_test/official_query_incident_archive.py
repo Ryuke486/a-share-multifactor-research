@@ -56,6 +56,7 @@ _LOCK = ".official-query-collection.lock"
 _MANIFEST = "incomplete_query_incident_manifest.json"
 _MANIFEST_TEMP = re.compile(r"\.incomplete-query-incident\.[0-9a-f]{32}\.tmp")
 _SYMBOL = re.compile(r"[0-9]{6}")
+_PERIOD = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _SCHEMA_VERSION = "1"
 _STATUS = "archived_incomplete_official_query_collection"
 _ROLE = "archived_incomplete_official_query_evidence"
@@ -304,8 +305,7 @@ def _validate_collection_manifest(
         manifest = _read_canonical_json(payload)
     except ValueError as error:
         raise ValueError("official-query collection manifest is invalid") from error
-    expected = {
-        "schema_version": "1",
+    common = {
         "role": "official_query_collection",
         "attempt_id": authorization.attempt_id,
         "approval_id": authorization.approval_id,
@@ -327,7 +327,17 @@ def _validate_collection_manifest(
         ],
         "coverage_relative_path": COVERAGE_DIRECTORY,
     }
-    if manifest != expected:
+    legacy = {"schema_version": "1", **common}
+    shared = {
+        "schema_version": "2",
+        **common,
+        "coverage_mode": "shared_per_security",
+        "shared_query": {
+            "category": "announcements",
+            "query_category": "",
+        },
+    }
+    if manifest not in (legacy, shared):
         raise ValueError("official-query collection identity differs from failed attempt")
 
 
@@ -353,7 +363,7 @@ def _query_package_count(files: list[dict[str, object]]) -> int:
 
 def _is_query_package_manifest(path: str) -> bool:
     parts = path.split("/")
-    return (
+    legacy = (
         len(parts) == 9
         and parts[2:4] == [COVERAGE_DIRECTORY, "packages"]
         and parts[4] in {"corporate_actions", "security_events"}
@@ -361,6 +371,16 @@ def _is_query_package_manifest(path: str) -> bool:
         and _SYMBOL.fullmatch(parts[6]) is not None
         and parts[7:] == ["query-package", "query_manifest.json"]
     )
+    shared = (
+        len(parts) == 10
+        and parts[2:4] == [COVERAGE_DIRECTORY, "packages"]
+        and parts[4] == "announcements"
+        and parts[5] in {"sh", "sz"}
+        and _SYMBOL.fullmatch(parts[6]) is not None
+        and _PERIOD.fullmatch(parts[7]) is not None
+        and parts[8:] == ["query-package", "query_manifest.json"]
+    )
+    return legacy or shared
 
 
 def _assert_source_entries(source_fd: int) -> None:
@@ -369,6 +389,7 @@ def _assert_source_entries(source_fd: int) -> None:
         COLLECTION_MANIFEST,
         COVERAGE_DIRECTORY,
         IDENTITIES_DIRECTORY,
+        "collection_heartbeat.json",
         _MANIFEST,
     }
     unexpected = sorted(set(os.listdir(source_fd)) - expected)

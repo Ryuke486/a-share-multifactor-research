@@ -138,7 +138,10 @@ def test_collector_binds_each_query_to_one_cninfo_org_id(
     request = json.loads(
         (
             result.root
-            / "packages/corporate_actions/sh/600000/query-package/request.json"
+            / (
+                "packages/announcements/sh/600000/"
+                "2022-01-01_2025-12-31/query-package/request.json"
+            )
         ).read_text(encoding="utf-8")
     )
     assert request["scope"]["org_id"] == "gssh0600000"

@@ -14,6 +14,9 @@ from ashare_multifactor.final_test.action_source_contract import (
 )
 from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test.official_collection_progress import (
+    OfficialCollectionProgressObserver,
+)
 from ashare_multifactor.final_test.official_query_client import (
     OfficialQueryTransport,
     RetryPolicy,
@@ -69,6 +72,7 @@ def collect_official_query_coverage(
     policy: RetryPolicy,
     identity_transport: OfficialQueryTransport | None = None,
     max_scopes: int | None = None,
+    progress_observer: OfficialCollectionProgressObserver | None = None,
 ) -> QueryCollectionResult:
     """Collect exact public query coverage without changing attempt state."""
     if max_scopes is not None and (
@@ -118,6 +122,7 @@ def collect_official_query_coverage(
                         transport if identity_transport is None else identity_transport
                     ),
                     policy=policy,
+                    progress_observer=progress_observer,
                 )
                 scopes = expected_scopes(verified, contract, identities=identities)
                 assert_directory_identities(
@@ -133,6 +138,7 @@ def collect_official_query_coverage(
                     policy=policy,
                     max_scopes=max_scopes,
                     created_at=authorization.registered_at,
+                    progress_observer=progress_observer,
                 )
                 assert_directory_identities(
                     root_binding,
@@ -184,7 +190,7 @@ def expected_scopes(
     *,
     identities: VerifiedCNInfoSecurityIdentityIndex,
 ) -> tuple[OfficialQueryScope, ...]:
-    """Derive the immutable two-category scope set from a verified preparation."""
+    """Derive one immutable shared announcement scope per prepared security."""
     if tuple(category for category, _query in contract.official_query_categories) != _CATEGORIES:
         raise ValueError("official query categories differ from the frozen contract")
     symbols = load_bound_symbol_scope(preparation)
@@ -196,10 +202,9 @@ def expected_scopes(
                 official_query_scope(
                     contract,
                     symbol=symbol,
-                    category=category,
+                    category=_CATEGORIES[0],
                     org_id=identities.org_id_for(symbol, market_for_symbol(symbol)),
                 )
-                for category in _CATEGORIES
                 for symbol in symbols
             ),
             key=_scope_key,

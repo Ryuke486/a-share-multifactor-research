@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -18,9 +19,10 @@ from ashare_multifactor.final_test.official_query_coverage import (
 )
 
 
-_SCHEMA_VERSION = "1"
+_LEGACY_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
 _INDEX_FIELDS = frozenset({"schema_version", "role", "packages"})
-_PACKAGE_FIELDS = frozenset(
+_LEGACY_PACKAGE_FIELDS = frozenset(
     {
         "symbol",
         "market",
@@ -35,6 +37,7 @@ _PACKAGE_FIELDS = frozenset(
         "total_results",
     }
 )
+_PACKAGE_FIELDS = _LEGACY_PACKAGE_FIELDS | frozenset({"start", "end"})
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -44,6 +47,16 @@ class VerifiedOfficialQueryCoverageIndex:
 
     index_sha256: str
     packages: tuple[VerifiedOfficialQueryPackage, ...]
+
+
+def official_query_coverage_schema_version(path: Path) -> str:
+    """Return a canonical index version for controlled legacy migration."""
+    index_path = _safe_index_path(path)
+    payload = _decode_index(_read_canonical_index(index_path))
+    version = payload.get("schema_version")
+    if version not in {_LEGACY_SCHEMA_VERSION, _SCHEMA_VERSION}:
+        raise ValueError("official query coverage index schema is invalid")
+    return str(version)
 
 
 def validate_official_query_coverage_index(
@@ -56,16 +69,17 @@ def validate_official_query_coverage_index(
     raw = _read_canonical_index(index_path)
     payload = _decode_index(raw)
     scopes = _normalize_expected_scopes(expected_scopes)
-    records = _validate_index_schema(payload, expected_count=len(scopes))
+    records = _validate_index_schema(payload)
     root = index_path.parent
-    verified = tuple(
-        _validate_record(
-            root,
-            record,
-            scope,
+    if payload["schema_version"] == _LEGACY_SCHEMA_VERSION:
+        if len(records) != len(scopes):
+            raise ValueError("official query coverage package scope is not exact")
+        verified = tuple(
+            _validate_legacy_record(root, record, scope)
+            for record, scope in zip(records, scopes, strict=True)
         )
-        for record, scope in zip(records, scopes, strict=True)
-    )
+    else:
+        verified = _validate_partitioned_records(root, records, scopes)
     return VerifiedOfficialQueryCoverageIndex(
         index_sha256=hashlib.sha256(raw).hexdigest(),
         packages=verified,
@@ -81,14 +95,23 @@ def copy_validated_official_query_coverage(
     """Copy one complete coverage index and its exact validated packages."""
     source = _safe_index_path(source_index)
     scopes = _normalize_expected_scopes(expected_scopes)
-    validate_official_query_coverage_index(source, expected_scopes=scopes)
+    schema_version = official_query_coverage_schema_version(source)
+    verified = validate_official_query_coverage_index(
+        source,
+        expected_scopes=scopes,
+    )
     destination_root.mkdir(parents=True, exist_ok=True)
     destination_index = destination_root / source.name
     if destination_index.exists() or destination_index.is_symlink():
         raise FileExistsError("official query coverage destination index already exists")
     shutil.copy2(source, destination_index)
-    for scope in scopes:
-        relative = PurePosixPath(canonical_package_path(scope))
+    for package in verified.packages:
+        scope = package.scope
+        relative = PurePosixPath(
+            _legacy_package_path(scope)
+            if schema_version == _LEGACY_SCHEMA_VERSION
+            else canonical_package_path(scope)
+        )
         source_package = source.parent / relative
         destination_package = destination_root / relative
         if destination_package.exists() or destination_package.is_symlink():
@@ -160,25 +183,30 @@ def _normalize_expected_scopes(
 
 def _validate_index_schema(
     payload: dict[str, Any],
-    *,
-    expected_count: int,
 ) -> tuple[dict[str, object], ...]:
     if (
         set(payload) != _INDEX_FIELDS
-        or payload.get("schema_version") != _SCHEMA_VERSION
+        or payload.get("schema_version")
+        not in {_LEGACY_SCHEMA_VERSION, _SCHEMA_VERSION}
         or payload.get("role") != "official_query_coverage"
         or not isinstance(payload.get("packages"), list)
     ):
         raise ValueError("official query coverage index schema is invalid")
-    if len(payload["packages"]) != expected_count:
-        raise ValueError("official query coverage package scope is not exact")
     records = tuple(payload["packages"])
-    if any(not isinstance(record, dict) or set(record) != _PACKAGE_FIELDS for record in records):
+    fields = (
+        _LEGACY_PACKAGE_FIELDS
+        if payload["schema_version"] == _LEGACY_SCHEMA_VERSION
+        else _PACKAGE_FIELDS
+    )
+    if not records or any(
+        not isinstance(record, dict) or set(record) != fields
+        for record in records
+    ):
         raise ValueError("official query coverage package record is invalid")
     return records
 
 
-def _validate_record(
+def _validate_legacy_record(
     root: Path,
     record: dict[str, object],
     scope: OfficialQueryScope,
@@ -186,7 +214,7 @@ def _validate_record(
     if _record_scope_key(record) != _scope_key(scope):
         raise ValueError("official query coverage package scope is incomplete or differs")
     relative_path = record.get("relative_path")
-    expected_path = canonical_package_path(scope)
+    expected_path = _legacy_package_path(scope)
     if relative_path != expected_path:
         raise ValueError("official query coverage package path is not canonical")
     package = validate_official_query_package(
@@ -202,6 +230,121 @@ def _validate_record(
     if any(
         record.get(field) != value
         for field, value in (
+            ("request_sha256", package.request_sha256),
+            ("pages_sha256", package.pages_sha256),
+            ("manifest_sha256", package.manifest_sha256),
+            ("total_pages", package.total_pages),
+            ("total_results", package.total_results),
+        )
+    ):
+        raise ValueError("official query coverage package identity differs from index")
+    if any(
+        not isinstance(record.get(field), str)
+        or _SHA256.fullmatch(str(record[field])) is None
+        for field in ("request_sha256", "pages_sha256", "manifest_sha256")
+    ):
+        raise ValueError("official query coverage package hash is invalid")
+    return package
+
+
+def _validate_partitioned_records(
+    root: Path,
+    records: tuple[dict[str, object], ...],
+    scopes: tuple[OfficialQueryScope, ...],
+) -> tuple[VerifiedOfficialQueryPackage, ...]:
+    expected = {_base_scope_key(scope): scope for scope in scopes}
+    if len(expected) != len(scopes):
+        raise ValueError("official query coverage expected scopes are duplicated")
+    grouped: dict[
+        tuple[str, str, str, str],
+        list[VerifiedOfficialQueryPackage],
+    ] = {key: [] for key in expected}
+    verified: list[VerifiedOfficialQueryPackage] = []
+    previous_key: tuple[str, str, str, str, date, date] | None = None
+    for record in records:
+        leaf = _record_scope(record)
+        base_key = _base_scope_key(leaf)
+        full = expected.get(base_key)
+        if full is None or leaf.start < full.start or leaf.end > full.end:
+            raise ValueError(
+                "official query coverage package scope is incomplete or differs"
+            )
+        if full.org_id is not None and leaf.org_id != full.org_id:
+            raise ValueError("official query coverage package orgId differs from scope")
+        record_key = (*base_key, leaf.start, leaf.end)
+        if previous_key is not None and record_key <= previous_key:
+            raise ValueError("official query coverage packages are not uniquely ordered")
+        previous_key = record_key
+        package = _validate_record_for_scope(root, record, leaf)
+        grouped[base_key].append(package)
+        verified.append(package)
+    for key, full in expected.items():
+        packages = grouped[key]
+        if not packages:
+            raise ValueError("official query coverage package scope is not exact")
+        cursor = full.start
+        announcement_ids: set[str] = set()
+        for package in packages:
+            if package.scope.start != cursor:
+                raise ValueError(
+                    "official query coverage time partition has a gap or overlap"
+                )
+            if announcement_ids.intersection(package.announcement_ids):
+                raise ValueError(
+                    "official query coverage has a duplicate announcement across slices"
+                )
+            announcement_ids.update(package.announcement_ids)
+            cursor = package.scope.end + timedelta(days=1)
+        if cursor != full.end + timedelta(days=1):
+            raise ValueError("official query coverage time partition is incomplete")
+    return tuple(verified)
+
+
+def _record_scope(record: dict[str, object]) -> OfficialQueryScope:
+    values = (
+        record.get("symbol"),
+        record.get("market"),
+        record.get("category"),
+        record.get("query_category"),
+        record.get("org_id"),
+    )
+    if not all(isinstance(value, str) for value in values):
+        raise ValueError("official query coverage package scope is invalid")
+    try:
+        start = date.fromisoformat(str(record.get("start")))
+        end = date.fromisoformat(str(record.get("end")))
+    except ValueError as error:
+        raise ValueError("official query coverage package date is invalid") from error
+    if start > end:
+        raise ValueError("official query coverage package date is invalid")
+    symbol, market, category, query_category, org_id = values
+    return OfficialQueryScope(
+        symbol=symbol,
+        market=market,
+        category=category,
+        query_category=query_category,
+        start=start,
+        end=end,
+        org_id=org_id,
+    )
+
+
+def _validate_record_for_scope(
+    root: Path,
+    record: dict[str, object],
+    scope: OfficialQueryScope,
+) -> VerifiedOfficialQueryPackage:
+    expected_path = canonical_package_path(scope)
+    if record.get("relative_path") != expected_path:
+        raise ValueError("official query coverage package path is not canonical")
+    package = validate_official_query_package(
+        root / PurePosixPath(expected_path),
+        expected_scope=scope,
+    )
+    if any(
+        record.get(field) != value
+        for field, value in (
+            ("org_id", package.scope.org_id),
             ("request_sha256", package.request_sha256),
             ("pages_sha256", package.pages_sha256),
             ("manifest_sha256", package.manifest_sha256),
@@ -236,6 +379,18 @@ def _scope_key(scope: OfficialQueryScope) -> tuple[str, str, str, str]:
     return scope.category, scope.market, scope.symbol, scope.query_category
 
 
+def _base_scope_key(scope: OfficialQueryScope) -> tuple[str, str, str, str]:
+    return scope.category, scope.market, scope.symbol, scope.query_category
+
+
 def canonical_package_path(scope: OfficialQueryScope) -> str:
     """Return the only permitted relative package location for one scope."""
+    period = f"{scope.start.isoformat()}_{scope.end.isoformat()}"
+    return (
+        f"packages/{scope.category}/{scope.market}/{scope.symbol}/"
+        f"{period}/query-package"
+    )
+
+
+def _legacy_package_path(scope: OfficialQueryScope) -> str:
     return f"packages/{scope.category}/{scope.market}/{scope.symbol}/query-package"

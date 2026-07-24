@@ -10,6 +10,7 @@ from ashare_multifactor.audit.records import sha256_file, verify_file_record
 from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.action_source_contract import (
     OFFICIAL_MARKET_SOURCES,
+    SHARED_ANNOUNCEMENT_CATEGORY,
     evidence_url_matches_source,
 )
 from ashare_multifactor.final_test.gate import FINAL_TEST_END, FINAL_TEST_START
@@ -18,6 +19,7 @@ from ashare_multifactor.final_test.execution_contracts import (
 )
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.official_query_index import (
+    official_query_coverage_schema_version,
     validate_official_query_coverage_index,
 )
 
@@ -110,11 +112,19 @@ def validate_corporate_action_coverage(
         raise ValueError("official corporate-action coverage symbol scope changed")
     if coverage.select(pl.col("symbol").is_duplicated().any()).item():
         raise ValueError("official corporate-action query coverage has duplicates")
+    query_scope_category = (
+        "corporate_actions"
+        if official_query_coverage_schema_version(
+            paths["official_query_coverage"]
+        )
+        == "1"
+        else SHARED_ANNOUNCEMENT_CATEGORY
+    )
     official_query_scopes = tuple(
         OfficialQueryScope(
             symbol=symbol,
             market=market_for_symbol(symbol),
-            category="corporate_actions",
+            category=query_scope_category,
             query_category="",
             start=FINAL_TEST_START,
             end=FINAL_TEST_END,

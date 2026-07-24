@@ -73,7 +73,7 @@ class RetryPolicy:
 
     attempts: int = 3
     timeout_seconds: float = 20.0
-    minimum_interval_seconds: float = 1.0
+    minimum_interval_seconds: float = 0.75
 
     def __post_init__(self) -> None:
         if (

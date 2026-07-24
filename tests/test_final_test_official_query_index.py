@@ -10,6 +10,7 @@ from ashare_multifactor.final_test.official_query_coverage import (
     canonical_json_bytes,
     validate_official_query_package,
 )
+from ashare_multifactor.final_test.official_query_index import canonical_package_path
 from test_final_test_official_query_coverage import _write_package
 
 
@@ -60,6 +61,57 @@ def _write_index(root: Path, scopes: list[OfficialQueryScope]) -> Path:
         canonical_json_bytes(
             {
                 "schema_version": "1",
+                "role": "official_query_coverage",
+                "packages": records,
+            }
+        )
+    )
+    return index
+
+
+def _write_partitioned_index(
+    root: Path,
+    scopes: list[OfficialQueryScope],
+    *,
+    announcement_ids: list[str],
+) -> Path:
+    records = []
+    for scope, announcement_id in zip(scopes, announcement_ids, strict=True):
+        relative_path = canonical_package_path(scope)
+        package = _write_package(
+            root / Path(relative_path).parent,
+            scope=scope,
+            pages=[
+                {
+                    "totalpages": 1,
+                    "totalAnnouncement": 1,
+                    "announcements": [{"announcementId": announcement_id}],
+                }
+            ],
+        )
+        verified = validate_official_query_package(package, expected_scope=scope)
+        records.append(
+            {
+                "symbol": scope.symbol,
+                "market": scope.market,
+                "org_id": verified.scope.org_id,
+                "category": scope.category,
+                "query_category": scope.query_category,
+                "start": scope.start.isoformat(),
+                "end": scope.end.isoformat(),
+                "relative_path": relative_path,
+                "request_sha256": verified.request_sha256,
+                "pages_sha256": verified.pages_sha256,
+                "manifest_sha256": verified.manifest_sha256,
+                "total_pages": verified.total_pages,
+                "total_results": verified.total_results,
+            }
+        )
+    index = root / "official_query_coverage.json"
+    index.write_bytes(
+        canonical_json_bytes(
+            {
+                "schema_version": "2",
                 "role": "official_query_coverage",
                 "packages": records,
             }
@@ -132,3 +184,121 @@ def test_official_query_index_rejects_record_hash_drift(
 
     with pytest.raises(ValueError, match="identity|hash"):
         validate_official_query_coverage_index(index, expected_scopes=scopes)
+
+
+def test_copy_validated_legacy_query_coverage_preserves_legacy_paths(
+    tmp_path: Path,
+) -> None:
+    scopes = [_scope("000001", "corporate_actions")]
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    index = _write_index(source, scopes)
+
+    from ashare_multifactor.final_test.official_query_index import (
+        copy_validated_official_query_coverage,
+        validate_official_query_coverage_index,
+    )
+
+    copy_validated_official_query_coverage(
+        index,
+        expected_scopes=scopes,
+        destination_root=destination,
+    )
+
+    assert (
+        destination
+        / "packages/corporate_actions/sz/000001/query-package/query_manifest.json"
+    ).is_file()
+    assert validate_official_query_coverage_index(
+        destination / "official_query_coverage.json",
+        expected_scopes=scopes,
+    ).packages
+
+
+def test_partitioned_query_index_rejects_duplicate_announcement_ids(
+    tmp_path: Path,
+) -> None:
+    full = OfficialQueryScope(
+        symbol="000001",
+        market="sz",
+        category="announcements",
+        query_category="",
+        start=date(2022, 1, 1),
+        end=date(2025, 12, 31),
+    )
+    slices = [
+        OfficialQueryScope(
+            **{
+                **full.__dict__,
+                "start": date(2022, 1, 1),
+                "end": date(2023, 12, 31),
+            }
+        ),
+        OfficialQueryScope(
+            **{
+                **full.__dict__,
+                "start": date(2024, 1, 1),
+                "end": date(2025, 12, 31),
+            }
+        ),
+    ]
+    index = _write_partitioned_index(
+        tmp_path,
+        slices,
+        announcement_ids=["duplicate", "duplicate"],
+    )
+
+    from ashare_multifactor.final_test.official_query_index import (
+        validate_official_query_coverage_index,
+    )
+
+    with pytest.raises(ValueError, match="duplicate announcement"):
+        validate_official_query_coverage_index(index, expected_scopes=[full])
+
+
+@pytest.mark.parametrize(
+    ("first_end", "second_start"),
+    [
+        (date(2023, 12, 30), date(2024, 1, 1)),
+        (date(2023, 12, 31), date(2023, 12, 31)),
+    ],
+)
+def test_partitioned_query_index_rejects_time_gaps_and_overlaps(
+    tmp_path: Path,
+    first_end: date,
+    second_start: date,
+) -> None:
+    full = OfficialQueryScope(
+        symbol="000001",
+        market="sz",
+        category="announcements",
+        query_category="",
+        start=date(2022, 1, 1),
+        end=date(2025, 12, 31),
+    )
+    slices = [
+        OfficialQueryScope(
+            **{
+                **full.__dict__,
+                "end": first_end,
+            }
+        ),
+        OfficialQueryScope(
+            **{
+                **full.__dict__,
+                "start": second_start,
+            }
+        ),
+    ]
+    index = _write_partitioned_index(
+        tmp_path,
+        slices,
+        announcement_ids=["first", "second"],
+    )
+
+    from ashare_multifactor.final_test.official_query_index import (
+        validate_official_query_coverage_index,
+    )
+
+    with pytest.raises(ValueError, match="gap or overlap"):
+        validate_official_query_coverage_index(index, expected_scopes=[full])

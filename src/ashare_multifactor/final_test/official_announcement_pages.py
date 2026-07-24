@@ -32,15 +32,22 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
 def catalog_rows_from_packages(
     coverage_root: Path,
     *,
-    scopes: tuple[OfficialQueryScope, ...],
+    packages: tuple[VerifiedOfficialQueryPackage, ...],
     contract: FinalActionSourceContract,
 ) -> list[dict[str, object]]:
     """Read only package bytes whose scope and page identities were validated."""
     rows: list[dict[str, object]] = []
     sources = dict(contract.market_sources)
-    for scope in scopes:
+    for verified in packages:
+        scope = verified.scope
         package_root = coverage_root / PurePosixPath(canonical_package_path(scope))
         package = _verified_package_pages(package_root, scope)
+        if (
+            package["request_sha256"] != verified.request_sha256
+            or package["pages_sha256"] != verified.pages_sha256
+            or package["manifest_sha256"] != verified.manifest_sha256
+        ):
+            raise ValueError("official query package changed after index validation")
         source = sources[scope.market]
         for page in package["pages"]:
             rows.extend(
@@ -87,7 +94,7 @@ def _verified_package_pages(
             )
         finally:
             os.close(pages_fd)
-    if len(pages) != max(1, package.total_pages):
+    if len(pages) != package.page_count:
         raise ValueError("official query page cache count is invalid")
     if validate_official_query_package(package_root, expected_scope=scope) != package:
         raise ValueError("official query package changed while building catalog")

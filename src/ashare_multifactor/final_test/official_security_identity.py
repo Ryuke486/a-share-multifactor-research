@@ -17,6 +17,9 @@ from uuid import uuid4
 
 from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
+from ashare_multifactor.final_test.official_collection_progress import (
+    OfficialCollectionProgressObserver,
+)
 from ashare_multifactor.final_test.official_query_client import (
     OFFICIAL_SECURITY_IDENTITY_ENDPOINT,
     OfficialQueryTransientError,
@@ -73,6 +76,7 @@ def collect_cninfo_security_identities(
     transport: OfficialQueryTransport,
     policy: RetryPolicy,
     sleep: Callable[[float], None] = time.sleep,
+    progress_observer: OfficialCollectionProgressObserver | None = None,
 ) -> VerifiedCNInfoSecurityIdentityIndex:
     """Publish one immutable identity index before any announcement query runs."""
     normalized = _normalize_symbols(symbols)
@@ -88,7 +92,7 @@ def collect_cninfo_security_identities(
         )
 
     records = []
-    for symbol in normalized:
+    for completed, symbol in enumerate(normalized):
         market = market_for_symbol(symbol)
         identity, record = _collect_one_identity(
             identities_fd,
@@ -98,10 +102,19 @@ def collect_cninfo_security_identities(
             policy=policy,
             created_at=authorization.registered_at,
             sleep=sleep,
+            progress_observer=progress_observer,
+            completed=completed,
+            total=len(normalized),
         )
         if identity.symbol != symbol or identity.market != market:
             raise ValueError("CNInfo security identity differs from prepared scope")
         records.append(record)
+        if progress_observer is not None:
+            progress_observer.identity_completed(
+                symbol=symbol,
+                completed=completed + 1,
+                total=len(normalized),
+            )
     payload = _index_payload(
         records,
         preparation=preparation,
@@ -166,6 +179,9 @@ def _collect_one_identity(
     policy: RetryPolicy,
     created_at: str,
     sleep: Callable[[float], None],
+    progress_observer: OfficialCollectionProgressObserver | None,
+    completed: int,
+    total: int,
 ) -> tuple[CNInfoSecurityIdentity, dict[str, object]]:
     try:
         return load_identity_package(identities_fd, symbol=symbol, market=market)
@@ -175,6 +191,9 @@ def _collect_one_identity(
             symbol=symbol,
             policy=policy,
             sleep=sleep,
+            progress_observer=progress_observer,
+            completed=completed,
+            total=total,
         )
         return publish_identity_package(
             identities_fd,
@@ -191,10 +210,19 @@ def _fetch_identity_response(
     symbol: str,
     policy: RetryPolicy,
     sleep: Callable[[float], None],
+    progress_observer: OfficialCollectionProgressObserver | None,
+    completed: int,
+    total: int,
 ) -> bytes:
     form = identity_form(symbol)
     for attempt in range(policy.attempts):
         try:
+            if progress_observer is not None:
+                progress_observer.identity_request(
+                    symbol=symbol,
+                    completed=completed,
+                    total=total,
+                )
             payload = transport.fetch(
                 OFFICIAL_SECURITY_IDENTITY_ENDPOINT,
                 form,

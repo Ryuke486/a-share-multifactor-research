@@ -11,9 +11,15 @@ from typing import Protocol
 from urllib import error
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
+import polars as pl
+
 from ashare_multifactor.final_test.official_announcement_catalog import (
     VerifiedAnnouncementCatalog,
     load_verified_announcement_catalog,
+)
+from ashare_multifactor.final_test.official_announcement_routing import (
+    VerifiedAnnouncementRouting,
+    build_announcement_routing,
 )
 from ashare_multifactor.final_test.official_evidence_workspace import (
     CachedOfficialDocument,
@@ -131,7 +137,8 @@ def fetch_official_documents(
         raise TypeError("official document sleep function is invalid")
     catalog = load_verified_announcement_catalog(catalog_path)
     _assert_catalog_belongs_to_destination(catalog, destination)
-    urls = _catalog_urls(catalog)
+    routing = build_announcement_routing(catalog_path, destination=destination)
+    urls = _catalog_urls(catalog, routing)
     with open_workspace(destination) as (
         workspace_root,
         _workspace_fd,
@@ -160,6 +167,7 @@ def fetch_official_documents(
             workspace_root=workspace_root,
             sessions_fd=sessions_fd,
             catalog=catalog,
+            routing=routing,
             cached_documents=cached,
         )
 
@@ -209,8 +217,15 @@ def _fetch_document_with_retry(
     raise RuntimeError("official document retry loop terminated unexpectedly")
 
 
-def _catalog_urls(catalog: VerifiedAnnouncementCatalog) -> list[str]:
-    urls = catalog.frame.get_column("source_url").unique().sort().to_list()
+def _catalog_urls(
+    catalog: VerifiedAnnouncementCatalog,
+    routing: VerifiedAnnouncementRouting,
+) -> list[str]:
+    selected = (
+        catalog.frame.join(routing.frame, on="catalog_id", how="inner")
+        .filter(pl.col("route") != "excluded")
+    )
+    urls = selected.get_column("source_url").unique().sort().to_list()
     if any(not isinstance(url, str) or not url for url in urls):
         raise ValueError("official document catalog URL is invalid")
     return urls

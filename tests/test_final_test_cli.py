@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import signal
 
 import pytest
 
@@ -67,6 +68,57 @@ class ZeroResultTransport:
         return b'{"totalpages":0,"totalAnnouncement":0,"announcements":null}'
 
 
+class HeartbeatInspectingTransport(ZeroResultTransport):
+    def __init__(self, heartbeat_path: Path) -> None:
+        self.heartbeat_path = heartbeat_path
+        self.snapshots: list[dict[str, object] | None] = []
+
+    def fetch(
+        self,
+        endpoint: str,
+        form: dict[str, str],
+        *,
+        timeout_seconds: float,
+    ) -> bytes:
+        snapshot = (
+            json.loads(self.heartbeat_path.read_bytes())
+            if self.heartbeat_path.is_file()
+            else None
+        )
+        self.snapshots.append(snapshot)
+        return super().fetch(
+            endpoint,
+            form,
+            timeout_seconds=timeout_seconds,
+        )
+
+
+class TransientQueryInterruptionTransport(ZeroResultTransport):
+    def __init__(self) -> None:
+        self.query_attempts = 0
+
+    def fetch(
+        self,
+        endpoint: str,
+        form: dict[str, str],
+        *,
+        timeout_seconds: float,
+    ) -> bytes:
+        if not endpoint.endswith("/information/topSearch/query"):
+            from ashare_multifactor.final_test.official_query_client import (
+                OfficialQueryTransientError,
+            )
+
+            self.query_attempts += 1
+            if self.query_attempts <= 3:
+                raise OfficialQueryTransientError("injected connection reset")
+        return super().fetch(
+            endpoint,
+            form,
+            timeout_seconds=timeout_seconds,
+        )
+
+
 class FailIfCalled:
     def fetch(
         self,
@@ -119,6 +171,152 @@ def test_collect_queries_uses_registered_attempt_without_new_token_consumption(
         / "official_query_coverage/official_query_coverage.json"
     ).is_file()
     assert capsys.readouterr().out.strip().endswith("official_query_coverage.json")
+
+
+def test_collection_monitor_reads_collector_heartbeat_without_approval_key(
+    prepared_cli: PreparedCli,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ashare_multifactor.cli import final_test
+
+    monkeypatch.setattr(
+        final_test,
+        "UrllibOfficialQueryTransport",
+        lambda: ZeroResultTransport(),
+        raising=False,
+    )
+    final_test.main(["collect-queries", *prepared_cli.argv])
+    capsys.readouterr()
+
+    final_test.main(
+        [
+            "monitor-collection",
+            "--data-root",
+            str(prepared_cli.attempt.data_root),
+            "--attempt-id",
+            prepared_cli.attempt.attempt_id,
+            "--output-root",
+            str(prepared_cli.output_root),
+        ]
+    )
+
+    output = capsys.readouterr().out.strip()
+    assert output.startswith("green |")
+    assert "2/2" in output
+
+
+def test_collector_updates_heartbeat_during_identity_and_query_requests(
+    prepared_cli: PreparedCli,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.cli import final_test
+
+    heartbeat = prepared_cli.output_root / "collection_heartbeat.json"
+    transport = HeartbeatInspectingTransport(heartbeat)
+    monkeypatch.setattr(
+        final_test,
+        "UrllibOfficialQueryTransport",
+        lambda: transport,
+        raising=False,
+    )
+
+    final_test.main(["collect-queries", *prepared_cli.argv])
+
+    snapshots = [snapshot for snapshot in transport.snapshots if snapshot is not None]
+    assert snapshots
+    assert snapshots[0]["phase"] == "resolve_identities"
+    assert any(snapshot["phase"] == "collect_queries" for snapshot in snapshots)
+    assert all(
+        snapshot["identity"]["attempt_id"] == prepared_cli.attempt.attempt_id
+        for snapshot in snapshots
+    )
+
+
+def test_collect_queries_revalidates_identity_before_one_outer_network_recovery(
+    prepared_cli: PreparedCli,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.cli import final_test
+    from ashare_multifactor.final_test.official_query_client import RetryPolicy
+
+    transport = TransientQueryInterruptionTransport()
+    monkeypatch.setattr(
+        final_test,
+        "UrllibOfficialQueryTransport",
+        lambda: transport,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        final_test,
+        "RetryPolicy",
+        lambda: RetryPolicy(
+            attempts=3,
+            timeout_seconds=0.1,
+            minimum_interval_seconds=0,
+        ),
+    )
+
+    final_test.main(["collect-queries", *prepared_cli.argv])
+
+    assert transport.query_attempts == 5
+    assert (
+        prepared_cli.output_root
+        / "official_query_coverage/official_query_coverage.json"
+    ).is_file()
+
+
+def test_supervise_queries_restarts_signal_exit_and_records_old_and_new_pid(
+    prepared_cli: PreparedCli,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.cli import final_test
+
+    @dataclass
+    class Process:
+        pid: int
+        returncode: int
+
+        def wait(self) -> int:
+            return self.returncode
+
+    processes = iter(
+        [
+            Process(pid=401, returncode=-signal.SIGKILL),
+            Process(pid=402, returncode=0),
+        ]
+    )
+    commands: list[list[str]] = []
+
+    def start(command: list[str], *, cwd: Path) -> Process:
+        assert cwd == prepared_cli.attempt.code_root
+        commands.append(command)
+        return next(processes)
+
+    monkeypatch.setattr(final_test, "_start_collector_process", start)
+    attempts = prepared_cli.attempt.data_root / "processed/final_test/attempts"
+    before = _tree_bytes(attempts)
+    ledger_before = prepared_cli.attempt.consumption_ledger.read_bytes()
+
+    final_test.main(["supervise-queries", *prepared_cli.argv])
+
+    assert _tree_bytes(attempts) == before
+    assert prepared_cli.attempt.consumption_ledger.read_bytes() == ledger_before
+    assert len(commands) == 2
+    assert all("collect-queries" in command for command in commands)
+    assert all("resume" not in command and "prepare" not in command for command in commands)
+    log = json.loads(
+        (
+            prepared_cli.attempt.data_root
+            / "processed/final_test_runtime"
+            / prepared_cli.attempt.attempt_id
+            / "collection_process_recovery.json"
+        ).read_bytes()
+    )
+    assert log["status"] == "complete"
+    assert log["restart_count"] == 1
+    assert log["events"][2]["predecessor_pid"] == 401
+    assert log["events"][2]["pid"] == 402
 
 
 def test_collect_queries_rejects_foreign_output_before_network(

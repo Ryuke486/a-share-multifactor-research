@@ -199,13 +199,13 @@ def test_source_contract_freezes_scope_and_official_domains() -> None:
         contract,
         symbol="000001",
         category="corporate_actions",
-    ) == OfficialQueryScope(
-        symbol="000001",
-        market="sz",
-        category="corporate_actions",
-        query_category="",
-        start=date(2022, 1, 1),
-        end=date(2025, 12, 31),
+        ) == OfficialQueryScope(
+            symbol="000001",
+            market="sz",
+            category="announcements",
+            query_category="",
+            start=date(2022, 1, 1),
+            end=date(2025, 12, 31),
     )
     with pytest.raises(ValueError, match="query category"):
         official_query_scope(

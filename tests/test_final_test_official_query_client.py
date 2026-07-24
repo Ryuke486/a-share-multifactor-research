@@ -89,6 +89,12 @@ def test_client_waits_after_a_successful_public_request() -> None:
     assert pauses == [0.75]
 
 
+def test_production_query_policy_uses_the_rehearsed_rate_budget() -> None:
+    from ashare_multifactor.final_test.official_query_client import RetryPolicy
+
+    assert RetryPolicy().minimum_interval_seconds == 0.75
+
+
 def test_urllib_client_retries_remote_disconnect_as_transient(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

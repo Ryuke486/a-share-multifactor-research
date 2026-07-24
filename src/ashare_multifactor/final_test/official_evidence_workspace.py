@@ -22,6 +22,11 @@ from ashare_multifactor.audit.secure_tree import (
 from ashare_multifactor.final_test.official_announcement_catalog import (
     VerifiedAnnouncementCatalog,
 )
+from ashare_multifactor.final_test.official_announcement_routing import (
+    ROUTING_DIRECTORY,
+    ROUTING_NAME,
+    VerifiedAnnouncementRouting,
+)
 from ashare_multifactor.final_test.official_query_coverage import canonical_json_bytes
 from ashare_multifactor.final_test.recovery_secure_fs import open_directory_at
 
@@ -45,6 +50,9 @@ _QUEUE_COLUMNS = (
     "symbol",
     "market",
     "category",
+    "route",
+    "candidate_type",
+    "routing_reason",
     "source_response",
     "document_cache_path",
     "document_sha256",
@@ -61,6 +69,9 @@ _QUEUE_SCHEMA = {
     "symbol": pl.String,
     "market": pl.String,
     "category": pl.String,
+    "route": pl.String,
+    "candidate_type": pl.String,
+    "routing_reason": pl.String,
     "source_response": pl.String,
     "document_cache_path": pl.String,
     "document_sha256": pl.String,
@@ -76,6 +87,7 @@ class EvidenceWorkspace:
 
     root: Path
     catalog_path: Path
+    routing_path: Path
     review_queue_path: Path
     ready: bool
 
@@ -203,10 +215,11 @@ def publish_review_workspace(
     workspace_root: Path,
     sessions_fd: int,
     catalog: VerifiedAnnouncementCatalog,
+    routing: VerifiedAnnouncementRouting,
     cached_documents: Mapping[str, CachedOfficialDocument],
 ) -> EvidenceWorkspace:
     """Publish one immutable review snapshot and deliberately leave it unready."""
-    rows = _review_rows(catalog.frame, cached_documents)
+    rows = _review_rows(catalog.frame, routing.frame, cached_documents)
     queue = pl.DataFrame(rows, schema=_QUEUE_SCHEMA).sort("catalog_id")
     queue_bytes = _parquet_bytes(queue)
     document_records = [
@@ -222,6 +235,7 @@ def publish_review_workspace(
         canonical_json_bytes(
             {
                 "catalog_sha256": catalog.catalog_sha256,
+                "routing_sha256": routing.routing_sha256,
                 "documents": document_records,
             }
         )
@@ -232,6 +246,10 @@ def publish_review_workspace(
         "catalog": {
             "relative_path": _catalog_relative_path(catalog.path),
             "sha256": catalog.catalog_sha256,
+        },
+        "routing": {
+            "relative_path": f"{ROUTING_DIRECTORY}/{ROUTING_NAME}",
+            "sha256": routing.routing_sha256,
         },
         "documents": document_records,
         "review_queue": {
@@ -254,10 +272,11 @@ def publish_review_workspace(
         label="official evidence review session",
     )
     session_root = workspace_root / REVIEW_SESSIONS_DIRECTORY / session_id
-    _verify_review_session(session_root, catalog=catalog)
+    _verify_review_session(session_root, catalog=catalog, routing=routing)
     return EvidenceWorkspace(
         root=workspace_root,
         catalog_path=catalog.path,
+        routing_path=routing.path,
         review_queue_path=session_root / REVIEW_QUEUE_NAME,
         ready=False,
     )
@@ -309,10 +328,16 @@ def _validate_document_tree(
 
 def _review_rows(
     catalog: pl.DataFrame,
+    routing: pl.DataFrame,
     cached_documents: Mapping[str, CachedOfficialDocument],
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
-    for row in catalog.iter_rows(named=True):
+    selected = (
+        catalog.join(routing, on="catalog_id", how="inner")
+        .filter(pl.col("route") != "excluded")
+        .sort("catalog_id")
+    )
+    for row in selected.iter_rows(named=True):
         cached = cached_documents.get(row["source_url"])
         rows.append(
             {
@@ -324,6 +349,9 @@ def _review_rows(
                 "symbol": row["symbol"],
                 "market": row["market"],
                 "category": row["category"],
+                "route": row["route"],
+                "candidate_type": row["candidate_type"],
+                "routing_reason": row["reason"],
                 "source_response": row["source_response"],
                 "document_cache_path": cached.cache_path if cached else "",
                 "document_sha256": cached.sha256 if cached else "",
@@ -339,6 +367,7 @@ def _verify_review_session(
     root: Path,
     *,
     catalog: VerifiedAnnouncementCatalog,
+    routing: VerifiedAnnouncementRouting,
 ) -> None:
     _assert_safe_directory(root, label="official evidence review session")
     with os.scandir(root) as entries:
@@ -356,6 +385,7 @@ def _verify_review_session(
     )
     queue_record = manifest.get("review_queue")
     catalog_record = manifest.get("catalog")
+    routing_record = manifest.get("routing")
     if (
         manifest.get("schema_version") != _SCHEMA_VERSION
         or manifest.get("role") != "official_evidence_review_workspace"
@@ -368,6 +398,10 @@ def _verify_review_session(
         or not isinstance(catalog_record, dict)
         or catalog_record.get("sha256") != catalog.catalog_sha256
         or catalog_record.get("relative_path") != _catalog_relative_path(catalog.path)
+        or not isinstance(routing_record, dict)
+        or routing_record.get("sha256") != routing.routing_sha256
+        or routing_record.get("relative_path")
+        != f"{ROUTING_DIRECTORY}/{ROUTING_NAME}"
     ):
         raise ValueError("official evidence review session identity differs")
     try:

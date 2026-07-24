@@ -94,6 +94,8 @@ class VerifiedOfficialQueryPackage:
     manifest_sha256: str
     total_pages: int
     total_results: int
+    page_count: int
+    announcement_ids: tuple[str, ...]
 
 
 def canonical_json_bytes(payload: object) -> bytes:
@@ -204,7 +206,7 @@ def _validate_package_tree(
         request_bytes=request_bytes,
         pages_bytes=pages_bytes,
     )
-    _validate_pages(
+    announcement_ids = _validate_pages(
         package_root,
         pages_payload,
         request=request,
@@ -219,6 +221,8 @@ def _validate_package_tree(
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         total_pages=totals[0],
         total_results=totals[1],
+        page_count=totals[2],
+        announcement_ids=announcement_ids,
     )
 
 
@@ -428,7 +432,7 @@ def _validate_manifest(
         total_pages,
         (total_results + page_size - 1) // page_size,
     )
-    if page_count != expected_count or (total_results > 0 and total_pages == 0):
+    if page_count != expected_count:
         raise ValueError("official query pagination is incomplete")
     return total_pages, total_results, page_count
 
@@ -441,7 +445,7 @@ def _validate_pages(
     total_pages: int,
     total_results: int,
     page_count: int,
-) -> None:
+) -> tuple[str, ...]:
     if (
         set(payload) != {"schema_version", "pages"}
         or payload.get("schema_version") != _SCHEMA_VERSION
@@ -454,6 +458,7 @@ def _validate_pages(
     result_counts: list[int] = []
     cache_names: set[str] = set()
     announcement_ids: set[str] = set()
+    ordered_announcement_ids: list[str] = []
     for expected_page, record in zip(expected_pages, records, strict=True):
         if not isinstance(record, dict) or set(record) != _PAGE_FIELDS:
             raise ValueError("official query page record is invalid")
@@ -495,6 +500,7 @@ def _validate_pages(
         if announcement_ids.intersection(response_ids):
             raise ValueError("official query pagination has duplicate announcements")
         announcement_ids.update(response_ids)
+        ordered_announcement_ids.extend(response_ids)
         result_counts.append(response_count)
     if sum(result_counts) != total_results:
         raise ValueError("official query response count differs from declared total")
@@ -504,6 +510,7 @@ def _validate_pages(
         {PurePosixPath(cache_name).name for cache_name in cache_names},
         label="official query page cache",
     )
+    return tuple(ordered_announcement_ids)
 
 
 def _response_summary(

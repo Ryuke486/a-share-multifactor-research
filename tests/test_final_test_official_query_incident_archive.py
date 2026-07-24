@@ -20,6 +20,18 @@ from test_final_test_resume import PreparedAttempt
 pytest_plugins = ("test_final_test_resume",)
 
 
+def test_partial_archive_counts_shared_adaptive_query_package_paths() -> None:
+    from ashare_multifactor.final_test.official_query_incident_archive import (
+        _is_query_package_manifest,
+    )
+
+    assert _is_query_package_manifest(
+        "final_test_evidence/attempt-001/official_query_coverage/packages/"
+        "announcements/sh/600000/2022-01-01_2023-12-31/"
+        "query-package/query_manifest.json"
+    )
+
+
 _REASON = "official query collection paused after a rate-interval defect before coverage index publication"
 
 

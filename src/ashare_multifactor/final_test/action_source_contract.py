@@ -26,6 +26,7 @@ from ashare_multifactor.final_test.official_query_coverage import (
 
 
 OFFICIAL_MARKET_SOURCES = (("sh", "sse"), ("sz", "szse"))
+SHARED_ANNOUNCEMENT_CATEGORY = "announcements"
 OFFICIAL_EVIDENCE_URL_PREFIXES = (
     "https://static.cninfo.com.cn/finalpage/",
     "https://disc.static.szse.cn/download/disc/",
@@ -112,7 +113,7 @@ def official_query_scope(
     category: str,
     org_id: str | None = None,
 ) -> OfficialQueryScope:
-    """Return one pre-registered coverage query; never an event-fact source."""
+    """Return the shared announcement query for one logical evidence category."""
     try:
         query_category = dict(contract.official_query_categories)[category]
         market = market_for_symbol(symbol)
@@ -123,7 +124,7 @@ def official_query_scope(
     return OfficialQueryScope(
         symbol=symbol,
         market=market,
-        category=category,
+        category=SHARED_ANNOUNCEMENT_CATEGORY,
         query_category=query_category,
         start=contract.start,
         end=contract.end,

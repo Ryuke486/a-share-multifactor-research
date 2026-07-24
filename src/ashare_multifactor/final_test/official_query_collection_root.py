@@ -12,6 +12,7 @@ import stat
 
 from ashare_multifactor.final_test.action_source_contract import (
     FinalActionSourceContract,
+    SHARED_ANNOUNCEMENT_CATEGORY,
 )
 from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.gate import FinalTestAuthorization
@@ -31,7 +32,7 @@ COVERAGE_DIRECTORY = "official_query_coverage"
 IDENTITIES_DIRECTORY = "official_security_identities"
 _EVIDENCE_PARENT = "final_test_evidence"
 _LOCK_NAME = ".official-query-collection.lock"
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
 
 
 @dataclass(frozen=True)
@@ -234,6 +235,11 @@ def collection_manifest_payload(
             {"category": category, "query_category": query_category}
             for category, query_category in contract.official_query_categories
         ],
+        "coverage_mode": "shared_per_security",
+        "shared_query": {
+            "category": SHARED_ANNOUNCEMENT_CATEGORY,
+            "query_category": "",
+        },
         "coverage_relative_path": COVERAGE_DIRECTORY,
     }
 

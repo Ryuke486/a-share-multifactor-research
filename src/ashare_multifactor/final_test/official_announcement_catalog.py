@@ -143,12 +143,10 @@ def build_announcement_catalog(
     )
     rows = catalog_rows_from_packages(
         coverage_root,
-        scopes=scopes,
+        packages=verified_index.packages,
         contract=contract,
     )
-    frame = pl.DataFrame(rows, schema=_CATALOG_SCHEMA).sort("catalog_id")
-    if frame.select(pl.col("catalog_id").is_duplicated().any()).item():
-        raise ValueError("official announcement catalog contains duplicate provenance")
+    frame = announcement_catalog_frame(rows)
     catalog_bytes = _parquet_bytes(frame)
     collection_path = destination / "official_query_collection.json"
     collection_sha256 = sha256_file(collection_path)
@@ -176,6 +174,16 @@ def build_announcement_catalog(
     if loaded.catalog_sha256 != hashlib.sha256(catalog_bytes).hexdigest():
         raise ValueError("official announcement catalog changed during publication")
     return catalog_path
+
+
+def announcement_catalog_frame(
+    rows: list[dict[str, object]],
+) -> pl.DataFrame:
+    """Normalize provenance rows through the single catalog schema."""
+    frame = pl.DataFrame(rows, schema=_CATALOG_SCHEMA).sort("catalog_id")
+    if frame.select(pl.col("catalog_id").is_duplicated().any()).item():
+        raise ValueError("official announcement catalog contains duplicate provenance")
+    return frame
 
 
 def load_verified_announcement_catalog(path: Path) -> VerifiedAnnouncementCatalog:

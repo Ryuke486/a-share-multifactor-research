@@ -14,6 +14,9 @@ from ashare_multifactor.final_test.action_source_contract import (
 from ashare_multifactor.final_test.official_query_client import RetryPolicy
 from ashare_multifactor.final_test.preparation import verify_preparation
 from ashare_multifactor.final_test.resume import load_registered_authorization
+from test_final_test_official_query_collector import (
+    FullRangeDriftThenStableSlicesTransport,
+)
 from test_final_test_resume import PreparedAttempt
 
 
@@ -55,10 +58,83 @@ class AnnouncementTransport:
             '"totalAnnouncement":1,'
             '"announcements":[{'
             f'"announcementId":"{form["stock"]}-announcement",'
-            '"announcementTitle":"公开披露公告",'
+            '"announcementTitle":"关于主动终止上市方案的公告",'
             '"announcementTime":1659312000000,'
             f'"adjunctUrl":"{url}"'
             "}]}"
+        ).encode()
+
+
+class RoutedAnnouncementTransport(AnnouncementTransport):
+    def fetch(
+        self,
+        endpoint: str,
+        form: dict[str, str],
+        *,
+        timeout_seconds: float,
+    ) -> bytes:
+        if endpoint.endswith("/information/topSearch/query"):
+            return super().fetch(
+                endpoint,
+                form,
+                timeout_seconds=timeout_seconds,
+            )
+        symbol = form["stock"].split(",", maxsplit=1)[0]
+        title = (
+            "2024年度权益分派实施公告"
+            if symbol == "000001"
+            else "2024年第三季度报告"
+        )
+        return json.dumps(
+            {
+                "totalpages": 1,
+                "totalAnnouncement": 1,
+                "announcements": [
+                    {
+                        "announcementId": f"{symbol}-announcement",
+                        "announcementTitle": title,
+                        "announcementTime": 1659312000000,
+                        "adjunctUrl": f"finalpage/2024-01-01/{symbol}.PDF",
+                    }
+                ],
+            },
+            separators=(",", ":"),
+        ).encode()
+
+
+class UnderreportedCatalogTransport(AnnouncementTransport):
+    def fetch(
+        self,
+        endpoint: str,
+        form: dict[str, str],
+        *,
+        timeout_seconds: float,
+    ) -> bytes:
+        if endpoint.endswith("/information/topSearch/query"):
+            return super().fetch(
+                endpoint,
+                form,
+                timeout_seconds=timeout_seconds,
+            )
+        symbol = form["stock"].split(",", maxsplit=1)[0]
+        page = int(form["pageNum"])
+        start = 0 if page == 1 else 30
+        count = 30 if page == 1 else 1
+        return json.dumps(
+            {
+                "totalpages": 1,
+                "totalAnnouncement": 31,
+                "announcements": [
+                    {
+                        "announcementId": f"{symbol}-{index}",
+                        "announcementTitle": "公开披露公告",
+                        "announcementTime": 1659312000000,
+                        "adjunctUrl": f"finalpage/2021-01-01/{symbol}-{index}.PDF",
+                    }
+                    for index in range(start, start + count)
+                ],
+            },
+            separators=(",", ":"),
         ).encode()
 
 
@@ -96,6 +172,7 @@ def _complete_query_coverage(
     attempt: PreparedAttempt,
     *,
     url: str | None = None,
+    transport: object | None = None,
 ) -> EvidenceInputs:
     from ashare_multifactor.final_test.official_query_collector import (
         collect_official_query_coverage,
@@ -122,7 +199,7 @@ def _complete_query_coverage(
             attempt.code_root / "configs/final_execution_sources.yaml"
         ),
         output_root=output_root,
-        transport=AnnouncementTransport(url=url),
+        transport=transport or AnnouncementTransport(url=url),
         policy=RetryPolicy(attempts=1, timeout_seconds=0.1, minimum_interval_seconds=0),
     )
     assert result.index_path is not None
@@ -165,6 +242,52 @@ def test_catalog_preserves_query_provenance_without_creating_event_facts(
     assert "cash_per_share" not in row
 
 
+def test_catalog_reads_every_verified_adaptive_slice(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    from ashare_multifactor.final_test.official_announcement_catalog import (
+        build_announcement_catalog,
+    )
+
+    inputs = _complete_query_coverage(
+        prepared_attempt,
+        transport=FullRangeDriftThenStableSlicesTransport(),
+    )
+
+    catalog = build_announcement_catalog(
+        inputs.index_path,
+        preparation=inputs.preparation,
+        authorization=inputs.authorization,
+        contract=inputs.contract,
+        destination=inputs.output_root,
+    )
+
+    assert pl.read_parquet(catalog).height == 0
+
+
+def test_catalog_reads_the_verified_page_beyond_underreported_totalpages(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    from ashare_multifactor.final_test.official_announcement_catalog import (
+        build_announcement_catalog,
+    )
+
+    inputs = _complete_query_coverage(
+        prepared_attempt,
+        transport=UnderreportedCatalogTransport(),
+    )
+
+    catalog = build_announcement_catalog(
+        inputs.index_path,
+        preparation=inputs.preparation,
+        authorization=inputs.authorization,
+        contract=inputs.contract,
+        destination=inputs.output_root,
+    )
+
+    assert pl.read_parquet(catalog).height == 62
+
+
 def test_unreviewed_documents_block_ready_coverage(
     prepared_attempt: PreparedAttempt,
 ) -> None:
@@ -202,6 +325,49 @@ def test_unreviewed_documents_block_ready_coverage(
     )
     with pytest.raises(ValueError, match="review|ready|official"):
         validate_review_submission(workspace, workspace.review_queue_path)
+
+
+def test_document_collection_keeps_full_routing_but_fetches_only_review_candidates(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    from ashare_multifactor.final_test.official_announcement_catalog import (
+        build_announcement_catalog,
+    )
+    from ashare_multifactor.final_test.official_document_fetcher import (
+        fetch_official_documents,
+    )
+
+    inputs = _complete_query_coverage(
+        prepared_attempt,
+        transport=RoutedAnnouncementTransport(),
+    )
+    catalog = build_announcement_catalog(
+        inputs.index_path,
+        preparation=inputs.preparation,
+        authorization=inputs.authorization,
+        contract=inputs.contract,
+        destination=inputs.output_root,
+    )
+    transport = DocumentTransport()
+
+    workspace = fetch_official_documents(
+        catalog,
+        destination=inputs.output_root,
+        transport=transport,
+    )
+
+    routing = pl.read_parquet(
+        inputs.output_root / "official_announcement_routing/routing.parquet"
+    ).sort("catalog_id")
+    assert routing.height == 2
+    assert set(routing.get_column("route")) == {"candidate", "excluded"}
+    assert routing.filter(pl.col("route") == "excluded").get_column(
+        "reason"
+    ).item() == "no_supported_event_term"
+    assert transport.urls == [
+        "https://static.cninfo.com.cn/finalpage/2024-01-01/000001.PDF"
+    ]
+    assert pl.read_parquet(workspace.review_queue_path).height == 1
 
 
 def test_document_cache_is_immutable(

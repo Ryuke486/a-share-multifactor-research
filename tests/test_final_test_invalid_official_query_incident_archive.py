@@ -20,6 +20,18 @@ from test_final_test_resume import PreparedAttempt
 pytest_plugins = ("test_final_test_resume",)
 
 
+def test_invalid_archive_counts_shared_adaptive_query_package_paths() -> None:
+    from ashare_multifactor.final_test.invalid_official_query_incident_archive import (
+        _is_query_package_manifest,
+    )
+
+    assert _is_query_package_manifest(
+        "final_test_evidence/attempt-001/official_query_coverage/packages/"
+        "announcements/sz/000001/2024-01-01_2025-12-31/"
+        "query-package/query_manifest.json"
+    )
+
+
 _REASON = "CNInfo code-only announcement queries produced invalid complete coverage"
 
 
@@ -115,7 +127,7 @@ def test_invalid_complete_query_collection_archives_immutably(
     assert manifest["reason"] == _REASON
     assert manifest["coverage_index_present"] is True
     assert manifest["reuse_permitted"] is False
-    assert manifest["query_package_count"] == 4
+    assert manifest["query_package_count"] == 2
     assert {
         record["path"].removeprefix(
             f"final_test_evidence/{prepared_attempt.attempt_id}/"

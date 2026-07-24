@@ -23,6 +23,7 @@ from ashare_multifactor.data.security import market_for_symbol
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.final_test.action_source_contract import (
     OFFICIAL_MARKET_SOURCES,
+    SHARED_ANNOUNCEMENT_CATEGORY,
     evidence_url_matches_source,
     load_action_source_contract,
 )
@@ -47,6 +48,7 @@ from ashare_multifactor.final_test.gate import (
 from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.official_query_coverage import OfficialQueryScope
 from ashare_multifactor.final_test.official_query_index import (
+    official_query_coverage_schema_version,
     validate_official_query_coverage_index,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import (
@@ -1125,11 +1127,19 @@ def validate_security_event_coverage(
         )
     except (FileNotFoundError, TypeError, ValueError) as error:
         raise ValueError("official security-event query coverage changed") from error
+    query_scope_category = (
+        "security_events"
+        if official_query_coverage_schema_version(
+            official_query_coverage_path
+        )
+        == "1"
+        else SHARED_ANNOUNCEMENT_CATEGORY
+    )
     official_query_scopes = tuple(
         OfficialQueryScope(
             symbol=symbol,
             market=market_for_symbol(symbol),
-            category="security_events",
+            category=query_scope_category,
             query_category="",
             start=FINAL_TEST_START,
             end=FINAL_TEST_END,

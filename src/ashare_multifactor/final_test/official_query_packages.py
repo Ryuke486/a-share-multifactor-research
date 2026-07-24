@@ -19,6 +19,9 @@ from ashare_multifactor.final_test.official_query_client import (
     RetryPolicy,
     fetch_with_retry,
 )
+from ashare_multifactor.final_test.official_collection_progress import (
+    OfficialCollectionProgressObserver,
+)
 from ashare_multifactor.final_test.official_query_collection_root import (
     entry_exists,
 )
@@ -43,12 +46,18 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
 
 INDEX_NAME = "official_query_coverage.json"
 _SCHEMA_VERSION = "1"
+_INDEX_SCHEMA_VERSION = "2"
 _PAGE_SIZE = 30
 _MAX_PAGES_PER_SCOPE = 1_000
+_SPLIT_NAME = "split.json"
 
 
 class _PaginationDrift(ValueError):
     """One in-memory query snapshot changed while its pages were fetched."""
+
+
+class PersistentPaginationDrift(ValueError):
+    """A query range drifted through every permitted whole-round retry."""
 
 
 @dataclass(frozen=True)
@@ -68,42 +77,50 @@ def collect_coverage(
     policy: RetryPolicy,
     max_scopes: int | None,
     created_at: str,
+    progress_observer: OfficialCollectionProgressObserver | None = None,
 ) -> CollectionProgress:
     """Publish complete packages and atomically add an index only at completion."""
     index_path = coverage_root / INDEX_NAME
     if entry_exists(coverage_fd, INDEX_NAME):
-        validated = validate_official_query_coverage_index(
+        validate_official_query_coverage_index(
             index_path,
             expected_scopes=scopes,
         )
-        if len(validated.packages) != len(scopes):
-            raise ValueError("official query coverage index is incomplete")
         return CollectionProgress(len(scopes), index_path)
 
     completed = 0
+    leaf_scopes: list[OfficialQueryScope] = []
     for scope in scopes:
-        package_root = coverage_root / package_relative_path(scope)
-        if package_root.exists() or package_root.is_symlink():
-            validate_official_query_package(package_root, expected_scope=scope)
-            completed += 1
-            continue
         if max_scopes is not None and completed >= max_scopes:
             break
-        publish_package(
+        packages = _publish_adaptive_scope(
             coverage_fd=coverage_fd,
             coverage_root=coverage_root,
             scope=scope,
             transport=transport,
             policy=policy,
             created_at=created_at,
+            progress_observer=progress_observer,
         )
+        leaf_scopes.extend(package.scope for package in packages)
         completed += 1
+        if progress_observer is not None:
+            progress_observer.security_completed(
+                scope=scope,
+                completed=completed,
+                total=len(scopes),
+            )
 
     if completed != len(scopes):
         if entry_exists(coverage_fd, INDEX_NAME):
             raise ValueError("official query coverage index appeared before completion")
         return CollectionProgress(completed, None)
-    publish_index(coverage_fd=coverage_fd, coverage_root=coverage_root, scopes=scopes)
+    publish_index(
+        coverage_fd=coverage_fd,
+        coverage_root=coverage_root,
+        scopes=tuple(leaf_scopes),
+        expected_scopes=scopes,
+    )
     validate_official_query_coverage_index(index_path, expected_scopes=scopes)
     return CollectionProgress(completed, index_path)
 
@@ -116,6 +133,7 @@ def publish_package(
     transport: OfficialQueryTransport,
     policy: RetryPolicy,
     created_at: str,
+    progress_observer: OfficialCollectionProgressObserver | None = None,
 ) -> VerifiedOfficialQueryPackage:
     """Publish one package from complete response bytes, never a partial package."""
     parent_fd, parent_root = _open_package_parent(coverage_fd, coverage_root, scope)
@@ -142,6 +160,8 @@ def publish_package(
             transport=transport,
             policy=policy,
             created_at=created_at,
+            scope=scope,
+            progress_observer=progress_observer,
         )
         write_frozen_tree_at(
             parent_fd,
@@ -162,6 +182,7 @@ def publish_index(
     coverage_fd: int,
     coverage_root: Path,
     scopes: tuple[OfficialQueryScope, ...],
+    expected_scopes: tuple[OfficialQueryScope, ...],
 ) -> None:
     """Atomically publish one exact package index after full validation."""
     records = []
@@ -173,7 +194,7 @@ def publish_index(
         records.append(_index_record(scope, package))
     payload = canonical_json_bytes(
         {
-            "schema_version": _SCHEMA_VERSION,
+            "schema_version": _INDEX_SCHEMA_VERSION,
             "role": "official_query_coverage",
             "packages": records,
         }
@@ -207,6 +228,10 @@ def publish_index(
             os.unlink(temporary, dir_fd=coverage_fd)
         except FileNotFoundError:
             pass
+    validate_official_query_coverage_index(
+        coverage_root / INDEX_NAME,
+        expected_scopes=expected_scopes,
+    )
 
 
 def package_relative_path(scope: OfficialQueryScope) -> Path:
@@ -229,7 +254,12 @@ def _open_package_parent(
         )
         descriptors.append(current)
         path /= "packages"
-        for name in (scope.category, scope.market, scope.symbol):
+        for name in (
+            scope.category,
+            scope.market,
+            scope.symbol,
+            f"{scope.start.isoformat()}_{scope.end.isoformat()}",
+        ):
             next_fd = _open_or_create_directory(
                 current,
                 name,
@@ -254,7 +284,10 @@ def _package_files(
     transport: OfficialQueryTransport,
     policy: RetryPolicy,
     created_at: str,
+    scope: OfficialQueryScope,
+    progress_observer: OfficialCollectionProgressObserver | None,
 ) -> dict[str, bytes]:
+    last_error: _PaginationDrift | None = None
     for attempt in range(policy.attempts):
         try:
             return _stable_package_files(
@@ -262,11 +295,212 @@ def _package_files(
                 transport=transport,
                 policy=policy,
                 created_at=created_at,
+                scope=scope,
+                progress_observer=progress_observer,
             )
-        except _PaginationDrift:
-            if attempt + 1 == policy.attempts:
-                raise
-    raise RuntimeError("official query snapshot retry loop terminated unexpectedly")
+        except _PaginationDrift as error:
+            last_error = error
+    raise PersistentPaginationDrift(
+        "official query response totals differ between pages after bounded retries"
+    ) from last_error
+
+
+def _publish_adaptive_scope(
+    *,
+    coverage_fd: int,
+    coverage_root: Path,
+    scope: OfficialQueryScope,
+    transport: OfficialQueryTransport,
+    policy: RetryPolicy,
+    created_at: str,
+    progress_observer: OfficialCollectionProgressObserver | None,
+) -> tuple[VerifiedOfficialQueryPackage, ...]:
+    children = _recorded_split(
+        coverage_fd=coverage_fd,
+        coverage_root=coverage_root,
+        scope=scope,
+    )
+    package_root = coverage_root / package_relative_path(scope)
+    if children is None and (package_root.exists() or package_root.is_symlink()):
+        return (
+            validate_official_query_package(package_root, expected_scope=scope),
+        )
+    if children is not None:
+        if package_root.exists() or package_root.is_symlink():
+            raise ValueError(
+                "official query scope has both a split plan and a parent package"
+            )
+        if progress_observer is not None:
+            progress_observer.split_recorded(scope=scope)
+        return _publish_children(
+            coverage_fd=coverage_fd,
+            coverage_root=coverage_root,
+            children=children,
+            transport=transport,
+            policy=policy,
+            created_at=created_at,
+            progress_observer=progress_observer,
+        )
+    try:
+        return (
+            publish_package(
+                coverage_fd=coverage_fd,
+                coverage_root=coverage_root,
+                scope=scope,
+                transport=transport,
+                policy=policy,
+                created_at=created_at,
+                progress_observer=progress_observer,
+            ),
+        )
+    except PersistentPaginationDrift as error:
+        from ashare_multifactor.final_test.official_query_slices import (
+            split_query_scope,
+        )
+
+        children = split_query_scope(scope)
+        if not children:
+            raise ValueError(
+                "official query pagination still drifts at the monthly failure boundary"
+            ) from error
+        _write_or_verify_split(
+            coverage_fd=coverage_fd,
+            coverage_root=coverage_root,
+            scope=scope,
+            children=children,
+        )
+        if progress_observer is not None:
+            progress_observer.split_recorded(scope=scope)
+        return _publish_children(
+            coverage_fd=coverage_fd,
+            coverage_root=coverage_root,
+            children=children,
+            transport=transport,
+            policy=policy,
+            created_at=created_at,
+            progress_observer=progress_observer,
+        )
+
+
+def _publish_children(
+    *,
+    coverage_fd: int,
+    coverage_root: Path,
+    children: tuple[OfficialQueryScope, ...],
+    transport: OfficialQueryTransport,
+    policy: RetryPolicy,
+    created_at: str,
+    progress_observer: OfficialCollectionProgressObserver | None,
+) -> tuple[VerifiedOfficialQueryPackage, ...]:
+    return tuple(
+        package
+        for child in children
+        for package in _publish_adaptive_scope(
+            coverage_fd=coverage_fd,
+            coverage_root=coverage_root,
+            scope=child,
+            transport=transport,
+            policy=policy,
+            created_at=created_at,
+            progress_observer=progress_observer,
+        )
+    )
+
+
+def _recorded_split(
+    *,
+    coverage_fd: int,
+    coverage_root: Path,
+    scope: OfficialQueryScope,
+) -> tuple[OfficialQueryScope, ...] | None:
+    parent_fd, _parent_root = _open_package_parent(
+        coverage_fd,
+        coverage_root,
+        scope,
+    )
+    try:
+        if not entry_exists(parent_fd, _SPLIT_NAME):
+            return None
+        payload = read_bytes_at(
+            parent_fd,
+            _SPLIT_NAME,
+            label="official query split plan",
+        )
+    finally:
+        os.close(parent_fd)
+    return _validate_split_payload(payload, scope)
+
+
+def _write_or_verify_split(
+    *,
+    coverage_fd: int,
+    coverage_root: Path,
+    scope: OfficialQueryScope,
+    children: tuple[OfficialQueryScope, ...],
+) -> None:
+    payload = _split_payload(scope, children)
+    parent_fd, _parent_root = _open_package_parent(
+        coverage_fd,
+        coverage_root,
+        scope,
+    )
+    try:
+        if entry_exists(parent_fd, _SPLIT_NAME):
+            existing = read_bytes_at(
+                parent_fd,
+                _SPLIT_NAME,
+                label="official query split plan",
+            )
+            if existing != payload:
+                raise ValueError("official query split plan identity differs")
+            return
+        write_bytes_exclusive_at(parent_fd, _SPLIT_NAME, payload)
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+
+
+def _split_payload(
+    scope: OfficialQueryScope,
+    children: tuple[OfficialQueryScope, ...],
+) -> bytes:
+    return canonical_json_bytes(
+        {
+            "schema_version": "1",
+            "role": "official_query_split",
+            "reason": "persistent_pagination_drift",
+            "scope": _scope_payload(scope),
+            "children": [
+                {"start": child.start.isoformat(), "end": child.end.isoformat()}
+                for child in children
+            ],
+        }
+    )
+
+
+def _validate_split_payload(
+    payload: bytes,
+    scope: OfficialQueryScope,
+) -> tuple[OfficialQueryScope, ...]:
+    from ashare_multifactor.final_test.official_query_slices import split_query_scope
+
+    expected_children = split_query_scope(scope)
+    expected = _split_payload(scope, expected_children)
+    if not expected_children or payload != expected:
+        raise ValueError("official query split plan identity differs")
+    return expected_children
+
+
+def _scope_payload(scope: OfficialQueryScope) -> dict[str, str]:
+    return {
+        "symbol": scope.symbol,
+        "market": scope.market,
+        "category": scope.category,
+        "query_category": scope.query_category,
+        "start": scope.start.isoformat(),
+        "end": scope.end.isoformat(),
+        "org_id": _required_org_id(scope),
+    }
 
 
 def _stable_package_files(
@@ -275,6 +509,8 @@ def _stable_package_files(
     transport: OfficialQueryTransport,
     policy: RetryPolicy,
     created_at: str,
+    scope: OfficialQueryScope,
+    progress_observer: OfficialCollectionProgressObserver | None,
 ) -> dict[str, bytes]:
     page_size = int(request["page_size"])
     first = _fetch_page(
@@ -283,6 +519,8 @@ def _stable_package_files(
         page_size=page_size,
         transport=transport,
         policy=policy,
+        scope=scope,
+        progress_observer=progress_observer,
     )
     total_pages, total_results, first_count, first_ids = _response_summary(first)
     page_count = max(
@@ -292,11 +530,15 @@ def _stable_package_files(
     )
     if page_count > _MAX_PAGES_PER_SCOPE:
         raise ValueError("official query page count exceeds the frozen collector bound")
-    if total_results > 0 and total_pages == 0:
-        raise ValueError("official query response declares results without pages")
-    page_payloads = [first]
-    records = [
-        _page_record(
+    if progress_observer is not None:
+        progress_observer.query_page_verified(
+            scope=scope,
+            page=1,
+            total_pages=page_count,
+        )
+    page_payloads = {1: first}
+    records = {
+        1: _page_record(
             request,
             page=1,
             payload=first,
@@ -304,15 +546,22 @@ def _stable_package_files(
             total_results=total_results,
             result_count=first_count,
         )
-    ]
+    }
     seen_ids = set(first_ids)
-    for page in range(2, page_count + 1):
+    page_order = (
+        (page_count, *range(2, page_count))
+        if page_count > 2
+        else tuple(range(2, page_count + 1))
+    )
+    for page in page_order:
         payload = _fetch_page(
             request,
             page=page,
             page_size=page_size,
             transport=transport,
             policy=policy,
+            scope=scope,
+            progress_observer=progress_observer,
         )
         observed_pages, observed_results, result_count, identifiers = _response_summary(payload)
         if (observed_pages, observed_results) != (total_pages, total_results):
@@ -320,21 +569,28 @@ def _stable_package_files(
         if seen_ids.intersection(identifiers):
             raise ValueError("official query pagination repeats an announcement")
         seen_ids.update(identifiers)
-        page_payloads.append(payload)
-        records.append(
-            _page_record(
-                request,
+        if progress_observer is not None:
+            progress_observer.query_page_verified(
+                scope=scope,
                 page=page,
-                payload=payload,
-                total_pages=total_pages,
-                total_results=total_results,
-                result_count=result_count,
+                total_pages=page_count,
             )
+        page_payloads[page] = payload
+        records[page] = _page_record(
+            request,
+            page=page,
+            payload=payload,
+            total_pages=total_pages,
+            total_results=total_results,
+            result_count=result_count,
         )
-    if sum(int(record["result_count"]) for record in records) != total_results:
+    ordered_records = [records[page] for page in range(1, page_count + 1)]
+    if sum(int(record["result_count"]) for record in ordered_records) != total_results:
         raise ValueError("official query response count differs from declared total")
     request_bytes = canonical_json_bytes(request)
-    pages_bytes = canonical_json_bytes({"schema_version": _SCHEMA_VERSION, "pages": records})
+    pages_bytes = canonical_json_bytes(
+        {"schema_version": _SCHEMA_VERSION, "pages": ordered_records}
+    )
     manifest = {
         "schema_version": _SCHEMA_VERSION,
         "request_sha256": hashlib.sha256(request_bytes).hexdigest(),
@@ -348,8 +604,8 @@ def _stable_package_files(
     return {
         "request.json": request_bytes,
         **{
-            f"pages/page-{page:04d}.json": payload
-            for page, payload in enumerate(page_payloads, start=1)
+            f"pages/page-{page:04d}.json": page_payloads[page]
+            for page in range(1, page_count + 1)
         },
         "pages.json": pages_bytes,
         "query_manifest.json": canonical_json_bytes(manifest),
@@ -397,12 +653,16 @@ def _fetch_page(
     page_size: int,
     transport: OfficialQueryTransport,
     policy: RetryPolicy,
+    scope: OfficialQueryScope,
+    progress_observer: OfficialCollectionProgressObserver | None,
 ) -> bytes:
     form = request["form"]
     if not isinstance(form, dict):
         raise ValueError("official query request form is invalid")
     page_form = {str(key): str(value) for key, value in form.items()}
     page_form.update({"pageNum": str(page), "pageSize": str(page_size)})
+    if progress_observer is not None:
+        progress_observer.query_request(scope=scope, page=page)
     return fetch_with_retry(
         transport,
         endpoint=str(request["endpoint"]),
@@ -474,6 +734,8 @@ def _index_record(
         "org_id": _required_org_id(scope),
         "category": scope.category,
         "query_category": scope.query_category,
+        "start": scope.start.isoformat(),
+        "end": scope.end.isoformat(),
         "relative_path": package_relative_path(scope).as_posix(),
         "request_sha256": package.request_sha256,
         "pages_sha256": package.pages_sha256,
