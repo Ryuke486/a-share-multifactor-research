@@ -18,6 +18,9 @@ from ashare_multifactor.final_test.data_inventory import write_json
 from ashare_multifactor.final_test.gate import authorize_final_test
 from ashare_multifactor.final_test import gate as gate_module
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
+from ashare_multifactor.robustness.collector_readiness import (
+    write_collector_readiness_audit,
+)
 from ashare_multifactor.robustness.test_protocol import seal_test_protocol
 
 
@@ -47,6 +50,105 @@ def _staging(root: Path, *, artifact: str) -> tuple[Path, Path]:
     (datasets / "placeholder.bin").write_bytes(b"sealed upstream")
     (artifacts / artifact).write_text("sealed\n", encoding="utf-8")
     return datasets, artifacts
+
+
+def _write_collector_readiness(root: Path, destination: Path) -> str:
+    sample = root / "sample.parquet"
+    catalog = root / "catalog.parquet"
+    routing = root / "routing.parquet"
+    reviewed = root / "routing_audit/exclusion_reviewed.parquet"
+    for path, content in (
+        (sample, b"sample"),
+        (catalog, b"catalog"),
+        (routing, b"routing"),
+        (reviewed, b"reviewed"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+    coverage = root / "official_query_coverage/official_query_coverage.json"
+    coverage.parent.mkdir(parents=True)
+    coverage.write_text(
+        json.dumps(
+            {
+                "role": "official_query_coverage",
+                "schema_version": "2",
+                "packages": [
+                    {
+                        "symbol": "600009",
+                        "category": "announcements",
+                        "start": "2017-01-01",
+                        "end": "2021-12-31",
+                        "manifest_sha256": "1" * 64,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    implementation = "a" * 64
+    review = root / "routing_audit/audit_report_reviewed.json"
+    review.write_text(
+        json.dumps(
+            {
+                "role": "stage9_routing_exclusion_audit",
+                "catalog_sha256": sha256_file(catalog),
+                "routing_sha256": sha256_file(routing),
+                "reviewed_queue_sha256": sha256_file(reviewed),
+                "exclusion_review_complete": True,
+                "exclusion_sample_scope_complete": True,
+                "exclusion_sample_count": 1000,
+                "exclusion_confirmed_miss_count": 0,
+                "known_miss_count": 0,
+                "structured_candidate_date_miss_count": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "routing_audit/known_event_audit_2005_2021.json").write_text(
+        json.dumps(
+            {
+                "role": "stage9_known_event_routing_audit",
+                "status": "passed",
+                "period": ["2005-01-01", "2021-12-31"],
+                "registered_title_miss_count": 0,
+                "early_known_event_miss_count": 0,
+                "structured_candidate_date_miss_count": 0,
+                "validation_review_report_sha256": sha256_file(review),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "rehearsal_report.json").write_text(
+        json.dumps(
+            {
+                "role": "official_collection_validation_rehearsal",
+                "period": ["2017-01-01", "2021-12-31"],
+                "implementation_sha256": implementation,
+                "sample_count": 100,
+                "sample_sha256": sha256_file(sample),
+                "coverage_index_sha256": sha256_file(coverage),
+                "split_count": 1,
+                "full_universe_eta_seconds": 129599,
+                "within_36_hour_budget": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (root / "process_recovery_drill.json").write_text(
+        json.dumps(
+            {
+                "role": "stage9_process_recovery_drill",
+                "status": "passed",
+                "implementation_sha256": implementation,
+                "maximum_restarts": 2,
+                "restart_count": 1,
+                "identity_check_count": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+    write_collector_readiness_audit(root, destination)
+    return sha256_file(destination / "manifest.json")
 
 
 def _write_token(path: Path, seal: str, code_root: Path, robustness: object) -> None:
@@ -120,7 +222,7 @@ def _fixture(tmp_path: Path, *, successor: bool = True) -> dict[str, Path]:
     validation_staging = _staging(tmp_path / "validation-staging", artifact="report.md")
     validation = publish_release(
         validation_root,
-        run_id="d08ec2b_stage7_validation_snapshot_retry_successor",
+        run_id="65b19e1_stage7_validation_controlled_collector_successor",
         staged_datasets=validation_staging[0],
         staged_artifacts=validation_staging[1],
         lineage={"stage": "validation"},
@@ -150,12 +252,17 @@ def _fixture(tmp_path: Path, *, successor: bool = True) -> dict[str, Path]:
         path.write_bytes(content)
         audit_records.append(file_record(path, root=audit, role=role).to_dict())
     write_json(audit / "manifest.json", {"status": "ready", "files": audit_records})
+    readiness_hash = _write_collector_readiness(
+        tmp_path / "collector-readiness-source",
+        artifacts / "collector_readiness_audit",
+    )
     successor_args = (
         {
             "action_source_contract_sha256": sha256_file(
                 code_root / "configs/final_execution_sources.yaml"
             ),
             "action_coverage_audit_sha256": sha256_file(audit / "manifest.json"),
+            "collector_readiness_audit_sha256": readiness_hash,
             "predecessor": {
                 "run_id": "58adad4_stage8_robustness",
                 "manifest_sha256": "f" * 64,
@@ -206,6 +313,9 @@ def _fixture(tmp_path: Path, *, successor: bool = True) -> dict[str, Path]:
             ],
             "action_coverage_audit_sha256": successor_args[
                 "action_coverage_audit_sha256"
+            ],
+            "collector_readiness_audit_sha256": successor_args[
+                "collector_readiness_audit_sha256"
             ],
             "supported_markets": ["sh", "sz"],
             "status": "ready_for_new_final_test_authorization",
@@ -335,7 +445,7 @@ def test_authorization_registers_attempt_before_returning(tmp_path: Path) -> Non
 def test_authorization_rejects_legacy_v1_seal(tmp_path: Path) -> None:
     paths = _fixture(tmp_path, successor=False)
 
-    with pytest.raises(ValueError, match="successor protocol v2"):
+    with pytest.raises(ValueError, match="successor protocol v3"):
         _authorize(paths)
     assert not paths["registry"].exists()
 

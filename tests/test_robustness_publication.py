@@ -75,6 +75,7 @@ def test_publication_rechecks_source_files_against_reproducibility(tmp_path: Pat
 
 def test_successor_publication_contract_binds_predecessor_fees_source_and_audit(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = tmp_path / "data/processed/robustness"
     datasets = tmp_path / "staged/datasets"
@@ -113,10 +114,22 @@ def test_successor_publication_contract_binds_predecessor_fees_source_and_audit(
         path.write_bytes(content)
         files[name] = file_record(path, root=audit, role=role).to_dict()
     write_json(audit / "manifest.json", {"status": "ready", "files": list(files.values())})
+    readiness = tmp_path / "collector-readiness"
+    readiness.mkdir()
+    monkeypatch.setattr(
+        "ashare_multifactor.robustness.pipeline.verify_collector_readiness_audit",
+        lambda root: "b" * 64 if root == readiness else "",
+    )
 
-    contract = _successor_release_contract(code, tmp_path / "data", audit)
+    contract = _successor_release_contract(
+        code,
+        tmp_path / "data",
+        audit,
+        readiness,
+    )
 
     assert contract["predecessor"]["run_id"] == "old-stage8"
     assert len(contract["market_rules_sha256"]) == 64
     assert len(contract["action_source_contract_sha256"]) == 64
     assert len(contract["action_coverage_audit_sha256"]) == 64
+    assert contract["collector_readiness_audit_sha256"] == "b" * 64

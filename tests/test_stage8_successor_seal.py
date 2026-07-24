@@ -44,12 +44,13 @@ def test_successor_seal_preserves_predecessor_and_binds_execution_contracts(
         protocol=load_robustness_protocol(Path("configs/robustness_protocol.yaml")),
         code_identity=_identity(),
         validation_pointer={
-            "run_id": "d08ec2b_stage7_validation_snapshot_retry_successor",
+            "run_id": "65b19e1_stage7_validation_controlled_collector_successor",
             "manifest_sha256": "e" * 64,
         },
         market_rules_sha256="1" * 64,
         action_source_contract_sha256="2" * 64,
         action_coverage_audit_sha256="3" * 64,
+        collector_readiness_audit_sha256="5" * 64,
         predecessor=supersession.to_dict(),
         report_template_sha256="4" * 64,
         opening_ledger_root=tmp_path / "opening-ledger",
@@ -57,9 +58,10 @@ def test_successor_seal_preserves_predecessor_and_binds_execution_contracts(
     )
 
     assert predecessor_manifest.read_bytes() == before
-    assert sealed["protocol_version"] == 2
+    assert sealed["protocol_version"] == 3
     assert sealed["action_source_contract_sha256"] == "2" * 64
     assert sealed["action_coverage_audit_sha256"] == "3" * 64
+    assert sealed["collector_readiness_audit_sha256"] == "5" * 64
     assert sealed["predecessor"] == supersession.to_dict()
     assert sealed["opening_token_status"] == "closed"
     assert json.loads((tmp_path / "sealed.json").read_text()) == sealed
@@ -139,7 +141,12 @@ def test_successor_lineage_requires_ready_hashed_action_audit(tmp_path: Path) ->
         supersession=supersession,
         action_source_contract_sha256="a" * 64,
         action_coverage_audit_sha256=audit_hash,
+        collector_readiness_audit_sha256="b" * 64,
     )
 
     assert lineage["predecessor"]["run_id"] == "old"
     assert lineage["execution_protocol"]["action_coverage_audit_sha256"] == audit_hash
+    assert (
+        lineage["execution_protocol"]["collector_readiness_audit_sha256"]
+        == "b" * 64
+    )

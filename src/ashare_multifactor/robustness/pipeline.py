@@ -25,6 +25,9 @@ from ashare_multifactor.robustness.execution_sensitivity import (
     select_backtest_scenario,
     summarize_execution_result,
 )
+from ashare_multifactor.robustness.collector_readiness import (
+    verify_collector_readiness_audit,
+)
 from ashare_multifactor.robustness.factor_ablation import build_ablation_scores
 from ashare_multifactor.robustness.portfolio_sensitivity import (
     ExpectedExperimentUnavailability,
@@ -251,12 +254,20 @@ def publish_robustness_release(
     *,
     run_id: str,
     successor_audit_root: Path | None = None,
+    collector_readiness_root: Path | None = None,
 ) -> object:
     """Publish only two-run-identical output from one clean Git identity."""
     code_root = code_root.resolve()
     data_root = resolve_robustness_data_root(code_root)
+    if (successor_audit_root is None) != (collector_readiness_root is None):
+        raise ValueError("Stage-8 successor audit roots are incomplete")
     successor_contract = (
-        _successor_release_contract(code_root, data_root, successor_audit_root)
+        _successor_release_contract(
+            code_root,
+            data_root,
+            successor_audit_root,
+            collector_readiness_root,
+        )
         if successor_audit_root is not None
         else None
     )
@@ -305,6 +316,10 @@ def publish_robustness_release(
     shutil.copy2(source / "protocol_gate.json", artifacts)
     if successor_contract is not None:
         shutil.copytree(successor_audit_root, artifacts / "action_coverage_audit")
+        shutil.copytree(
+            collector_readiness_root,
+            artifacts / "collector_readiness_audit",
+        )
     sealed = seal_test_protocol(
         artifacts / "sealed_test_protocol.json",
         protocol=protocol,
@@ -326,6 +341,11 @@ def publish_robustness_release(
         ),
         action_coverage_audit_sha256=(
             str(successor_contract["action_coverage_audit_sha256"])
+            if successor_contract is not None
+            else None
+        ),
+        collector_readiness_audit_sha256=(
+            str(successor_contract["collector_readiness_audit_sha256"])
             if successor_contract is not None
             else None
         ),
@@ -355,6 +375,9 @@ def publish_robustness_release(
             ),
             action_coverage_audit_sha256=str(
                 successor_contract["action_coverage_audit_sha256"]
+            ),
+            collector_readiness_audit_sha256=str(
+                successor_contract["collector_readiness_audit_sha256"]
             ),
         )
         lineage["execution_protocol"]["supported_markets"] = list(
@@ -402,9 +425,13 @@ def _successor_release_contract(
     code_root: Path,
     data_root: Path,
     action_audit_root: Path,
+    collector_readiness_root: Path,
 ) -> dict[str, object]:
     predecessor = resolve_current(data_root / "processed/robustness")
     audit_sha256 = verify_action_coverage_audit(action_audit_root)
+    collector_readiness_sha256 = verify_collector_readiness_audit(
+        collector_readiness_root
+    )
     market_rules_path = code_root / "configs/market_rules.yaml"
     source_contract_path = code_root / "configs/final_execution_sources.yaml"
     validate_fee_protocol(
@@ -425,6 +452,7 @@ def _successor_release_contract(
         "market_rules_sha256": sha256_file(market_rules_path),
         "action_source_contract_sha256": sha256_file(source_contract_path),
         "action_coverage_audit_sha256": audit_sha256,
+        "collector_readiness_audit_sha256": collector_readiness_sha256,
     }
 
 

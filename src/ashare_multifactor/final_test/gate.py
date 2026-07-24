@@ -26,6 +26,9 @@ from ashare_multifactor.final_test.registry import (
     save_token_snapshot_at,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import read_bytes_at
+from ashare_multifactor.robustness.collector_readiness import (
+    verify_collector_readiness_audit,
+)
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
 from ashare_multifactor.robustness.successor_seal import (
     verify_action_coverage_audit,
@@ -436,14 +439,17 @@ def _verify_sealed_payload(sealed: dict[str, object]) -> str:
     if not recorded or hashlib.sha256(canonical).hexdigest() != recorded:
         raise ValueError("sealed protocol hash does not match its payload")
     if (
-        sealed.get("protocol_version") != 2
+        sealed.get("protocol_version") != 3
         or not _valid_sha256(str(sealed.get("action_source_contract_sha256", "")))
         or not _valid_sha256(str(sealed.get("action_coverage_audit_sha256", "")))
+        or not _valid_sha256(
+            str(sealed.get("collector_readiness_audit_sha256", ""))
+        )
         or not isinstance(sealed.get("predecessor"), dict)
         or sealed.get("supported_markets") != ["sh", "sz"]
     ):
         raise ValueError(
-            "final-test authorization requires Stage-8 successor protocol v2"
+            "final-test authorization requires Stage-8 successor protocol v3"
         )
     if (
         sealed.get("status") != "sealed"
@@ -536,6 +542,13 @@ def _verify_frozen_contract(
         "action_coverage_audit_sha256"
     ):
         raise ValueError("action coverage audit differs from successor seal")
+    readiness_root = (
+        robustness_lineage_path.parent / "artifacts/collector_readiness_audit"
+    )
+    if verify_collector_readiness_audit(readiness_root) != sealed.get(
+        "collector_readiness_audit_sha256"
+    ):
+        raise ValueError("collector readiness audit differs from successor seal")
     execution_protocol = lineage.get("execution_protocol")
     if (
         lineage.get("predecessor") != sealed.get("predecessor")
@@ -544,6 +557,8 @@ def _verify_frozen_contract(
         != sealed.get("action_source_contract_sha256")
         or execution_protocol.get("action_coverage_audit_sha256")
         != sealed.get("action_coverage_audit_sha256")
+        or execution_protocol.get("collector_readiness_audit_sha256")
+        != sealed.get("collector_readiness_audit_sha256")
         or execution_protocol.get("supported_markets")
         != sealed.get("supported_markets")
         or execution_protocol.get("status")

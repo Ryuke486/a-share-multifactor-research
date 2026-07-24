@@ -78,8 +78,13 @@ def build_stage8_successor_lineage(
     supersession: Stage8Supersession,
     action_source_contract_sha256: str,
     action_coverage_audit_sha256: str,
+    collector_readiness_audit_sha256: str,
 ) -> dict[str, Any]:
-    for value in (action_source_contract_sha256, action_coverage_audit_sha256):
+    for value in (
+        action_source_contract_sha256,
+        action_coverage_audit_sha256,
+        collector_readiness_audit_sha256,
+    ):
         if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
             raise ValueError("Stage-8 successor lineage hash is invalid")
     lineage = dict(base)
@@ -87,6 +92,7 @@ def build_stage8_successor_lineage(
     lineage["execution_protocol"] = {
         "action_source_contract_sha256": action_source_contract_sha256,
         "action_coverage_audit_sha256": action_coverage_audit_sha256,
+        "collector_readiness_audit_sha256": collector_readiness_audit_sha256,
         "status": "ready_for_new_final_test_authorization",
     }
     return lineage

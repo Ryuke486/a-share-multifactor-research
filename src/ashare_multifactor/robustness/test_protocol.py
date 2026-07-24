@@ -22,6 +22,7 @@ def seal_test_protocol(
     gate: dict[str, object],
     action_source_contract_sha256: str | None = None,
     action_coverage_audit_sha256: str | None = None,
+    collector_readiness_audit_sha256: str | None = None,
     predecessor: dict[str, object] | None = None,
     supported_markets: tuple[str, ...] = ("sh", "sz"),
 ) -> dict[str, Any]:
@@ -37,6 +38,7 @@ def seal_test_protocol(
     successor_values = (
         action_source_contract_sha256,
         action_coverage_audit_sha256,
+        collector_readiness_audit_sha256,
         predecessor,
     )
     is_successor = any(value is not None for value in successor_values)
@@ -45,6 +47,8 @@ def seal_test_protocol(
             raise ValueError("Stage-8 successor execution contract is incomplete")
         if not _valid_sha256(str(action_source_contract_sha256)) or not _valid_sha256(
             str(action_coverage_audit_sha256)
+        ) or not _valid_sha256(
+            str(collector_readiness_audit_sha256)
         ):
             raise ValueError("Stage-8 successor execution contract hash is invalid")
         if (
@@ -56,7 +60,7 @@ def seal_test_protocol(
         ):
             raise ValueError("Stage-8 successor predecessor identity is invalid")
     payload: dict[str, Any] = {
-        "protocol_version": 2 if is_successor else 1,
+        "protocol_version": 3 if is_successor else 1,
         "status": "sealed",
         "robustness_protocol_sha256": protocol.protocol_sha256,
         "code": code_identity,
@@ -86,6 +90,9 @@ def seal_test_protocol(
             {
                 "action_source_contract_sha256": action_source_contract_sha256,
                 "action_coverage_audit_sha256": action_coverage_audit_sha256,
+                "collector_readiness_audit_sha256": (
+                    collector_readiness_audit_sha256
+                ),
                 "predecessor": predecessor,
             }
         )
