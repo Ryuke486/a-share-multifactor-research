@@ -504,6 +504,7 @@ def test_code_identity_records_dirty_diff_and_source_hashes(tmp_path: Path) -> N
     identity = code_identity(tmp_path)
 
     assert identity["commit"]
+    assert len(identity["tree"]) == 40
     assert identity["dirty"] is True
     assert len(identity["diff_sha256"]) == 64
     assert identity["sources"] == [

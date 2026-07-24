@@ -45,6 +45,8 @@ def seal_test_protocol(
     if is_successor:
         if any(value is None for value in successor_values):
             raise ValueError("Stage-8 successor execution contract is incomplete")
+        if not _valid_git_oid(str(code_identity.get("tree", ""))):
+            raise ValueError("Stage-8 successor Git tree identity is invalid")
         if not _valid_sha256(str(action_source_contract_sha256)) or not _valid_sha256(
             str(action_coverage_audit_sha256)
         ) or not _valid_sha256(
@@ -110,6 +112,12 @@ def seal_test_protocol(
 
 def _valid_sha256(value: str) -> bool:
     return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
+
+
+def _valid_git_oid(value: str) -> bool:
+    return len(value) == 40 and all(
+        character in "0123456789abcdef" for character in value
+    )
 
 
 def verify_test_opening_token(

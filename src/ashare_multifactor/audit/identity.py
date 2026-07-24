@@ -12,6 +12,7 @@ from ashare_multifactor.audit.records import file_record
 def code_identity(root: Path) -> dict[str, object]:
     root = root.resolve()
     commit = _git(root, "rev-parse", "HEAD").strip()
+    tree = _git(root, "rev-parse", "HEAD^{tree}").strip()
     status = _git(root, "status", "--porcelain=v1", "--untracked-files=all")
     diff = _git(root, "diff", "--no-ext-diff", "--binary", "HEAD")
     normalized = (status + "\n" + diff).replace(str(root), "<ROOT>").encode()
@@ -21,6 +22,7 @@ def code_identity(root: Path) -> dict[str, object]:
     ]
     return {
         "commit": commit,
+        "tree": tree,
         "dirty": bool(status.strip()),
         "diff_sha256": hashlib.sha256(normalized).hexdigest(),
         "sources": sources,

@@ -14,6 +14,7 @@ from ashare_multifactor.robustness.test_protocol import seal_test_protocol
 def _identity() -> dict[str, object]:
     return {
         "commit": "a" * 40,
+        "tree": "c" * 40,
         "dirty": False,
         "diff_sha256": "b" * 64,
         "sources": [],
@@ -62,9 +63,50 @@ def test_successor_seal_preserves_predecessor_and_binds_execution_contracts(
     assert sealed["action_source_contract_sha256"] == "2" * 64
     assert sealed["action_coverage_audit_sha256"] == "3" * 64
     assert sealed["collector_readiness_audit_sha256"] == "5" * 64
+    assert sealed["code"]["tree"] == "c" * 40
     assert sealed["predecessor"] == supersession.to_dict()
     assert sealed["opening_token_status"] == "closed"
     assert json.loads((tmp_path / "sealed.json").read_text()) == sealed
+
+
+def test_successor_seal_rejects_missing_git_tree(tmp_path: Path) -> None:
+    identity = _identity()
+    identity.pop("tree")
+
+    try:
+        seal_test_protocol(
+            tmp_path / "sealed.json",
+            protocol=load_robustness_protocol(
+                Path("configs/robustness_protocol.yaml")
+            ),
+            code_identity=identity,
+            validation_pointer={
+                "run_id": (
+                    "65b19e1_stage7_validation_controlled_collector_successor"
+                ),
+                "manifest_sha256": "e" * 64,
+            },
+            market_rules_sha256="1" * 64,
+            action_source_contract_sha256="2" * 64,
+            action_coverage_audit_sha256="3" * 64,
+            collector_readiness_audit_sha256="5" * 64,
+            predecessor={
+                "run_id": "old",
+                "manifest_sha256": "6" * 64,
+                "reason": "incomplete seal",
+                "status": "superseded_for_final_execution",
+            },
+            report_template_sha256="4" * 64,
+            opening_ledger_root=tmp_path / "opening-ledger",
+            gate={
+                "sealed_test_protocol_allowed": True,
+                "status": "ready_to_seal",
+            },
+        )
+    except ValueError as error:
+        assert "Git tree" in str(error)
+    else:
+        raise AssertionError("successor seal without a Git tree was accepted")
 
 
 def test_supersession_rejects_predecessor_manifest_drift(tmp_path: Path) -> None:

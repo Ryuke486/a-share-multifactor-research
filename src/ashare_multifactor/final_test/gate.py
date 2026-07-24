@@ -445,6 +445,13 @@ def _verify_sealed_payload(sealed: dict[str, object]) -> str:
         or not _valid_sha256(
             str(sealed.get("collector_readiness_audit_sha256", ""))
         )
+        or not _valid_git_oid(
+            str(
+                sealed.get("code", {}).get("tree", "")
+                if isinstance(sealed.get("code"), dict)
+                else ""
+            )
+        )
         or not isinstance(sealed.get("predecessor"), dict)
         or sealed.get("supported_markets") != ["sh", "sz"]
     ):
@@ -520,7 +527,15 @@ def _verify_frozen_contract(
     if _git(code_root, "status", "--porcelain=v1", "--untracked-files=all").strip():
         raise ValueError("final-test authorization requires a clean Git identity")
     sealed_commit = str(frozen_code.get("commit", ""))
-    if not sealed_commit or subprocess.run(
+    sealed_tree = str(frozen_code.get("tree", ""))
+    if not _valid_git_oid(sealed_commit) or not _valid_git_oid(sealed_tree):
+        raise ValueError("sealed Git tree identity changed")
+    if (
+        _git(code_root, "rev-parse", f"{sealed_commit}^{{tree}}").strip()
+        != sealed_tree
+    ):
+        raise ValueError("sealed Git tree identity changed")
+    if subprocess.run(
         ("git", "merge-base", "--is-ancestor", sealed_commit, "HEAD"),
         cwd=code_root,
         capture_output=True,
@@ -681,5 +696,11 @@ def _git_readonly_env() -> dict[str, str]:
 
 def _valid_sha256(value: str) -> bool:
     return len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
+
+
+def _valid_git_oid(value: str) -> bool:
+    return len(value) == 40 and all(
         character in "0123456789abcdef" for character in value
     )

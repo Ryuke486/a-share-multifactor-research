@@ -445,7 +445,9 @@ def _successor_release_contract(
             "manifest_sha256": predecessor.manifest_sha256,
         },
         predecessor_manifest=predecessor.manifest,
-        reason="final execution fee and corporate-action coverage incomplete",
+        reason=(
+            "predecessor final-execution seal omitted exact Git tree identity"
+        ),
     )
     return {
         "predecessor": supersession.to_dict(),

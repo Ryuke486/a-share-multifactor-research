@@ -562,6 +562,22 @@ def test_sealed_runtime_python_and_dependencies_are_verified(tmp_path: Path) -> 
     assert not paths["registry"].exists()
 
 
+def test_sealed_git_tree_identity_is_verified(tmp_path: Path) -> None:
+    paths = _fixture(tmp_path)
+
+    def change_tree(sealed: dict[str, object]) -> None:
+        code = dict(sealed["code"])
+        code["tree"] = "0" * 40
+        sealed["code"] = code
+
+    _republish_with_sealed_mutation(paths, tmp_path, change_tree)
+
+    with pytest.raises(ValueError, match="sealed Git tree identity"):
+        _authorize(paths)
+
+    assert not paths["registry"].exists()
+
+
 def test_sealed_metrics_cannot_substitute_robustness_metric_list(tmp_path: Path) -> None:
     paths = _fixture(tmp_path)
 

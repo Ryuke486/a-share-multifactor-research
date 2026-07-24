@@ -129,6 +129,7 @@ def test_successor_publication_contract_binds_predecessor_fees_source_and_audit(
     )
 
     assert contract["predecessor"]["run_id"] == "old-stage8"
+    assert "Git tree identity" in contract["predecessor"]["reason"]
     assert len(contract["market_rules_sha256"]) == 64
     assert len(contract["action_source_contract_sha256"]) == 64
     assert len(contract["action_coverage_audit_sha256"]) == 64
