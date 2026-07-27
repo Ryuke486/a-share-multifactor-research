@@ -20,12 +20,14 @@ from ashare_multifactor.audit.secure_tree import (
     write_frozen_tree_at,
 )
 from ashare_multifactor.data.security import market_for_symbol
-from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.final_test.action_source_contract import (
     OFFICIAL_MARKET_SOURCES,
     SHARED_ANNOUNCEMENT_CATEGORY,
     evidence_url_matches_source,
     load_action_source_contract,
+)
+from ashare_multifactor.final_test.corporate_action_candidates import (
+    normalize_corporate_action_candidates,
 )
 from ashare_multifactor.final_test.corporate_action_coverage import (
     validate_corporate_action_coverage,
@@ -56,6 +58,10 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     directory_identity,
     opened_directory,
     opened_directory_at,
+)
+from ashare_multifactor.final_test.shared_evidence import (
+    resolve_shared_evidence_path,
+    verify_shared_evidence_record,
 )
 
 
@@ -1007,8 +1013,10 @@ def validate_security_event_coverage(
         payload = json.loads(manifest_bytes)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise ValueError("invalid official security-event coverage") from error
+    schema_version = payload.get("schema_version") if isinstance(payload, dict) else None
     if (
         not isinstance(payload, dict)
+        or schema_version not in {None, "2", "3"}
         or payload.get("status") != "ready"
         or payload.get("period") != [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()]
         or payload.get("scope") != "all_final_execution_symbols"
@@ -1041,15 +1049,25 @@ def validate_security_event_coverage(
             "source"
         ] or not evidence_url_matches_source(str(row["source"]), str(row["source_url"])):
             raise ValueError("official security-event evidence source is invalid")
-        cached_input = coverage_root / str(row["cache_file"])
-        _assert_no_symlink_path(cached_input, root=coverage_root)
-        cached = cached_input.resolve()
-        if (
-            not cached.is_relative_to(coverage_root)
-            or not cached.is_file()
-            or sha256_file(cached) != row["sha256"]
-        ):
-            raise ValueError("official security-event evidence changed")
+        if schema_version == "3":
+            try:
+                cached = resolve_shared_evidence_path(
+                    str(row["cache_file"]),
+                    coverage_root=coverage_root,
+                    expected_sha256=str(row["sha256"]),
+                )
+            except ValueError as error:
+                raise ValueError("official security-event evidence changed") from error
+        else:
+            cached_input = coverage_root / str(row["cache_file"])
+            _assert_no_symlink_path(cached_input, root=coverage_root)
+            cached = cached_input.resolve()
+            if (
+                not cached.is_relative_to(coverage_root)
+                or not cached.is_file()
+                or sha256_file(cached) != row["sha256"]
+            ):
+                raise ValueError("official security-event evidence changed")
         evidence_paths.append(cached)
     coverage_paths = []
     for record in payload["coverage"]:
@@ -1068,11 +1086,12 @@ def validate_security_event_coverage(
         "query_end",
         "status",
         "event_count",
-        "evidence_id",
     }
+    if schema_version is None:
+        required.add("evidence_id")
     if not required.issubset(coverage.columns):
         raise ValueError("official security-event query coverage schema is invalid")
-    normalized_coverage = coverage.select(
+    coverage_expressions = [
         pl.col("symbol").cast(pl.String).str.zfill(6).alias("source_symbol"),
         pl.col("source").cast(pl.String),
         pl.col("market").cast(pl.String),
@@ -1080,8 +1099,10 @@ def validate_security_event_coverage(
         pl.col("query_end").cast(pl.Date),
         pl.col("status").cast(pl.String),
         pl.col("event_count").cast(pl.Int64),
-        pl.col("evidence_id").cast(pl.String),
-    )
+    ]
+    if schema_version is None:
+        coverage_expressions.append(pl.col("evidence_id").cast(pl.String))
+    normalized_coverage = coverage.select(coverage_expressions)
     _validate_coverage_markets(normalized_coverage)
     normalized = (
         sorted({str(symbol).zfill(6) for symbol in symbols})
@@ -1107,23 +1128,37 @@ def validate_security_event_coverage(
         | (pl.col("query_end") != FINAL_TEST_END)
         | (pl.col("event_count") < 0)
     )
-    if (
-        invalid.height
-        or normalized_coverage.join(
+    legacy_evidence_mismatch = (
+        normalized_coverage.join(
             evidence_index.select("evidence_id", "source", "market"),
             on=["evidence_id", "source", "market"],
             how="anti",
         ).height
-        or normalized_coverage.get_column("event_count").sum() != payload["event_rows"]
+        if schema_version is None
+        else 0
+    )
+    if (
+        invalid.height
+        or legacy_evidence_mismatch
+        or normalized_coverage.get_column("event_count").sum()
+        != payload["event_rows"]
     ):
         raise ValueError("official security-event query coverage is invalid")
     query_record = payload.get("official_query_coverage")
     if not isinstance(query_record, dict) or query_record.get("role") != "official_query_coverage":
         raise ValueError("official security-event query coverage record is invalid")
     try:
-        official_query_coverage_path = _verify_coverage_file(
-            query_record,
-            root=coverage_root,
+        official_query_coverage_path = (
+            verify_shared_evidence_record(
+                query_record,
+                coverage_root=coverage_root,
+                expected_role="official_query_coverage",
+            )
+            if schema_version == "3"
+            else _verify_coverage_file(
+                query_record,
+                root=coverage_root,
+            )
         )
     except (FileNotFoundError, TypeError, ValueError) as error:
         raise ValueError("official security-event query coverage changed") from error
@@ -1198,9 +1233,13 @@ def validate_security_event_coverage(
         evidence_mismatch = normalized_events.join(
             evidence_index, on=["evidence_id", "source", "market"], how="anti"
         )
+        coverage_join_keys = [
+            *coverage_keys,
+            *(["evidence_id"] if schema_version is None else []),
+        ]
         coverage_mismatch = normalized_events.join(
-            normalized_coverage.select(*coverage_keys, "evidence_id"),
-            on=[*coverage_keys, "evidence_id"],
+            normalized_coverage.select(*coverage_join_keys),
+            on=coverage_join_keys,
             how="anti",
         )
         if (
@@ -1278,150 +1317,14 @@ def _verify_coverage_file(record: dict[str, object], *, root: Path) -> Path:
     return verify_file_record(record, root=root)
 
 
-def _download_final_dividends(
-    symbols: list[str],
-    *,
-    years: tuple[int, ...],
-    year_type: str,
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    try:
-        import baostock as bs
-    except ImportError as error:  # pragma: no cover - environment failure
-        raise RuntimeError("baostock is required for final execution inputs") from error
-    login = bs.login()
-    if login.error_code != "0":
-        raise RuntimeError(f"BaoStock login failed: {login.error_msg}")
-    rows: list[dict[str, object]] = []
-    coverage: list[dict[str, object]] = []
-    known_fields: list[str] | None = None
-    try:
-        for symbol in symbols:
-            prefix = market_for_symbol(symbol)
-            for year in years:
-                result = bs.query_dividend_data(
-                    code=f"{prefix}.{symbol}",
-                    year=str(year),
-                    yearType=year_type,
-                )
-                if result.error_code != "0":
-                    raise RuntimeError(
-                        f"BaoStock dividend query failed: {symbol} {year} {result.error_msg}"
-                    )
-                fields = list(result.fields)
-                if known_fields is None:
-                    known_fields = fields
-                elif fields != known_fields:
-                    raise ValueError("BaoStock dividend response schema changed")
-                count = 0
-                while result.next():
-                    values = result.get_row_data()
-                    if len(values) != len(fields):
-                        raise ValueError("BaoStock dividend response row width changed")
-                    rows.append(
-                        {
-                            **dict(zip(fields, values, strict=True)),
-                            "query_year": year,
-                            "query_year_type": year_type,
-                        }
-                    )
-                    count += 1
-                coverage.append(
-                    {"symbol": symbol, "year": year, "status": "ok", "row_count": count}
-                )
-    finally:
-        bs.logout()
-    schema = {field: pl.String for field in (known_fields or [])}
-    schema.update({"query_year": pl.Int64, "query_year_type": pl.String})
-    return (
-        pl.DataFrame(rows, schema=schema, strict=False),
-        pl.DataFrame(
-            coverage,
-            schema={
-                "symbol": pl.String,
-                "year": pl.Int64,
-                "status": pl.String,
-                "row_count": pl.Int64,
-            },
-        ).sort("symbol", "year"),
-    )
-
-
 def _normalize_final_dividends(
     raw: pl.DataFrame,
     *,
     symbols: set[str],
 ) -> pl.DataFrame:
-    required = {
-        "code",
-        "query_year",
-        "query_year_type",
-        "dividOperateDate",
-        "dividPayDate",
-        "dividStockMarketDate",
-        "dividCashPsBeforeTax",
-        "dividStocksPs",
-        "dividReserveToStockPs",
-    }
-    missing = sorted(required - set(raw.columns))
-    if missing:
-        raise ValueError(f"missing BaoStock final dividend fields: {missing}")
-    if raw.filter(
-        (pl.col("query_year_type") != "operate") | ~pl.col("query_year").is_between(2022, 2025)
-    ).height:
-        raise ValueError("sealed final-test query metadata is invalid")
-    parsed = raw.with_columns(
-        pl.col("code").cast(pl.String).str.split(".").list.last().alias("symbol"),
-        *(
-            pl.col(name).cast(pl.String).replace("", None).str.to_date(strict=False).alias(name)
-            for name in ("dividOperateDate", "dividPayDate", "dividStockMarketDate")
-        ),
-        pl.col("dividCashPsBeforeTax")
-        .cast(pl.Float64, strict=False)
-        .fill_null(0.0)
-        .alias("cash_per_share"),
-        (
-            pl.col("dividStocksPs").cast(pl.Float64, strict=False).fill_null(0.0)
-            + pl.col("dividReserveToStockPs").cast(pl.Float64, strict=False).fill_null(0.0)
-        ).alias("share_ratio"),
+    return normalize_corporate_action_candidates(raw, symbols=symbols).rename(
+        {"candidate_id": "action_id"}
     )
-    if parsed.filter(
-        pl.col("dividOperateDate").is_null()
-        | (pl.col("dividOperateDate").dt.year() != pl.col("query_year"))
-        | ~pl.col("dividOperateDate").is_between(FINAL_TEST_START, FINAL_TEST_END)
-    ).height:
-        raise ValueError("BaoStock final operate-year response contract failed")
-    parsed = parsed.filter(pl.col("symbol").is_in(symbols))
-    cash = parsed.filter(pl.col("cash_per_share") > 0)
-    if cash.filter(pl.col("dividPayDate").is_null()).height:
-        raise ValueError("final cash dividend is missing payment date")
-    shares = parsed.filter(pl.col("share_ratio") > 0)
-    candidates = pl.concat(
-        (
-            cash.select(
-                "symbol",
-                pl.col("dividOperateDate").alias("ex_date"),
-                pl.col("dividPayDate").alias("effective_date"),
-                "cash_per_share",
-                pl.lit(0.0).alias("share_ratio"),
-                pl.lit("baostock_dividend_operate_year").alias("source"),
-            ),
-            shares.select(
-                "symbol",
-                pl.col("dividOperateDate").alias("ex_date"),
-                pl.coalesce("dividStockMarketDate", "dividOperateDate").alias("effective_date"),
-                pl.lit(0.0).alias("cash_per_share"),
-                "share_ratio",
-                pl.lit("baostock_dividend_operate_year").alias("source"),
-            ),
-        ),
-        how="vertical_relaxed",
-    )
-    if candidates.filter(
-        (pl.col("effective_date") < pl.col("ex_date"))
-        | ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
-    ).height:
-        raise ValueError("final corporate action effective date is invalid")
-    return normalize_corporate_actions(candidates, maximum_date=FINAL_TEST_END)
 
 
 def _assert_authorization(authorization: FinalTestAuthorization) -> None:

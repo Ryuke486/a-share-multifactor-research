@@ -7,8 +7,16 @@ from pathlib import Path
 import subprocess
 import sys
 
+import polars as pl
+
 from ashare_multifactor.final_test.action_source_contract import (
     load_action_source_contract,
+)
+from ashare_multifactor.final_test.corporate_action_candidates import (
+    collect_baostock_corporate_action_candidates,
+)
+from ashare_multifactor.final_test.official_coverage_publisher import (
+    publish_official_execution_coverages,
 )
 from ashare_multifactor.final_test.official_announcement_catalog import (
     build_announcement_catalog,
@@ -16,6 +24,16 @@ from ashare_multifactor.final_test.official_announcement_catalog import (
 from ashare_multifactor.final_test.official_document_fetcher import (
     UrllibOfficialDocumentTransport,
     fetch_official_documents,
+)
+from ashare_multifactor.final_test.official_evidence_import import (
+    import_compatible_official_evidence,
+    load_evidence_import_source_authorization,
+)
+from ashare_multifactor.final_test.official_evidence_workspace import (
+    EvidenceWorkspace,
+)
+from ashare_multifactor.final_test.official_review_submission import (
+    publish_review_submission,
 )
 from ashare_multifactor.final_test.official_collection_monitor import (
     CollectionHeartbeatReporter,
@@ -107,6 +125,49 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_common_arguments(documents)
     documents.add_argument("--output-root", type=Path, required=True)
     documents.add_argument("--max-documents", type=_positive_int)
+    documents.add_argument("--retry-quarantined", action="store_true")
+
+    candidates = commands.add_parser(
+        "collect-candidates",
+        help="collect resumable BaoStock candidate queries before human review",
+    )
+    _add_common_arguments(candidates)
+    candidates.add_argument("--output-root", type=Path, required=True)
+    candidates.add_argument("--max-queries", type=_positive_int)
+
+    imported = commands.add_parser(
+        "import-evidence",
+        help="reuse compatible raw evidence from a predecessor attempt",
+    )
+    _add_common_arguments(imported)
+    imported.add_argument("--output-root", type=Path, required=True)
+    imported.add_argument("--source-attempt-id", required=True)
+
+    review = commands.add_parser(
+        "publish-review",
+        help="validate and freeze field-level human review decisions",
+    )
+    _add_common_arguments(review)
+    review.add_argument("--output-root", type=Path, required=True)
+    review.add_argument("--review-queue", type=Path, required=True)
+    review.add_argument("--candidate-manifest", type=Path, required=True)
+    review.add_argument("--announcement-decisions", type=Path, required=True)
+    review.add_argument("--corporate-dispositions", type=Path, required=True)
+    review.add_argument("--corporate-facts", type=Path, required=True)
+    review.add_argument("--security-facts", type=Path, required=True)
+    review.add_argument("--reviewer-id", required=True)
+    review.add_argument("--reviewed-at", required=True)
+
+    coverages = commands.add_parser(
+        "publish-coverages",
+        help="atomically publish corporate-action and security-event coverages",
+    )
+    _add_common_arguments(coverages)
+    coverages.add_argument("--output-root", type=Path, required=True)
+    coverages.add_argument("--review-queue", type=Path, required=True)
+    coverages.add_argument("--candidate-manifest", type=Path, required=True)
+    coverages.add_argument("--submission-manifest", type=Path, required=True)
+    coverages.add_argument("--official-query-index", type=Path, required=True)
 
     monitor = commands.add_parser(
         "monitor-collection",
@@ -235,8 +296,96 @@ def main(argv: Sequence[str] | None = None) -> None:
             destination=args.output_root,
             transport=UrllibOfficialDocumentTransport(),
             max_documents=args.max_documents,
+            retry_quarantined=args.retry_quarantined,
         )
         print(workspace.review_queue_path)
+        return
+
+    if args.command == "collect-candidates":
+        authorization, preparation, contract = _load_prepared_inputs(
+            args,
+            approval_key=approval_key,
+        )
+        result = collect_baostock_corporate_action_candidates(
+            preparation=preparation,
+            authorization=authorization,
+            contract=contract,
+            output_root=args.output_root,
+            max_queries=args.max_queries,
+        )
+        print(result.manifest_path or result.root)
+        return
+
+    if args.command == "import-evidence":
+        authorization, preparation, contract = _load_prepared_inputs(
+            args,
+            approval_key=approval_key,
+        )
+        source_authorization = load_evidence_import_source_authorization(
+            code_root=args.root,
+            data_root=args.data_root,
+            attempt_id=args.source_attempt_id,
+        )
+        source_preparation = verify_preparation(
+            args.data_root / "processed/final_test",
+            attempt_id=args.source_attempt_id,
+            authorization=source_authorization,
+        )
+        source_root = expected_output_root(
+            args.data_root / "processed/final_test",
+            args.source_attempt_id,
+        )
+        result = import_compatible_official_evidence(
+            source_preparation=source_preparation,
+            source_authorization=source_authorization,
+            destination_preparation=preparation,
+            destination_authorization=authorization,
+            contract=contract,
+            source_root=source_root,
+            destination_root=args.output_root,
+        )
+        print(result.workspace.review_queue_path)
+        print(f"missing_documents={len(result.missing_urls)}")
+        return
+
+    if args.command == "publish-review":
+        _authorization, _preparation, _contract = _load_prepared_inputs(
+            args,
+            approval_key=approval_key,
+        )
+        _assert_attempt_output_root(args)
+        workspace = _workspace_from_queue(args.output_root, args.review_queue)
+        result = publish_review_submission(
+            workspace=workspace,
+            candidate_manifest_path=args.candidate_manifest,
+            announcement_decisions=pl.read_parquet(args.announcement_decisions),
+            corporate_action_dispositions=pl.read_parquet(
+                args.corporate_dispositions
+            ),
+            corporate_action_facts=pl.read_parquet(args.corporate_facts),
+            security_event_facts=pl.read_parquet(args.security_facts),
+            reviewer_id=args.reviewer_id,
+            reviewed_at=args.reviewed_at,
+        )
+        print(result.manifest_path)
+        return
+
+    if args.command == "publish-coverages":
+        authorization, preparation, contract = _load_prepared_inputs(
+            args,
+            approval_key=approval_key,
+        )
+        workspace = _workspace_from_queue(args.output_root, args.review_queue)
+        result = publish_official_execution_coverages(
+            preparation=preparation,
+            authorization=authorization,
+            contract=contract,
+            workspace=workspace,
+            candidate_manifest_path=args.candidate_manifest,
+            submission_manifest_path=args.submission_manifest,
+            official_query_index_path=args.official_query_index,
+        )
+        print(result.root)
         return
 
     result = resume_final_test_release(
@@ -249,6 +398,57 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_id=args.run_id,
     )
     print(result.release.root if result.release is not None else result.attempt_root)
+
+
+def _load_prepared_inputs(
+    args: argparse.Namespace,
+    *,
+    approval_key: bytes,
+) -> tuple[FinalTestAuthorization, object, object]:
+    authorization = load_registered_authorization(
+        code_root=args.root,
+        data_root=args.data_root,
+        attempt_id=args.attempt_id,
+        approval_key=approval_key,
+    )
+    preparation = verify_preparation(
+        args.data_root / "processed/final_test",
+        attempt_id=args.attempt_id,
+        authorization=authorization,
+    )
+    contract = load_action_source_contract(
+        args.root / "configs/final_execution_sources.yaml"
+    )
+    return authorization, preparation, contract
+
+
+def _workspace_from_queue(
+    output_root: Path,
+    review_queue: Path,
+) -> EvidenceWorkspace:
+    workspace_root = output_root / "official_document_workspace"
+    expected_parent = workspace_root / "review_sessions"
+    if (
+        review_queue.name != "review_queue.parquet"
+        or review_queue.parent.parent.absolute() != expected_parent.absolute()
+    ):
+        raise ValueError("review queue differs from the official evidence workspace")
+    return EvidenceWorkspace(
+        root=workspace_root,
+        catalog_path=output_root / "official_announcement_catalog/catalog.parquet",
+        routing_path=output_root / "official_announcement_routing/routing.parquet",
+        review_queue_path=review_queue,
+        ready=False,
+    )
+
+
+def _assert_attempt_output_root(args: argparse.Namespace) -> None:
+    expected = expected_output_root(
+        args.data_root / "processed/final_test",
+        args.attempt_id,
+    )
+    if args.output_root.absolute() != expected.absolute():
+        raise ValueError("official evidence output root differs from attempt")
 
 
 def _monitor_collection(args: argparse.Namespace) -> CollectionStatus:

@@ -93,6 +93,31 @@ def prepared_attempt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Prepare
         requires_recovery=False,
         data_manifest_sha256=sha256_file(data_manifest),
     )
+    (final_root / "data-build-claim.json").write_text(
+        json.dumps(
+            {
+                "attempt_id": authorization.attempt_id,
+                "approval_id": authorization.approval_id,
+                "git_commit": authorization.git_commit,
+                "git_tree": authorization.git_tree,
+                "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+                "robustness_release": authorization.robustness_release,
+                "robustness_manifest_sha256": (
+                    authorization.robustness_manifest_sha256
+                ),
+                "robustness_lineage_sha256": (
+                    authorization.robustness_lineage_sha256
+                ),
+                "status": "published",
+                "data_manifest": {
+                    "relative_path": "daily_panel/data_manifest.json",
+                    "sha256": resolution.data_manifest_sha256,
+                    "size_bytes": data_manifest.stat().st_size,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     preparation = _publish_preparation(
         final_root,
         authorization=authorization,
@@ -604,6 +629,28 @@ def test_preflight_rejects_zero_event_without_successful_official_evidence(
 
     assert _registry_snapshot(prepared_attempt) == before
     assert _attempt_state(prepared_attempt) == "awaiting_official_evidence"
+
+
+def test_zero_security_event_symbol_does_not_require_fake_document_evidence(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    from ashare_multifactor.final_test.execution_sources import (
+        validate_security_event_coverage,
+    )
+
+    coverage_path = prepared_attempt.security_coverage.parent / "query_coverage.parquet"
+    pl.read_parquet(coverage_path).drop("evidence_id").write_parquet(coverage_path)
+    payload = json.loads(prepared_attempt.security_coverage.read_text(encoding="utf-8"))
+    payload["schema_version"] = "2"
+    prepared_attempt.security_coverage.write_text(json.dumps(payload), encoding="utf-8")
+    _refresh_security_record(prepared_attempt.security_coverage)
+
+    verified = validate_security_event_coverage(
+        prepared_attempt.security_coverage,
+        symbols=["000001", "600000"],
+    )
+
+    assert verified["event_rows"] == 0
 
 
 @pytest.mark.parametrize("coverage", ["security", "corporate"])

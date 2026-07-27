@@ -198,6 +198,20 @@
 - 新seal为`c2dbb906574ce43375e9869516e0839c669257c2f70a2385c7526f3eda475412`，protocol v2、`opening_token_status=closed`、市场范围仅`sh`/`sz`，并绑定CNInfo身份查询和文档传输修订后的代码身份。前任Stage8 manifest、lineage和seal文件哈希均保持不变。
 - 发布后复核确认`processed/final_test`不存在，新seal对应opening ledger不存在，也没有新attempt、token或最终测试结果。板块9仍未完成，不能开启板块10；下一步必须由用户对上述精确seal作新的独立开启确认，之后才可执行`prepare`。
 
+## 当前 attempt 文档复验与继任边界（2026-07-27）
+
+- `stage9-final-20260724-763d489` 的官方查询已完成；20,623 个文档缓存中
+  20,621 个为可解析 PDF，2 个为 HTML 错误页。
+- 旧代码缺少合法的字段级审核发布器，当前 attempt 不能生成两类
+  `ready` coverage，也不得在修改代码后继续 `resume`。
+- 当前 attempt 和全部证据保持只读。继任方案不重复全量官方查询或文档下载：
+  新 attempt 重建身份和索引，导入并重验旧查询/PDF，只精确补采无效或缺失项。
+- 既有 4,837,769 行最终期日面板也不重建；新 attempt 通过绑定旧 claim、面板
+  manifest、原始输入清单和 v4 协议身份的不可变凭证复用。
+- Stage 7/8 是否重跑由拆分后的身份和 change-impact audit 决定；仅证据工作流
+  变化时复用既有研究结果，但仍须完成 Stage 8 全证据预演和 v4 关闭封印。
+- 新 seal、新授权和新 attempt 完成后仍停在 `resume` 前，由用户再次确认。
+
 ## CNInfo 分页计数事故与采集巡检（2026-07-23）
 
 - 用户授权后，`stage9-final-20260723-857fea4`在seal `c2dbb906574ce43375e9869516e0839c669257c2f70a2385c7526f3eda475412`上完成`prepare`：最终期面板4,837,769行、5,351只沪深证券，状态停在`awaiting_official_evidence`，没有信号、回测、指标、报告、`CURRENT.json`或权威release。

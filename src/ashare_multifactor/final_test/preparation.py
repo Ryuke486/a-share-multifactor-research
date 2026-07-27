@@ -21,6 +21,10 @@ from ashare_multifactor.final_test.data_extension import (
     build_final_test_daily_panel,
     recover_final_test_daily_panel,
 )
+from ashare_multifactor.final_test.data_reuse import (
+    bind_final_test_data_panel,
+    verify_preparation_data_binding,
+)
 from ashare_multifactor.final_test.data_inventory import (
     load_verified_panel_symbols_at,
     verify_file_identity,
@@ -61,7 +65,8 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
 )
 
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
+_LEGACY_SCHEMA_VERSION = "1"
 _SUPPORTED_MARKETS = ("sh", "sz")
 
 
@@ -199,7 +204,7 @@ def _complete_preparation(
         preparation_root,
         final_fd=root_binding.final_fd,
     )
-    resolution = _resolve_or_build_data_panel(
+    resolution, data_binding = _resolve_or_build_data_panel(
         config,
         authorization,
         code_root=code_root,
@@ -214,6 +219,7 @@ def _complete_preparation(
         authorization=authorization,
         resolution=resolution,
         symbols=symbols,
+        data_binding=data_binding,
         root_binding=root_binding,
     )
     root_binding.assert_bound()
@@ -274,12 +280,6 @@ def _recover_preparation(
     root_binding.assert_bound()
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication is not ready for preparation")
-    _assert_data_claim_identity(
-        final_root / "data-build-claim.json",
-        authorization,
-        resolution,
-        final_fd=root_binding.final_fd,
-    )
     result = _verify_preparation_files_at(
         final_root,
         final_fd=root_binding.final_fd,
@@ -422,17 +422,24 @@ def _resolve_or_build_data_panel(
     code_root: Path,
     final_root: Path,
     root_binding: FinalRootBinding,
-) -> FinalTestDataResolution:
+) -> tuple[FinalTestDataResolution, dict[str, object]]:
     claim_path = final_root / "data-build-claim.json"
     if _entry_exists_at(root_binding.final_fd, claim_path.name):
-        resolution = recover_final_test_daily_panel(
-            config,
-            authorization,
-            FINAL_TEST_START,
-            FINAL_TEST_END,
-            code_root=code_root,
-            root_binding=root_binding,
-        )
+        claim = read_data_claim_at(root_binding.final_fd)
+        if _data_claim_authorization_matches(claim, authorization):
+            resolution = recover_final_test_daily_panel(
+                config,
+                authorization,
+                FINAL_TEST_START,
+                FINAL_TEST_END,
+                code_root=code_root,
+                root_binding=root_binding,
+            )
+        else:
+            resolution = resolve_final_test_data_panel_at(
+                final_root,
+                root_binding.final_fd,
+            )
     else:
         build_final_test_daily_panel(
             config,
@@ -447,14 +454,15 @@ def _resolve_or_build_data_panel(
         root_binding.assert_bound()
     if resolution.claim_status != "published" or resolution.requires_recovery:
         raise ValueError("final-test data publication is not ready for preparation")
-    _assert_data_claim_identity(
-        claim_path,
+    binding = bind_final_test_data_panel(
+        config,
         authorization,
         resolution,
-        final_fd=root_binding.final_fd,
+        code_root=code_root,
+        root_binding=root_binding,
     )
     root_binding.assert_bound()
-    return resolution
+    return resolution, binding
 
 
 def _record_preparation_failure(registry_fd: int, attempt_id: str, error: Exception) -> None:
@@ -497,6 +505,25 @@ def _assert_data_claim_identity(
         raise ValueError("final-test data manifest identity differs from claim")
 
 
+def _data_claim_authorization_matches(
+    claim: object,
+    authorization: FinalTestAuthorization,
+) -> bool:
+    expected = {
+        "attempt_id": authorization.attempt_id,
+        "approval_id": authorization.approval_id,
+        "git_commit": authorization.git_commit,
+        "git_tree": authorization.git_tree,
+        "sealed_protocol_sha256": authorization.sealed_protocol_sha256,
+        "robustness_release": authorization.robustness_release,
+        "robustness_manifest_sha256": authorization.robustness_manifest_sha256,
+        "robustness_lineage_sha256": authorization.robustness_lineage_sha256,
+    }
+    return isinstance(claim, dict) and all(
+        claim.get(key) == value for key, value in expected.items()
+    )
+
+
 def _symbols_from_verified_panel(source: SimpleNamespace) -> list[str]:
     frame = (
         pl.scan_parquet(list(source.files))
@@ -533,6 +560,7 @@ def _publish_preparation(
     authorization: FinalTestAuthorization,
     resolution: FinalTestDataResolution,
     symbols: list[str],
+    data_binding: dict[str, object] | None = None,
     root_binding: FinalRootBinding | None = None,
 ) -> FinalTestPreparation:
     if root_binding is None:
@@ -542,6 +570,7 @@ def _publish_preparation(
                 authorization=authorization,
                 resolution=resolution,
                 symbols=symbols,
+                data_binding=data_binding,
                 root_binding=opened_binding,
             )
     root_binding.assert_bound()
@@ -595,7 +624,11 @@ def _publish_preparation(
         if hashlib.sha256(data_manifest_bytes).hexdigest() != resolution.data_manifest_sha256:
             raise ValueError("final-test preparation data manifest identity differs")
         manifest = {
-            "schema_version": _SCHEMA_VERSION,
+            "schema_version": (
+                _SCHEMA_VERSION
+                if data_binding is not None
+                else _LEGACY_SCHEMA_VERSION
+            ),
             "attempt_id": authorization.attempt_id,
             "approval_id": authorization.approval_id,
             "stage8": {
@@ -616,6 +649,8 @@ def _publish_preparation(
             "created_at": authorization.registered_at,
             "state": "awaiting_official_evidence",
         }
+        if data_binding is not None:
+            manifest["data_binding"] = data_binding
         manifest_bytes = (
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
         ).encode("utf-8")
@@ -673,6 +708,12 @@ def _verify_preparation_files(
     except json.JSONDecodeError as error:
         raise ValueError("invalid final-test preparation manifest") from error
     _validate_preparation_manifest(manifest, authorization, resolution)
+    _verify_manifest_data_binding(
+        final_root,
+        manifest,
+        authorization,
+        resolution,
+    )
     data_path = verify_file_identity(final_root, manifest["data_manifest"], "data manifest")
     if data_path != resolution.root / "data_manifest.json":
         raise ValueError("preparation data manifest path is not canonical")
@@ -718,6 +759,13 @@ def _verify_preparation_files_at(
             except json.JSONDecodeError as error:
                 raise ValueError("invalid final-test preparation manifest") from error
             _validate_preparation_manifest(manifest, authorization, resolution)
+            _verify_manifest_data_binding(
+                final_root,
+                manifest,
+                authorization,
+                resolution,
+                final_fd=final_fd,
+            )
             symbol_count, symbols_sha256, symbols = _verify_symbol_scope_at(
                 preparation_fd,
                 manifest["symbol_scope"],
@@ -752,7 +800,7 @@ def _validate_preparation_manifest(
     authorization: FinalTestAuthorization,
     resolution: FinalTestDataResolution,
 ) -> None:
-    if not isinstance(manifest, dict) or set(manifest) != {
+    common_fields = {
         "schema_version",
         "attempt_id",
         "approval_id",
@@ -764,10 +812,21 @@ def _validate_preparation_manifest(
         "symbol_scope",
         "created_at",
         "state",
-    }:
+    }
+    if not isinstance(manifest, dict):
+        raise ValueError("invalid final-test preparation manifest")
+    schema_version = manifest.get("schema_version")
+    expected_fields = (
+        common_fields | {"data_binding"}
+        if schema_version == _SCHEMA_VERSION
+        else common_fields
+        if schema_version == _LEGACY_SCHEMA_VERSION
+        else set()
+    )
+    if set(manifest) != expected_fields:
         raise ValueError("invalid final-test preparation manifest")
     if (
-        manifest["schema_version"] != _SCHEMA_VERSION
+        schema_version not in {_LEGACY_SCHEMA_VERSION, _SCHEMA_VERSION}
         or manifest["attempt_id"] != authorization.attempt_id
         or manifest["approval_id"] != authorization.approval_id
         or manifest["period"] != [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()]
@@ -804,6 +863,31 @@ def _validate_preparation_manifest(
         or not _is_sha256(scope.get("symbols_sha256"))
     ):
         raise ValueError("invalid final-test preparation symbol scope")
+
+
+def _verify_manifest_data_binding(
+    final_root: Path,
+    manifest: dict[str, object],
+    authorization: FinalTestAuthorization,
+    resolution: FinalTestDataResolution,
+    *,
+    final_fd: int | None = None,
+) -> None:
+    if manifest.get("schema_version") == _LEGACY_SCHEMA_VERSION:
+        _assert_data_claim_identity(
+            final_root / "data-build-claim.json",
+            authorization,
+            resolution,
+            final_fd=final_fd,
+        )
+        return
+    verify_preparation_data_binding(
+        final_root,
+        authorization,
+        resolution,
+        manifest.get("data_binding"),
+        final_fd=final_fd,
+    )
 
 
 def _verify_symbol_scope(root: Path, record: object) -> tuple[Path, int, str, list[str]]:

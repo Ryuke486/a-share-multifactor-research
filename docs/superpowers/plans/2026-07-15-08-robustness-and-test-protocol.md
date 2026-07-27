@@ -107,3 +107,21 @@
 - 机器门禁：`ready_to_seal`；无致命实现、协议或账务缺陷。
 - 失败/限制性证据：1200只股票池超出已冻结上游1000只范围，记为`unavailable`；历史行业口径未验证，记为`descriptive_only`。
 - 板块8已正式发布并封存最终测试协议；板块9仍须用户另行明确授权并提供外部开启密钥，当前保持关闭。
+
+## 证据工作流继任规则（2026-07-27）
+
+- 后续协议将 research result、final execution 和 evidence workflow 拆成三个
+  机器身份。只有 evidence workflow 变化且 research result 身份逐哈希一致时，
+  才允许保留 Stage 7/8 研究结果并执行 protocol-only reseal。
+- protocol-only reseal 不是降低 Stage 8 门槛：必须重新验证既有研究产物、
+  生成 change-impact audit，并完成文档准入、候选恢复、审核核销、原子覆盖、
+  证据导入及 2017–2021 历史预演六项 readiness 报告。
+- 历史预演的真实部分是 100 只证券、57,616 条公告目录的全量重路由；字段审核
+  和双覆盖发布在端到端人工夹具上验证，不宣称 408 份历史候选 PDF 已逐份完成
+  人工审核。
+- 任一研究输入、候选、组合、执行规则、成本、评价或研究结果哈希变化，均不得
+  使用复用路径，必须按相应身份域重跑。
+- 具体设计和未完成操作见
+  `docs/superpowers/specs/2026-07-27-stage9-evidence-workflow-successor-design.md`
+  与
+  `docs/superpowers/plans/2026-07-27-stage9-evidence-workflow-successor.md`。

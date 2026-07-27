@@ -85,6 +85,31 @@ def test_zero_event_symbol_requires_hash_bound_cninfo_query_package(
         validate_corporate_action_coverage(root, symbols=["000001", "600000"])
 
 
+def test_zero_event_symbol_does_not_require_fake_document_evidence(
+    tmp_path: Path,
+) -> None:
+    root = _write_coverage(tmp_path)
+    coverage = pl.read_parquet(root / "query_coverage.parquet").drop("evidence_id")
+    coverage.write_parquet(root / "query_coverage.parquet")
+    payload = json.loads((root / "coverage.json").read_text(encoding="utf-8"))
+    payload["schema_version"] = "2"
+    (root / "coverage.json").write_text(json.dumps(payload), encoding="utf-8")
+    _refresh_record(root, "query_coverage")
+
+    verified = validate_corporate_action_coverage(
+        root,
+        symbols=["000001", "600000"],
+    )
+
+    assert (
+        verified["coverage"]
+        .filter(pl.col("symbol") == "600000")
+        .get_column("event_count")
+        .item()
+        == 0
+    )
+
+
 def test_baostock_candidate_requires_official_evidence(tmp_path: Path) -> None:
     root = _write_coverage(tmp_path)
     diff = pl.read_parquet(root / "candidate_diff.parquet").with_columns(

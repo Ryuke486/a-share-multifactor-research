@@ -22,6 +22,10 @@ from ashare_multifactor.final_test.official_query_index import (
     official_query_coverage_schema_version,
     validate_official_query_coverage_index,
 )
+from ashare_multifactor.final_test.shared_evidence import (
+    resolve_shared_evidence_path,
+    verify_shared_evidence_record,
+)
 
 def validate_corporate_action_coverage(
     root: Path, *, symbols: list[str] | None = None
@@ -41,8 +45,10 @@ def validate_corporate_action_coverage(
         "candidate_diff": "corporate_action_candidate_diff",
         "official_query_coverage": "official_query_coverage",
     }
+    schema_version = payload.get("schema_version") if isinstance(payload, dict) else None
     if (
         not isinstance(payload, dict)
+        or schema_version not in {None, "2", "3"}
         or payload.get("status") != "ready"
         or payload.get("period")
         != [FINAL_TEST_START.isoformat(), FINAL_TEST_END.isoformat()]
@@ -59,7 +65,15 @@ def validate_corporate_action_coverage(
         if not isinstance(record, dict) or record.get("role") != role:
             raise ValueError(f"official corporate-action {field} record is invalid")
         try:
-            paths[field] = _verify_coverage_file(record, root=coverage_root)
+            paths[field] = (
+                verify_shared_evidence_record(
+                    record,
+                    coverage_root=coverage_root,
+                    expected_role=role,
+                )
+                if schema_version == "3" and field == "official_query_coverage"
+                else _verify_coverage_file(record, root=coverage_root)
+            )
         except (FileNotFoundError, TypeError, ValueError) as error:
             raise ValueError(f"official corporate-action {field} changed") from error
 
@@ -80,15 +94,27 @@ def validate_corporate_action_coverage(
             or not evidence_url_matches_source(str(row["source"]), str(row["source_url"]))
         ):
             raise ValueError("official corporate-action evidence source is invalid")
-        cached_input = coverage_root / str(row["cache_file"])
-        _assert_no_symlink_path(cached_input, root=coverage_root)
-        cached = cached_input.resolve()
-        if (
-            not cached.is_relative_to(coverage_root)
-            or not cached.is_file()
-            or sha256_file(cached) != row["sha256"]
-        ):
-            raise ValueError("official corporate-action evidence hash changed")
+        if schema_version == "3":
+            try:
+                cached = resolve_shared_evidence_path(
+                    str(row["cache_file"]),
+                    coverage_root=coverage_root,
+                    expected_sha256=str(row["sha256"]),
+                )
+            except ValueError as error:
+                raise ValueError(
+                    "official corporate-action evidence hash changed"
+                ) from error
+        else:
+            cached_input = coverage_root / str(row["cache_file"])
+            _assert_no_symlink_path(cached_input, root=coverage_root)
+            cached = cached_input.resolve()
+            if (
+                not cached.is_relative_to(coverage_root)
+                or not cached.is_file()
+                or sha256_file(cached) != row["sha256"]
+            ):
+                raise ValueError("official corporate-action evidence hash changed")
         evidence_paths.append(cached)
 
     coverage = pl.read_parquet(paths["query_coverage"]).with_columns(
@@ -98,8 +124,10 @@ def validate_corporate_action_coverage(
     )
     coverage_required = {
         "symbol", "source", "market", "query_start", "query_end", "status",
-        "event_count", "evidence_id",
+        "event_count",
     }
+    if schema_version is None:
+        coverage_required.add("evidence_id")
     if not coverage_required.issubset(coverage.columns):
         raise ValueError("official corporate-action query coverage schema is invalid")
     normalized = (
@@ -143,16 +171,22 @@ def validate_corporate_action_coverage(
         raise ValueError("official corporate-action query coverage is not exact")
     coverage_market = coverage.rename({"symbol": "source_symbol"})
     _validate_coverage_markets(coverage_market)
-    if coverage.filter(
+    invalid_coverage = coverage.filter(
         (pl.col("status") != "ok")
         | (pl.col("query_start") != FINAL_TEST_START)
         | (pl.col("query_end") != FINAL_TEST_END)
         | (pl.col("event_count") < 0)
-    ).height or coverage.join(
-        evidence.select("evidence_id", "source", "market"),
-        on=["evidence_id", "source", "market"],
-        how="anti",
-    ).height:
+    ).height
+    legacy_evidence_mismatch = (
+        coverage.join(
+            evidence.select("evidence_id", "source", "market"),
+            on=["evidence_id", "source", "market"],
+            how="anti",
+        ).height
+        if schema_version is None
+        else 0
+    )
+    if invalid_coverage or legacy_evidence_mismatch:
         raise ValueError("official corporate-action query coverage is invalid")
 
     official = pl.read_parquet(paths["official_actions"])

@@ -21,11 +21,16 @@ from ashare_multifactor.audit.secure_tree import (
 )
 from ashare_multifactor.final_test.official_announcement_catalog import (
     VerifiedAnnouncementCatalog,
+    load_verified_announcement_catalog,
 )
 from ashare_multifactor.final_test.official_announcement_routing import (
     ROUTING_DIRECTORY,
     ROUTING_NAME,
     VerifiedAnnouncementRouting,
+    load_verified_announcement_routing,
+)
+from ashare_multifactor.final_test.official_document_validation import (
+    validate_official_document,
 )
 from ashare_multifactor.final_test.official_query_coverage import canonical_json_bytes
 from ashare_multifactor.final_test.recovery_secure_fs import open_directory_at
@@ -33,13 +38,17 @@ from ashare_multifactor.final_test.recovery_secure_fs import open_directory_at
 
 WORKSPACE_DIRECTORY = "official_document_workspace"
 DOCUMENTS_DIRECTORY = "documents"
+QUARANTINE_DIRECTORY = "quarantine"
 REVIEW_SESSIONS_DIRECTORY = "review_sessions"
 REVIEW_QUEUE_NAME = "review_queue.parquet"
 REVIEW_MANIFEST_NAME = "review_manifest.json"
 DOCUMENT_NAME = "document.bin"
 DOCUMENT_MANIFEST_NAME = "document_manifest.json"
+QUARANTINE_RESPONSE_NAME = "response.bin"
+QUARANTINE_MANIFEST_NAME = "quarantine_manifest.json"
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
+_QUARANTINE_SCHEMA_VERSION = "1"
 _IMMUTABLE_ENTRY = re.compile(r"[0-9a-f]{64}")
 _QUEUE_COLUMNS = (
     "catalog_id",
@@ -57,6 +66,10 @@ _QUEUE_COLUMNS = (
     "document_cache_path",
     "document_sha256",
     "document_size_bytes",
+    "document_page_count",
+    "document_media_type",
+    "document_quarantine_path",
+    "document_validation_reason",
     "document_status",
     "review_status",
 )
@@ -76,6 +89,10 @@ _QUEUE_SCHEMA = {
     "document_cache_path": pl.String,
     "document_sha256": pl.String,
     "document_size_bytes": pl.Int64,
+    "document_page_count": pl.Int64,
+    "document_media_type": pl.String,
+    "document_quarantine_path": pl.String,
+    "document_validation_reason": pl.String,
     "document_status": pl.String,
     "review_status": pl.String,
 }
@@ -100,15 +117,40 @@ class CachedOfficialDocument:
     cache_path: str
     sha256: str
     size_bytes: int
+    page_count: int
+    media_type: str
+
+
+@dataclass(frozen=True)
+class QuarantinedOfficialDocument:
+    """Invalid response bytes preserved outside the valid document cache."""
+
+    source_url: str
+    quarantine_path: str
+    sha256: str
+    size_bytes: int
+    reason: str
+
+
+@dataclass(frozen=True)
+class VerifiedReviewQueue:
+    """One immutable queue with its catalog and routing lineage rechecked."""
+
+    frame: pl.DataFrame
+    manifest: dict[str, object]
+    manifest_path: Path
+    manifest_sha256: str
+    session_id: str
 
 
 @contextmanager
-def open_workspace(destination: Path) -> Iterator[tuple[Path, int, int, int]]:
+def open_workspace(destination: Path) -> Iterator[tuple[Path, int, int, int, int]]:
     """Open or create the sole review workspace below a safe evidence root."""
     _assert_safe_directory(destination, label="official evidence destination")
     root_fd = os.open(destination, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     workspace_fd: int | None = None
     documents_fd: int | None = None
+    quarantine_fd: int | None = None
     sessions_fd: int | None = None
     try:
         workspace_fd = _open_or_create_directory(
@@ -121,6 +163,11 @@ def open_workspace(destination: Path) -> Iterator[tuple[Path, int, int, int]]:
             DOCUMENTS_DIRECTORY,
             label="official document cache",
         )
+        quarantine_fd = _open_or_create_directory(
+            workspace_fd,
+            QUARANTINE_DIRECTORY,
+            label="official document quarantine",
+        )
         sessions_fd = _open_or_create_directory(
             workspace_fd,
             REVIEW_SESSIONS_DIRECTORY,
@@ -128,6 +175,7 @@ def open_workspace(destination: Path) -> Iterator[tuple[Path, int, int, int]]:
         )
         if set(os.listdir(workspace_fd)) != {
             DOCUMENTS_DIRECTORY,
+            QUARANTINE_DIRECTORY,
             REVIEW_SESSIONS_DIRECTORY,
         }:
             raise ValueError("official document workspace inventory is unsafe")
@@ -136,15 +184,27 @@ def open_workspace(destination: Path) -> Iterator[tuple[Path, int, int, int]]:
             label="official document cache",
         )
         _assert_immutable_directory_inventory(
+            quarantine_fd,
+            label="official document quarantine",
+        )
+        _assert_immutable_directory_inventory(
             sessions_fd,
             label="official review sessions",
         )
-        yield destination / WORKSPACE_DIRECTORY, workspace_fd, documents_fd, sessions_fd
+        yield (
+            destination / WORKSPACE_DIRECTORY,
+            workspace_fd,
+            documents_fd,
+            quarantine_fd,
+            sessions_fd,
+        )
     finally:
         if sessions_fd is not None:
             os.close(sessions_fd)
         if documents_fd is not None:
             os.close(documents_fd)
+        if quarantine_fd is not None:
+            os.close(quarantine_fd)
         if workspace_fd is not None:
             os.close(workspace_fd)
         os.close(root_fd)
@@ -182,17 +242,17 @@ def publish_document_cache(
     payload: bytes,
 ) -> CachedOfficialDocument:
     """Write one immutable document tree, never replacing cached bytes."""
-    if not isinstance(payload, bytes) or not payload:
-        raise ValueError("official document response is empty")
+    validated = validate_official_document(payload, source_url=source_url)
     cache_id = _cache_id(source_url)
-    digest = hashlib.sha256(payload).hexdigest()
     manifest = {
         "schema_version": _SCHEMA_VERSION,
         "role": "official_document_cache",
         "source_url": source_url,
         "cache_path": f"{DOCUMENTS_DIRECTORY}/{cache_id}/{DOCUMENT_NAME}",
-        "sha256": digest,
-        "size_bytes": len(payload),
+        "sha256": validated.sha256,
+        "size_bytes": validated.size_bytes,
+        "media_type": validated.media_type,
+        "page_count": validated.page_count,
     }
     write_frozen_tree_at(
         documents_fd,
@@ -205,9 +265,95 @@ def publish_document_cache(
         label="official document cache entry",
     )
     cached = load_cached_document(documents_fd, source_url=source_url)
-    if cached is None or cached.sha256 != digest or cached.size_bytes != len(payload):
+    if (
+        cached is None
+        or cached.sha256 != validated.sha256
+        or cached.size_bytes != validated.size_bytes
+        or cached.page_count != validated.page_count
+    ):
         raise ValueError("official document cache identity differs after publication")
     return cached
+
+
+def load_quarantined_document(
+    quarantine_fd: int,
+    *,
+    source_url: str,
+) -> QuarantinedOfficialDocument | None:
+    """Return one immutable invalid response previously kept outside the cache."""
+    quarantine_id = _cache_id(source_url)
+    try:
+        metadata = os.stat(quarantine_id, dir_fd=quarantine_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError("official document quarantine entry is unsafe")
+    entry_fd = open_directory_at(
+        quarantine_fd,
+        quarantine_id,
+        label="official document quarantine entry",
+    )
+    try:
+        files = read_frozen_tree_at(
+            entry_fd,
+            label="official document quarantine entry",
+        )
+    finally:
+        os.close(entry_fd)
+    return _validate_quarantine_tree(
+        files,
+        source_url=source_url,
+        quarantine_id=quarantine_id,
+    )
+
+
+def publish_document_quarantine(
+    quarantine_fd: int,
+    *,
+    source_url: str,
+    payload: bytes,
+    reason: str,
+) -> QuarantinedOfficialDocument:
+    """Preserve invalid response bytes without admitting them as PDF evidence."""
+    if (
+        not isinstance(payload, bytes)
+        or not payload
+        or not isinstance(reason, str)
+        or not reason
+    ):
+        raise ValueError("official document quarantine response is invalid")
+    quarantine_id = _cache_id(source_url)
+    digest = hashlib.sha256(payload).hexdigest()
+    manifest = {
+        "schema_version": _QUARANTINE_SCHEMA_VERSION,
+        "role": "official_document_quarantine",
+        "source_url": source_url,
+        "quarantine_path": (
+            f"{QUARANTINE_DIRECTORY}/{quarantine_id}/{QUARANTINE_RESPONSE_NAME}"
+        ),
+        "sha256": digest,
+        "size_bytes": len(payload),
+        "reason": reason,
+    }
+    write_frozen_tree_at(
+        quarantine_fd,
+        quarantine_id,
+        {
+            QUARANTINE_RESPONSE_NAME: payload,
+            QUARANTINE_MANIFEST_NAME: canonical_json_bytes(manifest),
+        },
+        resumable=True,
+        label="official document quarantine entry",
+    )
+    quarantined = load_quarantined_document(quarantine_fd, source_url=source_url)
+    if (
+        quarantined is None
+        or quarantined.sha256 != digest
+        or quarantined.size_bytes != len(payload)
+        or quarantined.reason != reason
+    ):
+        raise ValueError("official document quarantine identity differs after publication")
+    return quarantined
 
 
 def publish_review_workspace(
@@ -217,9 +363,15 @@ def publish_review_workspace(
     catalog: VerifiedAnnouncementCatalog,
     routing: VerifiedAnnouncementRouting,
     cached_documents: Mapping[str, CachedOfficialDocument],
+    quarantined_documents: Mapping[str, QuarantinedOfficialDocument],
 ) -> EvidenceWorkspace:
     """Publish one immutable review snapshot and deliberately leave it unready."""
-    rows = _review_rows(catalog.frame, routing.frame, cached_documents)
+    rows = _review_rows(
+        catalog.frame,
+        routing.frame,
+        cached_documents,
+        quarantined_documents,
+    )
     queue = pl.DataFrame(rows, schema=_QUEUE_SCHEMA).sort("catalog_id")
     queue_bytes = _parquet_bytes(queue)
     document_records = [
@@ -228,8 +380,23 @@ def publish_review_workspace(
             "cache_path": item.cache_path,
             "sha256": item.sha256,
             "size_bytes": item.size_bytes,
+            "page_count": item.page_count,
+            "media_type": item.media_type,
         }
         for item in sorted(cached_documents.values(), key=lambda value: value.source_url)
+    ]
+    quarantine_records = [
+        {
+            "source_url": item.source_url,
+            "quarantine_path": item.quarantine_path,
+            "sha256": item.sha256,
+            "size_bytes": item.size_bytes,
+            "reason": item.reason,
+        }
+        for item in sorted(
+            quarantined_documents.values(),
+            key=lambda value: value.source_url,
+        )
     ]
     session_id = hashlib.sha256(
         canonical_json_bytes(
@@ -237,6 +404,7 @@ def publish_review_workspace(
                 "catalog_sha256": catalog.catalog_sha256,
                 "routing_sha256": routing.routing_sha256,
                 "documents": document_records,
+                "quarantined_documents": quarantine_records,
             }
         )
     ).hexdigest()
@@ -252,6 +420,7 @@ def publish_review_workspace(
             "sha256": routing.routing_sha256,
         },
         "documents": document_records,
+        "quarantined_documents": quarantine_records,
         "review_queue": {
             "path": REVIEW_QUEUE_NAME,
             "sha256": hashlib.sha256(queue_bytes).hexdigest(),
@@ -295,6 +464,45 @@ def validate_review_submission(workspace: EvidenceWorkspace, submission: Path) -
     )
 
 
+def load_verified_review_queue(workspace: EvidenceWorkspace) -> VerifiedReviewQueue:
+    """Reload a review queue only after rechecking its complete upstream lineage."""
+    if not isinstance(workspace, EvidenceWorkspace) or workspace.ready:
+        raise ValueError("official evidence workspace is invalid")
+    root = workspace.review_queue_path.parent.absolute()
+    expected_parent = workspace.root / REVIEW_SESSIONS_DIRECTORY
+    if (
+        workspace.review_queue_path.name != REVIEW_QUEUE_NAME
+        or root.parent.absolute() != expected_parent.absolute()
+        or _IMMUTABLE_ENTRY.fullmatch(root.name) is None
+    ):
+        raise ValueError("official evidence review queue path is not canonical")
+    manifest_path = root / REVIEW_MANIFEST_NAME
+    _assert_safe_regular_file(manifest_path, label="official evidence review manifest")
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = _canonical_object(
+        manifest_bytes,
+        label="official evidence review manifest",
+    )
+    catalog_record = manifest.get("catalog")
+    routing_record = manifest.get("routing")
+    if not isinstance(catalog_record, dict) or not isinstance(routing_record, dict):
+        raise ValueError("official evidence review lineage is invalid")
+    destination = workspace.root.parent
+    catalog_path = destination / str(catalog_record.get("relative_path", ""))
+    routing_path = destination / str(routing_record.get("relative_path", ""))
+    catalog = load_verified_announcement_catalog(catalog_path)
+    routing = load_verified_announcement_routing(routing_path, catalog=catalog)
+    _verify_review_session(root, catalog=catalog, routing=routing)
+    queue = pl.read_parquet(workspace.review_queue_path)
+    return VerifiedReviewQueue(
+        frame=queue,
+        manifest=manifest,
+        manifest_path=manifest_path,
+        manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+        session_id=root.name,
+    )
+
+
 def _validate_document_tree(
     files: dict[str, bytes],
     *,
@@ -308,13 +516,16 @@ def _validate_document_tree(
         label="official document cache manifest",
     )
     payload = files[DOCUMENT_NAME]
+    validated = validate_official_document(payload, source_url=source_url)
     expected = {
         "schema_version": _SCHEMA_VERSION,
         "role": "official_document_cache",
         "source_url": source_url,
         "cache_path": f"{DOCUMENTS_DIRECTORY}/{cache_id}/{DOCUMENT_NAME}",
-        "sha256": hashlib.sha256(payload).hexdigest(),
-        "size_bytes": len(payload),
+        "sha256": validated.sha256,
+        "size_bytes": validated.size_bytes,
+        "media_type": validated.media_type,
+        "page_count": validated.page_count,
     }
     if manifest != expected:
         raise ValueError("official document cache identity differs")
@@ -323,6 +534,47 @@ def _validate_document_tree(
         cache_path=str(manifest["cache_path"]),
         sha256=str(manifest["sha256"]),
         size_bytes=int(manifest["size_bytes"]),
+        page_count=int(manifest["page_count"]),
+        media_type=str(manifest["media_type"]),
+    )
+
+
+def _validate_quarantine_tree(
+    files: dict[str, bytes],
+    *,
+    source_url: str,
+    quarantine_id: str,
+) -> QuarantinedOfficialDocument:
+    if set(files) != {QUARANTINE_RESPONSE_NAME, QUARANTINE_MANIFEST_NAME}:
+        raise ValueError("official document quarantine inventory is invalid")
+    payload = files[QUARANTINE_RESPONSE_NAME]
+    manifest = _canonical_object(
+        files[QUARANTINE_MANIFEST_NAME],
+        label="official document quarantine manifest",
+    )
+    expected = {
+        "schema_version": _QUARANTINE_SCHEMA_VERSION,
+        "role": "official_document_quarantine",
+        "source_url": source_url,
+        "quarantine_path": (
+            f"{QUARANTINE_DIRECTORY}/{quarantine_id}/{QUARANTINE_RESPONSE_NAME}"
+        ),
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+        "reason": manifest.get("reason"),
+    }
+    if (
+        manifest != expected
+        or not isinstance(manifest.get("reason"), str)
+        or not manifest["reason"]
+    ):
+        raise ValueError("official document quarantine identity differs")
+    return QuarantinedOfficialDocument(
+        source_url=source_url,
+        quarantine_path=str(manifest["quarantine_path"]),
+        sha256=str(manifest["sha256"]),
+        size_bytes=int(manifest["size_bytes"]),
+        reason=str(manifest["reason"]),
     )
 
 
@@ -330,6 +582,7 @@ def _review_rows(
     catalog: pl.DataFrame,
     routing: pl.DataFrame,
     cached_documents: Mapping[str, CachedOfficialDocument],
+    quarantined_documents: Mapping[str, QuarantinedOfficialDocument],
 ) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     selected = (
@@ -339,6 +592,9 @@ def _review_rows(
     )
     for row in selected.iter_rows(named=True):
         cached = cached_documents.get(row["source_url"])
+        quarantined = quarantined_documents.get(row["source_url"])
+        if cached is not None and quarantined is not None:
+            raise ValueError("official document cannot be both cached and quarantined")
         rows.append(
             {
                 "catalog_id": row["catalog_id"],
@@ -356,7 +612,21 @@ def _review_rows(
                 "document_cache_path": cached.cache_path if cached else "",
                 "document_sha256": cached.sha256 if cached else "",
                 "document_size_bytes": cached.size_bytes if cached else 0,
-                "document_status": "cached" if cached else "not_fetched",
+                "document_page_count": cached.page_count if cached else 0,
+                "document_media_type": cached.media_type if cached else "",
+                "document_quarantine_path": (
+                    quarantined.quarantine_path if quarantined else ""
+                ),
+                "document_validation_reason": (
+                    quarantined.reason if quarantined else ""
+                ),
+                "document_status": (
+                    "cached"
+                    if cached
+                    else "quarantined"
+                    if quarantined
+                    else "not_fetched"
+                ),
                 "review_status": "needs_review",
             }
         )

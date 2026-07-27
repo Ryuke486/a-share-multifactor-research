@@ -6,6 +6,9 @@ from pathlib import Path
 from typing import Any
 
 from ashare_multifactor.audit.records import sha256_file, verify_file_record
+from ashare_multifactor.robustness.protocol_identities import (
+    validate_protocol_identities,
+)
 
 
 @dataclass(frozen=True)
@@ -79,6 +82,9 @@ def build_stage8_successor_lineage(
     action_source_contract_sha256: str,
     action_coverage_audit_sha256: str,
     collector_readiness_audit_sha256: str,
+    protocol_identities: dict[str, dict[str, object]] | None = None,
+    change_impact_audit_sha256: str | None = None,
+    evidence_workflow_readiness_audit_sha256: str | None = None,
 ) -> dict[str, Any]:
     for value in (
         action_source_contract_sha256,
@@ -95,4 +101,31 @@ def build_stage8_successor_lineage(
         "collector_readiness_audit_sha256": collector_readiness_audit_sha256,
         "status": "ready_for_new_final_test_authorization",
     }
+    v4_values = (
+        protocol_identities,
+        change_impact_audit_sha256,
+        evidence_workflow_readiness_audit_sha256,
+    )
+    if any(value is not None for value in v4_values):
+        if any(value is None for value in v4_values):
+            raise ValueError("Stage-8 evidence-workflow lineage is incomplete")
+        identities = validate_protocol_identities(protocol_identities)
+        for value in (
+            str(change_impact_audit_sha256),
+            str(evidence_workflow_readiness_audit_sha256),
+        ):
+            if len(value) != 64 or any(
+                character not in "0123456789abcdef" for character in value
+            ):
+                raise ValueError("Stage-8 evidence-workflow lineage hash is invalid")
+        lineage["protocol_identities"] = identities
+        lineage["execution_protocol"].update(
+            {
+                "change_impact_audit_sha256": change_impact_audit_sha256,
+                "evidence_workflow_readiness_audit_sha256": (
+                    evidence_workflow_readiness_audit_sha256
+                ),
+                "research_replay": "reused_predecessor_results",
+            }
+        )
     return lineage

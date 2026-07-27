@@ -371,3 +371,45 @@ def test_collect_documents_keeps_attempt_and_ledger_bytes_unchanged(
     assert _tree_bytes(attempts) == before
     assert prepared_cli.attempt.consumption_ledger.read_bytes() == ledger_before
     assert capsys.readouterr().out.strip().endswith("review_queue.parquet")
+
+
+def test_publish_review_rejects_foreign_workspace_after_authorization_preflight(
+    prepared_cli: PreparedCli,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from ashare_multifactor.cli import final_test
+
+    foreign = prepared_cli.attempt.data_root / "foreign-evidence"
+    queue = (
+        foreign
+        / "official_document_workspace/review_sessions/session/review_queue.parquet"
+    )
+    monkeypatch.setattr(
+        final_test,
+        "publish_review_submission",
+        lambda **_kwargs: pytest.fail("foreign review must not be published"),
+    )
+    argv = [
+        "publish-review",
+        *prepared_cli.argv[:-1],
+        str(foreign),
+        "--review-queue",
+        str(queue),
+        "--candidate-manifest",
+        str(foreign / "candidate-manifest.json"),
+        "--announcement-decisions",
+        str(foreign / "announcement-decisions.parquet"),
+        "--corporate-dispositions",
+        str(foreign / "corporate-dispositions.parquet"),
+        "--corporate-facts",
+        str(foreign / "corporate-facts.parquet"),
+        "--security-facts",
+        str(foreign / "security-facts.parquet"),
+        "--reviewer-id",
+        "reviewer",
+        "--reviewed-at",
+        "2026-07-27T20:00:00+08:00",
+    ]
+
+    with pytest.raises(ValueError, match="output root differs from attempt"):
+        final_test.main(argv)

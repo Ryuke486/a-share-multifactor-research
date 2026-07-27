@@ -6,17 +6,23 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 import hashlib
 import json
+import os
 from pathlib import Path, PurePosixPath
 import re
-import shutil
 from typing import Any, Iterable
 
+from ashare_multifactor.audit.secure_tree import (
+    atomic_rename_no_replace_at,
+    read_frozen_tree_at,
+    write_frozen_tree_at,
+)
 from ashare_multifactor.final_test.official_query_coverage import (
     OfficialQueryScope,
     VerifiedOfficialQueryPackage,
     canonical_json_bytes,
     validate_official_query_package,
 )
+from ashare_multifactor.final_test.recovery_secure_fs import open_directory_at
 
 
 _LEGACY_SCHEMA_VERSION = "1"
@@ -101,10 +107,8 @@ def copy_validated_official_query_coverage(
         expected_scopes=scopes,
     )
     destination_root.mkdir(parents=True, exist_ok=True)
+    _assert_safe_destination(destination_root)
     destination_index = destination_root / source.name
-    if destination_index.exists() or destination_index.is_symlink():
-        raise FileExistsError("official query coverage destination index already exists")
-    shutil.copy2(source, destination_index)
     for package in verified.packages:
         scope = package.scope
         relative = PurePosixPath(
@@ -114,15 +118,117 @@ def copy_validated_official_query_coverage(
         )
         source_package = source.parent / relative
         destination_package = destination_root / relative
-        if destination_package.exists() or destination_package.is_symlink():
-            raise FileExistsError("official query coverage destination package already exists")
-        destination_package.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(source_package, destination_package)
+        _copy_or_complete_package(
+            source_package,
+            destination_package,
+            destination_root=destination_root,
+        )
+        imported = validate_official_query_package(
+            destination_package,
+            expected_scope=scope,
+        )
+        if imported != package:
+            raise ValueError("imported official query package differs from source")
+    _publish_imported_index(destination_root, source.read_bytes())
     validate_official_query_coverage_index(source, expected_scopes=scopes)
     validate_official_query_coverage_index(
         destination_index,
         expected_scopes=scopes,
     )
+
+
+def _copy_or_complete_package(
+    source: Path,
+    destination: Path,
+    *,
+    destination_root: Path,
+) -> None:
+    source_fd = os.open(source, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        files = read_frozen_tree_at(source_fd, label="official query source package")
+    finally:
+        os.close(source_fd)
+    relative_parent = destination.parent.relative_to(destination_root)
+    root_fd = os.open(
+        destination_root,
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+    )
+    opened: list[int] = []
+    descriptor = root_fd
+    try:
+        for part in relative_parent.parts:
+            try:
+                os.mkdir(part, mode=0o700, dir_fd=descriptor)
+            except FileExistsError:
+                pass
+            child = open_directory_at(
+                descriptor,
+                part,
+                label="official query import parent",
+            )
+            if descriptor != root_fd:
+                opened.append(descriptor)
+            descriptor = child
+        write_frozen_tree_at(
+            descriptor,
+            destination.name,
+            files,
+            resumable=True,
+            label="imported official query package",
+        )
+    finally:
+        if descriptor != root_fd:
+            os.close(descriptor)
+        for item in reversed(opened):
+            os.close(item)
+        os.close(root_fd)
+
+
+def _publish_imported_index(root: Path, payload: bytes) -> None:
+    destination = root / "official_query_coverage.json"
+    if destination.exists():
+        if destination.is_symlink() or destination.read_bytes() != payload:
+            raise ValueError("imported official query index differs")
+        return
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    temporary = ".official-query-coverage.import.tmp"
+    try:
+        flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
+        file_fd = os.open(temporary, flags, 0o600, dir_fd=descriptor)
+        try:
+            size = os.fstat(file_fd).st_size
+            existing = os.read(file_fd, size)
+            if not payload.startswith(existing):
+                raise ValueError("imported official query index partial bytes differ")
+            if len(existing) < len(payload):
+                os.lseek(file_fd, 0, os.SEEK_END)
+                os.write(file_fd, payload[len(existing) :])
+                os.fsync(file_fd)
+        finally:
+            os.close(file_fd)
+        atomic_rename_no_replace_at(
+            descriptor,
+            temporary,
+            "official_query_coverage.json",
+        )
+        os.fsync(descriptor)
+    except FileExistsError:
+        if destination.read_bytes() != payload:
+            raise ValueError("imported official query index differs")
+    finally:
+        try:
+            os.unlink(temporary, dir_fd=descriptor)
+        except FileNotFoundError:
+            pass
+        os.close(descriptor)
+
+
+def _assert_safe_destination(root: Path) -> None:
+    if root.is_symlink() or not root.is_dir():
+        raise ValueError("official query coverage destination is unsafe")
+    for ancestor in (root, *root.parents):
+        if ancestor.is_symlink():
+            raise ValueError("official query coverage destination uses a symlink")
 
 
 def _safe_index_path(path: Path) -> Path:

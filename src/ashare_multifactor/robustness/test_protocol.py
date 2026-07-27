@@ -8,6 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from ashare_multifactor.robustness.protocol import RobustnessProtocol
+from ashare_multifactor.robustness.protocol_identities import (
+    validate_protocol_identities,
+)
 
 
 def seal_test_protocol(
@@ -24,6 +27,9 @@ def seal_test_protocol(
     action_coverage_audit_sha256: str | None = None,
     collector_readiness_audit_sha256: str | None = None,
     predecessor: dict[str, object] | None = None,
+    protocol_identities: dict[str, dict[str, object]] | None = None,
+    change_impact_audit_sha256: str | None = None,
+    evidence_workflow_readiness_audit_sha256: str | None = None,
     supported_markets: tuple[str, ...] = ("sh", "sz"),
 ) -> dict[str, Any]:
     """Write the complete Stage-9 contract without opening or scanning test data."""
@@ -61,8 +67,22 @@ def seal_test_protocol(
             or not predecessor.get("reason")
         ):
             raise ValueError("Stage-8 successor predecessor identity is invalid")
+    v4_values = (
+        protocol_identities,
+        change_impact_audit_sha256,
+        evidence_workflow_readiness_audit_sha256,
+    )
+    is_v4 = any(value is not None for value in v4_values)
+    if is_v4:
+        if not is_successor or any(value is None for value in v4_values):
+            raise ValueError("Stage-8 evidence-workflow successor is incomplete")
+        protocol_identities = validate_protocol_identities(protocol_identities)
+        if not _valid_sha256(str(change_impact_audit_sha256)) or not _valid_sha256(
+            str(evidence_workflow_readiness_audit_sha256)
+        ):
+            raise ValueError("Stage-8 evidence-workflow audit hash is invalid")
     payload: dict[str, Any] = {
-        "protocol_version": 3 if is_successor else 1,
+        "protocol_version": 4 if is_v4 else 3 if is_successor else 1,
         "status": "sealed",
         "robustness_protocol_sha256": protocol.protocol_sha256,
         "code": code_identity,
@@ -96,6 +116,16 @@ def seal_test_protocol(
                     collector_readiness_audit_sha256
                 ),
                 "predecessor": predecessor,
+            }
+        )
+    if is_v4:
+        payload.update(
+            {
+                "protocol_identities": protocol_identities,
+                "change_impact_audit_sha256": change_impact_audit_sha256,
+                "evidence_workflow_readiness_audit_sha256": (
+                    evidence_workflow_readiness_audit_sha256
+                ),
             }
         )
     canonical = json.dumps(

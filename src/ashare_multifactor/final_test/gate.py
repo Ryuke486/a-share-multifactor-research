@@ -29,7 +29,16 @@ from ashare_multifactor.final_test.recovery_secure_fs import read_bytes_at
 from ashare_multifactor.robustness.collector_readiness import (
     verify_collector_readiness_audit,
 )
+from ashare_multifactor.robustness.change_impact import (
+    verify_change_impact_audit,
+)
+from ashare_multifactor.robustness.evidence_workflow_readiness import (
+    verify_evidence_workflow_readiness_audit,
+)
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
+from ashare_multifactor.robustness.protocol_identities import (
+    validate_protocol_identities,
+)
 from ashare_multifactor.robustness.successor_seal import (
     verify_action_coverage_audit,
 )
@@ -438,8 +447,9 @@ def _verify_sealed_payload(sealed: dict[str, object]) -> str:
     ).encode()
     if not recorded or hashlib.sha256(canonical).hexdigest() != recorded:
         raise ValueError("sealed protocol hash does not match its payload")
+    protocol_version = sealed.get("protocol_version")
     if (
-        sealed.get("protocol_version") != 3
+        protocol_version not in {3, 4}
         or not _valid_sha256(str(sealed.get("action_source_contract_sha256", "")))
         or not _valid_sha256(str(sealed.get("action_coverage_audit_sha256", "")))
         or not _valid_sha256(
@@ -456,8 +466,17 @@ def _verify_sealed_payload(sealed: dict[str, object]) -> str:
         or sealed.get("supported_markets") != ["sh", "sz"]
     ):
         raise ValueError(
-            "final-test authorization requires Stage-8 successor protocol v3"
+            "final-test authorization requires Stage-8 successor protocol v3 or v4"
         )
+    if protocol_version == 4 and (
+        not _valid_sha256(str(sealed.get("change_impact_audit_sha256", "")))
+        or not _valid_sha256(
+            str(sealed.get("evidence_workflow_readiness_audit_sha256", ""))
+        )
+    ):
+        raise ValueError("final-test authorization requires protocol v4 readiness")
+    if protocol_version == 4:
+        validate_protocol_identities(sealed.get("protocol_identities"))
     if (
         sealed.get("status") != "sealed"
         or sealed.get("opening_token_status") != "closed"
@@ -564,6 +583,45 @@ def _verify_frozen_contract(
         "collector_readiness_audit_sha256"
     ):
         raise ValueError("collector readiness audit differs from successor seal")
+    if sealed.get("protocol_version") == 4:
+        change_impact_path = (
+            robustness_lineage_path.parent / "artifacts/change_impact_audit.json"
+        )
+        if verify_change_impact_audit(change_impact_path) != sealed.get(
+            "change_impact_audit_sha256"
+        ):
+            raise ValueError("change-impact audit differs from successor seal")
+        change_impact = json.loads(change_impact_path.read_text(encoding="utf-8"))
+        if (
+            change_impact.get("research_replay_required") is not False
+            or change_impact.get("stage7_stage8_research_results_reusable")
+            is not True
+            or change_impact.get("current_identities")
+            != sealed.get("protocol_identities")
+        ):
+            raise ValueError("change-impact audit does not permit research reuse")
+        evidence_readiness_root = (
+            robustness_lineage_path.parent
+            / "artifacts/evidence_workflow_readiness"
+        )
+        if verify_evidence_workflow_readiness_audit(
+            evidence_readiness_root
+        ) != sealed.get("evidence_workflow_readiness_audit_sha256"):
+            raise ValueError(
+                "evidence workflow readiness differs from successor seal"
+            )
+        evidence_readiness = json.loads(
+            (evidence_readiness_root / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        identities = sealed.get("protocol_identities")
+        if (
+            not isinstance(identities, dict)
+            or evidence_readiness.get("evidence_workflow_identity")
+            != identities.get("evidence_workflow")
+        ):
+            raise ValueError("evidence workflow readiness identity differs")
     execution_protocol = lineage.get("execution_protocol")
     if (
         lineage.get("predecessor") != sealed.get("predecessor")
@@ -580,6 +638,16 @@ def _verify_frozen_contract(
         != "ready_for_new_final_test_authorization"
     ):
         raise ValueError("successor lineage differs from sealed execution protocol")
+    if sealed.get("protocol_version") == 4 and (
+        lineage.get("protocol_identities") != sealed.get("protocol_identities")
+        or execution_protocol.get("change_impact_audit_sha256")
+        != sealed.get("change_impact_audit_sha256")
+        or execution_protocol.get("evidence_workflow_readiness_audit_sha256")
+        != sealed.get("evidence_workflow_readiness_audit_sha256")
+        or execution_protocol.get("research_replay")
+        != "reused_predecessor_results"
+    ):
+        raise ValueError("protocol v4 lineage differs from sealed identities")
     inputs = lineage.get("inputs")
     research_record = inputs.get("research_protocol") if isinstance(inputs, dict) else None
     research_path = code_root / "configs/research_protocol.yaml"

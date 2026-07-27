@@ -3097,18 +3097,21 @@ def test_normal_bound_data_resolver_never_reads_or_locks_replacement_root(
     _patch_steps(monkeypatch, publishable=True)
     final_root = prepared_attempt.data_root / "processed/final_test"
     data_manifest = final_root / "daily_panel/data_manifest.json"
+    claim = json.loads(
+        (final_root / "data-build-claim.json").read_text(encoding="utf-8")
+    )
+    claim.update(
+        {
+            "status": "published",
+            "data_manifest": {
+                "relative_path": "daily_panel/data_manifest.json",
+                "sha256": sha256_file(data_manifest),
+                "size_bytes": data_manifest.stat().st_size,
+            },
+        }
+    )
     (final_root / "data-build-claim.json").write_text(
-        json.dumps(
-            {
-                "status": "published",
-                "data_manifest": {
-                    "relative_path": "daily_panel/data_manifest.json",
-                    "sha256": sha256_file(data_manifest),
-                    "size_bytes": data_manifest.stat().st_size,
-                },
-            }
-        )
-        + "\n",
+        json.dumps(claim) + "\n",
         encoding="utf-8",
     )
     displaced = tmp_path / "normal-bound-root-a"

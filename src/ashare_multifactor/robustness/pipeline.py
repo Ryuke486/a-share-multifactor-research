@@ -48,6 +48,10 @@ from ashare_multifactor.robustness.regime_analysis import (
     summarize_segment_returns,
     time_segments,
 )
+from ashare_multifactor.robustness.release_context import (
+    assert_validation_market_scope as _assert_validation_market_scope,
+    resolve_robustness_data_root,
+)
 from ashare_multifactor.robustness.report import render_robustness_report
 from ashare_multifactor.robustness.summary import (
     assess_test_protocol_gate,
@@ -154,16 +158,6 @@ def compare_robustness_runs(first: Path, second: Path) -> dict[str, Any]:
         "code": manifests[0]["code"],
         "inputs": manifests[0]["inputs"],
     }
-
-
-def resolve_robustness_data_root(code_root: Path) -> Path:
-    root = code_root.resolve()
-    marker = Path("processed/validation_evaluation/CURRENT.json")
-    if (root / marker).is_file():
-        return root
-    if root.parent.name == ".worktrees" and (root.parent.parent / marker).is_file():
-        return root.parent.parent
-    raise FileNotFoundError("cannot locate authoritative validation release")
 
 
 def execute_robustness_run(
@@ -391,34 +385,6 @@ def publish_robustness_release(
         lineage=lineage,
         manifest_metadata={"stage": "robustness"},
     )
-
-
-def _assert_validation_market_scope(
-    validation: object, supported_markets: tuple[str, ...]
-) -> None:
-    inputs = validation.datasets / "inputs"
-    frames = (
-        ("forward_returns.parquet", ("symbol",)),
-        ("execution_panel.parquet", ("symbol",)),
-        ("corporate_actions.parquet", ("symbol",)),
-        ("security_events.parquet", ("source_symbol", "target_symbol")),
-    )
-    for name, columns in frames:
-        assert_supported_markets(
-            pl.read_parquet(inputs / name),
-            supported_markets,
-            label=f"Stage-8 publish validation handoff {name}",
-            symbol_columns=columns,
-        )
-    target_paths = sorted(inputs.glob("continuous_targets_*.parquet"))
-    if not target_paths:
-        raise ValueError("Stage-8 publish validation handoff lacks continuous targets")
-    for path in target_paths:
-        assert_supported_markets(
-            pl.read_parquet(path),
-            supported_markets,
-            label=f"Stage-8 publish validation handoff {path.name}",
-        )
 
 
 def _successor_release_contract(

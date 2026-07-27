@@ -98,3 +98,16 @@
 ## Stage 10 检查点 C
 
 新授权之后，Stage 9 仍必须依次完成：5,351 只证券共享覆盖、全部候选官方核验、人工队列清零、两类 execution parquet 为 `ready`、同 attempt 唯一 `resume`、权威 release、`CURRENT.json`、账务/影子 NAV/stale/manifest/lineage 审计和独立检查点 C。任何一项缺失都不能进入 Stage 10。
+
+## 查询完成后的证据工作流继任（2026-07-27）
+
+- 本计划实现的共享查询采集已完成，现有完整查询包将作为原始证据导入新 attempt，
+  不再进行 5,351 只证券的全量网络重采。
+- 文档复验发现 20,621 份有效 PDF 和 2 份 HTML 错误页；新 attempt 逐份重验后
+  只补采精确无效/缺失清单。
+- 后继实现补齐 PDF 准入、可恢复候选、字段级审核、两类 coverage 原子发布和
+  跨 attempt 导入。Stage 8 必须先完成这些边界的完整预演。
+- 新 attempt 以 v4 复用凭证继续使用已验证的最终期共享日面板，不重建
+  4,837,769 行面板。
+- 当前 attempt 不执行 `resume`。v4 关闭封印和新一次性授权之前，不创建新
+  attempt；两类 `ready` coverage 完成后仍停在 `resume` 前等待单独确认。

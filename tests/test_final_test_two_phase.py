@@ -285,7 +285,11 @@ def build_two_phase_fixture(
         claim.update(
             {
                 "status": "published",
-                "data_manifest": {"sha256": sha256_file(data_manifest)},
+                "data_manifest": {
+                    "relative_path": "daily_panel/data_manifest.json",
+                    "sha256": sha256_file(data_manifest),
+                    "size_bytes": data_manifest.stat().st_size,
+                },
             }
         )
         (final_root / "data-build-claim.json").write_text(

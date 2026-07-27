@@ -170,6 +170,63 @@ def load_verified_cninfo_security_identities(
     )
 
 
+def import_verified_cninfo_security_identities(
+    *,
+    source_fd: int,
+    source_root: Path,
+    source_preparation: FinalTestPreparation,
+    source_authorization: FinalTestAuthorization,
+    destination_fd: int,
+    destination_root: Path,
+    destination_preparation: FinalTestPreparation,
+    destination_authorization: FinalTestAuthorization,
+    symbols: Iterable[str],
+) -> VerifiedCNInfoSecurityIdentityIndex:
+    """Revalidate public responses and bind a new index without network access."""
+    normalized = _normalize_symbols(symbols)
+    source = load_verified_cninfo_security_identities(
+        identities_fd=source_fd,
+        identity_root=source_root,
+        symbols=normalized,
+        preparation=source_preparation,
+        authorization=source_authorization,
+    )
+    records: list[dict[str, object]] = []
+    for identity in source.identities:
+        response = _identity_response(
+            source_fd,
+            symbol=identity.symbol,
+            market=identity.market,
+        )
+        imported, record = publish_identity_package(
+            destination_fd,
+            symbol=identity.symbol,
+            market=identity.market,
+            response=response,
+            created_at=destination_authorization.registered_at,
+        )
+        if imported != identity:
+            raise ValueError("imported CNInfo security identity differs from source")
+        records.append(record)
+    _publish_index(
+        destination_fd,
+        canonical_json_bytes(
+            _index_payload(
+                records,
+                preparation=destination_preparation,
+                authorization=destination_authorization,
+            )
+        ),
+    )
+    return load_verified_cninfo_security_identities(
+        identities_fd=destination_fd,
+        identity_root=destination_root,
+        symbols=normalized,
+        preparation=destination_preparation,
+        authorization=destination_authorization,
+    )
+
+
 def _collect_one_identity(
     identities_fd: int,
     *,
@@ -377,6 +434,36 @@ def _recover_orphan_index_temps(identities_fd: int) -> None:
         removed = True
     if removed:
         os.fsync(identities_fd)
+
+
+def _identity_response(
+    identities_fd: int,
+    *,
+    symbol: str,
+    market: str,
+) -> bytes:
+    descriptor = identities_fd
+    opened: list[int] = []
+    try:
+        for name in package_relative_path(market, symbol).split("/"):
+            child = os.open(
+                name,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=descriptor,
+            )
+            if descriptor != identities_fd:
+                opened.append(descriptor)
+            descriptor = child
+        return read_bytes_at(
+            descriptor,
+            "response.json",
+            label="CNInfo security identity response",
+        )
+    finally:
+        if descriptor != identities_fd:
+            os.close(descriptor)
+        for item in reversed(opened):
+            os.close(item)
 
 
 def _normalize_symbols(symbols: Iterable[str]) -> tuple[str, ...]:

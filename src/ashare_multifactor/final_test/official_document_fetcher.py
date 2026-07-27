@@ -24,10 +24,17 @@ from ashare_multifactor.final_test.official_announcement_routing import (
 from ashare_multifactor.final_test.official_evidence_workspace import (
     CachedOfficialDocument,
     EvidenceWorkspace,
+    QuarantinedOfficialDocument,
     load_cached_document,
+    load_quarantined_document,
     open_workspace,
     publish_document_cache,
+    publish_document_quarantine,
     publish_review_workspace,
+)
+from ashare_multifactor.final_test.official_document_validation import (
+    OfficialDocumentValidationError,
+    validate_official_document,
 )
 
 
@@ -121,6 +128,7 @@ def fetch_official_documents(
     transport: OfficialDocumentTransport,
     max_documents: int | None = None,
     policy: DocumentFetchPolicy | None = None,
+    retry_quarantined: bool = False,
     sleep: Callable[[float], None] = time.sleep,
 ) -> EvidenceWorkspace:
     """Cache bounded public documents and publish an unready review snapshot."""
@@ -135,6 +143,8 @@ def fetch_official_documents(
         raise TypeError("official document fetch policy is invalid")
     if not callable(sleep):
         raise TypeError("official document sleep function is invalid")
+    if not isinstance(retry_quarantined, bool):
+        raise TypeError("official document quarantine retry flag is invalid")
     catalog = load_verified_announcement_catalog(catalog_path)
     _assert_catalog_belongs_to_destination(catalog, destination)
     routing = build_announcement_routing(catalog_path, destination=destination)
@@ -143,6 +153,7 @@ def fetch_official_documents(
         workspace_root,
         _workspace_fd,
         documents_fd,
+        quarantine_fd,
         sessions_fd,
     ):
         cached = {
@@ -153,43 +164,79 @@ def fetch_official_documents(
             )
             is not None
         }
-        uncached = [url for url in urls if url not in cached]
+        quarantined = {
+            url: document
+            for url in urls
+            if (
+                document := load_quarantined_document(
+                    quarantine_fd,
+                    source_url=url,
+                )
+            )
+            is not None
+        }
+        uncached = [
+            url
+            for url in urls
+            if url not in cached and (retry_quarantined or url not in quarantined)
+        ]
         selected = uncached if max_documents is None else uncached[:max_documents]
         for url in selected:
-            cached[url] = _obtain_document(
+            cached_document, quarantined_document = _obtain_document(
                 documents_fd,
+                quarantine_fd,
                 url=url,
                 transport=transport,
                 policy=active_policy,
                 sleep=sleep,
             )
+            if cached_document is not None:
+                cached[url] = cached_document
+                quarantined.pop(url, None)
+            elif quarantined_document is not None:
+                quarantined[url] = quarantined_document
         return publish_review_workspace(
             workspace_root=workspace_root,
             sessions_fd=sessions_fd,
             catalog=catalog,
             routing=routing,
             cached_documents=cached,
+            quarantined_documents=quarantined,
         )
 
 
 def _obtain_document(
     documents_fd: int,
+    quarantine_fd: int,
     *,
     url: str,
     transport: OfficialDocumentTransport,
     policy: DocumentFetchPolicy,
     sleep: Callable[[float], None],
-) -> CachedOfficialDocument:
+) -> tuple[CachedOfficialDocument | None, QuarantinedOfficialDocument | None]:
     cached = load_cached_document(documents_fd, source_url=url)
     if cached is not None:
-        return cached
+        return cached, None
     payload = _fetch_document_with_retry(
         transport,
         url=url,
         policy=policy,
         sleep=sleep,
     )
-    return publish_document_cache(documents_fd, source_url=url, payload=payload)
+    try:
+        validate_official_document(payload, source_url=url)
+    except OfficialDocumentValidationError as error:
+        return None, publish_document_quarantine(
+            quarantine_fd,
+            source_url=url,
+            payload=payload,
+            reason=error.reason,
+        )
+    return publish_document_cache(
+        documents_fd,
+        source_url=url,
+        payload=payload,
+    ), None
 
 
 def _fetch_document_with_retry(

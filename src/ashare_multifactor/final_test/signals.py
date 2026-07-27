@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import date
-import json
 from pathlib import Path
 
 import polars as pl
@@ -23,6 +22,7 @@ from ashare_multifactor.final_test.data_publication import (
     read_data_claim,
     resolve_final_test_data_panel,
 )
+from ashare_multifactor.final_test.data_reuse import verify_final_test_data_reuse
 from ashare_multifactor.final_test.data_extension import (
     _verify_authorization as _verify_data_authorization,
 )
@@ -233,20 +233,16 @@ def _resolve_authorized_data(
     if not isinstance(claim, dict) or any(
         claim.get(key) != value for key, value in expected.items()
     ):
-        reuse_path = final_root / "data-reuse" / f"{authorization.attempt_id}.json"
         try:
-            reuse = json.loads(reuse_path.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError) as error:
-            raise ValueError("final-test data claim differs from authorization") from error
-        reuse_expected = {
-            **expected,
-            "data_manifest_sha256": resolution.data_manifest_sha256,
-            "status": "reused_verified_immutable_panel",
-        }
-        if reuse_path.is_symlink() or any(
-            reuse.get(key) != value for key, value in reuse_expected.items()
-        ):
-            raise ValueError("final-test data reuse differs from authorization")
+            verify_final_test_data_reuse(
+                final_root,
+                authorization,
+                resolution,
+            )
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                "final-test data claim differs from authorization"
+            ) from error
     return validate_panel_source(resolution.root, period)
 
 

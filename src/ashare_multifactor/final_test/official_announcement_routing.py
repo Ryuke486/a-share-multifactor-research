@@ -30,7 +30,7 @@ ROUTING_NAME = "routing.parquet"
 ROUTING_MANIFEST_NAME = "routing_manifest.json"
 
 _SCHEMA_VERSION = "1"
-_RULE_VERSION = "stage9-shared-routing-v3"
+_RULE_VERSION = "stage9-shared-routing-v4"
 _CORPORATE_ACTION_CANDIDATE_RULES = (
     ("corporate_action", "权益分派"),
     ("corporate_action", "分红派息"),
@@ -57,6 +57,9 @@ _PRE_EVENT_WARNING_KEYWORDS = (
     "去向安排",
 )
 _CONTEXT_EXCLUSIONS = (
+    ("convertible_bond_conversion_pause", ("停止转股",)),
+    ("convertible_bond_price_adjustment", ("可转债", "转股价格")),
+    ("convertible_bond_price_adjustment", ("转债", "转股价格")),
     ("non_security_merger", ("合并报表",)),
     ("non_security_merger", ("合并财务",)),
     ("non_security_merger", ("合并资产负债表",)),
@@ -281,19 +284,19 @@ def route_announcement_title(title: str) -> dict[str, str]:
     """Apply the frozen recall-first title rule without creating event facts."""
     if not isinstance(title, str):
         raise TypeError("official announcement title is invalid")
-    for candidate_type, keyword in _CORPORATE_ACTION_CANDIDATE_RULES:
-        if keyword in title:
-            return {
-                "route": "candidate",
-                "candidate_type": candidate_type,
-                "reason": f"{candidate_type}_keyword:{keyword}",
-            }
     for reason, required_keywords in _CONTEXT_EXCLUSIONS:
         if all(keyword in title for keyword in required_keywords):
             return {
                 "route": "excluded",
                 "candidate_type": "",
                 "reason": reason,
+            }
+    for candidate_type, keyword in _CORPORATE_ACTION_CANDIDATE_RULES:
+        if keyword in title:
+            return {
+                "route": "candidate",
+                "candidate_type": candidate_type,
+                "reason": f"{candidate_type}_keyword:{keyword}",
             }
     merger_keyword = next(
         (keyword for keyword in _MERGER_KEYWORDS if keyword in title),

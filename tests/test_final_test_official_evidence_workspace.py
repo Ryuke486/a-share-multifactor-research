@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from http.client import RemoteDisconnected
+from io import BytesIO
 import json
 from pathlib import Path
 
 import polars as pl
 import pytest
+from pypdf import PdfWriter
 
 from ashare_multifactor.final_test.action_source_contract import (
     load_action_source_contract,
@@ -21,6 +23,14 @@ from test_final_test_resume import PreparedAttempt
 
 
 pytest_plugins = ("test_final_test_resume",)
+
+
+def _pdf_bytes() -> bytes:
+    stream = BytesIO()
+    writer = PdfWriter()
+    writer.add_blank_page(width=72, height=72)
+    writer.write(stream)
+    return stream.getvalue()
 
 
 @dataclass(frozen=True)
@@ -145,7 +155,7 @@ class DocumentTransport:
     def fetch(self, url: str, *, timeout_seconds: float) -> bytes:
         del timeout_seconds
         self.urls.append(url)
-        return f"official document for {url}".encode()
+        return _pdf_bytes()
 
 
 class FailIfCalledDocumentTransport:
@@ -430,7 +440,7 @@ def test_document_fetcher_retries_and_waits_after_success(
     )
     pauses: list[float] = []
     transport = ScriptedDocumentTransport(
-        [OfficialDocumentTransientError("temporary"), b"official bytes"]
+        [OfficialDocumentTransientError("temporary"), _pdf_bytes()]
     )
 
     workspace = fetch_official_documents(
@@ -449,6 +459,54 @@ def test_document_fetcher_retries_and_waits_after_success(
     assert workspace.ready is False
     assert len(transport.urls) == 2
     assert pauses == [0.5, 0.5]
+
+
+def test_non_pdf_response_is_quarantined_and_never_enters_document_cache(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    from ashare_multifactor.final_test.official_announcement_catalog import (
+        build_announcement_catalog,
+    )
+    from ashare_multifactor.final_test.official_document_fetcher import (
+        fetch_official_documents,
+    )
+
+    inputs = _complete_query_coverage(prepared_attempt)
+    catalog = build_announcement_catalog(
+        inputs.index_path,
+        preparation=inputs.preparation,
+        authorization=inputs.authorization,
+        contract=inputs.contract,
+        destination=inputs.output_root,
+    )
+    transport = ScriptedDocumentTransport(
+        [
+            b"<html>official endpoint error</html>",
+            b"<html>official endpoint error</html>",
+        ]
+    )
+
+    workspace = fetch_official_documents(
+        catalog,
+        destination=inputs.output_root,
+        transport=transport,
+    )
+
+    queue = pl.read_parquet(workspace.review_queue_path)
+    assert set(queue.get_column("document_status")) == {"quarantined"}
+    assert set(queue.get_column("document_validation_reason")) == {"not_pdf"}
+    assert not list(
+        (inputs.output_root / "official_document_workspace/documents").rglob(
+            "document.bin"
+        )
+    )
+    assert len(
+        list(
+            (inputs.output_root / "official_document_workspace/quarantine").rglob(
+                "response.bin"
+            )
+        )
+    ) == 2
 
 
 def test_document_fetcher_resumes_with_the_next_uncached_url(
