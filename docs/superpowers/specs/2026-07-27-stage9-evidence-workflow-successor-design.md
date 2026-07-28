@@ -43,7 +43,9 @@
 既有 Stage 7/8 研究文件。代码改动本身不能作为“结果仍然一样”的证明。
 protocol-only 路径还必须证明 `final_execution_rehearsal_required=false`，并且
 `changed_domains` 精确等于 `["evidence_workflow"]`；否则发布、授权和日面板
-复用均失败关闭。
+复用均失败关闭。审计中的前任身份不能自证；发布器必须从当前权威 v3 release
+的 seal 所绑定 Git commit/tree 重建 `final_execution` 身份，并把该身份同时
+写入 v4 seal 和 lineage，供后续授权与复用再次核对。
 
 ## 工作流边界
 
@@ -78,6 +80,9 @@ protocol-only 路径还必须证明 `final_execution_rehearsal_required=false`�
 - 候选、执行事实与其引用的官方公告必须属于同一证券，跨证券 PDF 引用失败关闭。
 - 缺少任一批次时不能汇总；全部批次齐备后仍调用原有全量审核门禁，批次不是
   对事实标准或精确覆盖标准的豁免。
+- 最终审核提交必须记录完整批次来源；正式 execution coverage 会重新加载计划
+  和每个批次，核对批次哈希、审核者、时间及合并行。直接一次性审核不能发布
+  正式 coverage。
 
 ### 4. 覆盖发布
 
@@ -85,6 +90,8 @@ protocol-only 路径还必须证明 `final_execution_rehearsal_required=false`�
 - 零事件证券记录 `event_count=0`，不制造虚假 PDF 或 `evidence_id`。
 - 查询包和 PDF 作为 attempt 级共享证据被引用，不在两类覆盖中重复复制。
 - 每次加载都重验共享证据路径、大小和 SHA-256；漂移立即使覆盖失效。
+- readiness 必须分别证明 disposition 层和无候选关联事实层均拒绝跨证券官方
+  文档，并证明缺少完整批次来源的直接审核不能进入覆盖发布。
 
 ### 5. 证据导入
 

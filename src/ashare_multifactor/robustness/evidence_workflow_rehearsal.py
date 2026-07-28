@@ -62,8 +62,12 @@ _REVIEW_TESTS = (
     "test_review_batch_workspace_rejects_frozen_input_drift",
     "tests.test_final_test_official_review_batches::"
     "test_review_batch_rejects_cross_symbol_official_evidence",
+    "tests.test_final_test_official_review_batches::"
+    "test_review_batch_rejects_unlinked_cross_symbol_corporate_fact",
 )
 _COVERAGE_TESTS = (
+    "tests.test_final_test_official_coverage_publisher::"
+    "test_ready_coverage_rejects_direct_review_without_batch_provenance",
     "tests.test_final_test_official_coverage_publisher::"
     "test_coverage_publisher_atomically_builds_both_ready_coverages_without_pdf_copies",
     "tests.test_final_test_official_coverage_publisher::"
@@ -149,7 +153,8 @@ def build_evidence_workflow_rehearsal(
             "incomplete_batch_finalization_rejected": True,
             "conflicting_batch_rejected": True,
             "frozen_batch_input_drift_rejected": True,
-            "cross_symbol_evidence_rejected": True,
+            "cross_symbol_disposition_rejected": True,
+            "cross_symbol_fact_rejected": True,
         },
     )
     _write_json(
@@ -158,6 +163,7 @@ def build_evidence_workflow_rehearsal(
             **common,
             "test_cases": matched["coverage_publication.json"],
             "atomic_pair_publication": True,
+            "direct_review_without_batch_provenance_rejected": True,
             "zero_event_without_fake_pdf": True,
             "shared_evidence_drift_detected": True,
         },

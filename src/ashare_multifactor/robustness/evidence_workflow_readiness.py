@@ -168,9 +168,12 @@ def _validate_reports(
         or review.get("incomplete_batch_finalization_rejected") is not True
         or review.get("conflicting_batch_rejected") is not True
         or review.get("frozen_batch_input_drift_rejected") is not True
-        or review.get("cross_symbol_evidence_rejected") is not True
+        or review.get("cross_symbol_disposition_rejected") is not True
+        or review.get("cross_symbol_fact_rejected") is not True
         or coverage.get("status") != "passed"
         or coverage.get("atomic_pair_publication") is not True
+        or coverage.get("direct_review_without_batch_provenance_rejected")
+        is not True
         or coverage.get("zero_event_without_fake_pdf") is not True
         or coverage.get("shared_evidence_drift_detected") is not True
         or imported.get("status") != "passed"

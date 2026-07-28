@@ -7,6 +7,7 @@ from typing import Any
 
 from ashare_multifactor.audit.records import sha256_file, verify_file_record
 from ashare_multifactor.robustness.protocol_identities import (
+    validate_domain_identity,
     validate_protocol_identities,
 )
 
@@ -83,6 +84,7 @@ def build_stage8_successor_lineage(
     action_coverage_audit_sha256: str,
     collector_readiness_audit_sha256: str,
     protocol_identities: dict[str, dict[str, object]] | None = None,
+    predecessor_final_execution_identity: dict[str, object] | None = None,
     change_impact_audit_sha256: str | None = None,
     evidence_workflow_readiness_audit_sha256: str | None = None,
 ) -> dict[str, Any]:
@@ -103,6 +105,7 @@ def build_stage8_successor_lineage(
     }
     v4_values = (
         protocol_identities,
+        predecessor_final_execution_identity,
         change_impact_audit_sha256,
         evidence_workflow_readiness_audit_sha256,
     )
@@ -110,6 +113,10 @@ def build_stage8_successor_lineage(
         if any(value is None for value in v4_values):
             raise ValueError("Stage-8 evidence-workflow lineage is incomplete")
         identities = validate_protocol_identities(protocol_identities)
+        predecessor_execution = validate_domain_identity(
+            predecessor_final_execution_identity,
+            role="final_execution_identity",
+        )
         for value in (
             str(change_impact_audit_sha256),
             str(evidence_workflow_readiness_audit_sha256),
@@ -119,6 +126,7 @@ def build_stage8_successor_lineage(
             ):
                 raise ValueError("Stage-8 evidence-workflow lineage hash is invalid")
         lineage["protocol_identities"] = identities
+        lineage["predecessor_final_execution_identity"] = predecessor_execution
         lineage["execution_protocol"].update(
             {
                 "change_impact_audit_sha256": change_impact_audit_sha256,

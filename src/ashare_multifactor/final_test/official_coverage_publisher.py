@@ -56,8 +56,8 @@ from ashare_multifactor.final_test.official_query_index import (
 from ashare_multifactor.final_test.official_query_collector import (
     verify_official_query_collection_binding,
 )
-from ashare_multifactor.final_test.official_review_submission import (
-    load_verified_review_submission,
+from ashare_multifactor.final_test.official_review_batches import (
+    load_verified_batch_review_submission,
 )
 from ashare_multifactor.final_test.preparation import (
     FinalTestPreparation,
@@ -133,7 +133,7 @@ def publish_official_execution_coverages(
         official_query_index_path,
         expected_scopes=scopes,
     )
-    submission = load_verified_review_submission(
+    submission = load_verified_batch_review_submission(
         submission_manifest_path,
         workspace=workspace,
         candidate_manifest_path=candidate_manifest_path,

@@ -94,8 +94,29 @@
 - [x] 完成 Task 7A 全量 `1276 passed`、Ruff、差异审计和旧 attempt
   不变性复核；旧 attempt 仍为 `awaiting_official_evidence`，无批次计划、
   审核提交、execution coverage 或最终测试 `CURRENT.json`。
-- [ ] 经用户明确确认后提交 Task 7A；随后基于新代码身份重新生成正式
-  readiness 和 change-impact，旧 development readiness 不再作为发布输入。
+- [x] 经用户明确确认后提交 Task 7A；提交为
+  `b2fd4c18b8467f310cd5d8da8f585925cb415bf8`。正式 readiness 和
+  change-impact 尚未生成，旧 development readiness 不作为发布输入。
+
+## Task 7A.1：v4 发布前终审修复
+
+- [x] change-impact 不再信任审计自报的前任身份；从权威 v3 seal 的 Git
+  commit/tree 重建 `final_execution` 身份，并同时写入 v4 seal 和 lineage，
+  发布、授权及日面板复用重复核对。
+- [x] 正式 execution coverage 只接受可从完整批次计划、全部不可变批次
+  submission、审核者和时间重新构造的最终审核提交；直接一次性审核不能绕过
+  可恢复审核门禁。
+- [x] 将 disposition 跨证券引用与无 `candidate_id` 的事实跨证券引用拆成
+  两个独立反例，并把两者及直接审核绕过反例纳入 evidence-workflow
+  readiness 必选测试。
+- [x] 完成 Task 7A.1 专项 `62 passed`、全量 `1280 passed`、Ruff、差异
+  审计、身份与旧 attempt 不变性复核。权威 v3 与当前 `final_execution`
+  SHA-256 同为
+  `95fafab8b735e47c9011d3ec851320678ccf9376cc772994bcb0e725b369cfbf`；
+  旧 attempt 仍为 `awaiting_official_evidence`，无最终测试 `CURRENT.json`、
+  批次计划、批次提交或 execution coverage。
+- [x] 用户已明确确认提交 Task 7A.1；本提交不生成正式 readiness、
+  change-impact 或 v4 seal。
 
 ## Task 8：新授权后的最小重采
 

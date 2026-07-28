@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from ashare_multifactor.robustness.protocol_identities import (
+    validate_domain_identity,
     validate_protocol_identities,
 )
 
@@ -57,10 +58,16 @@ def verify_evidence_workflow_only_change_impact(
     path: Path,
     *,
     expected_current_identities: dict[str, dict[str, object]],
+    expected_predecessor_final_execution_identity: dict[str, object],
 ) -> str:
     """Permit protocol-only reuse only when evidence workflow is the sole change."""
     raw, payload = _load_verified_change_impact(path)
     expected = validate_protocol_identities(expected_current_identities)
+    predecessor_final_execution = validate_domain_identity(
+        expected_predecessor_final_execution_identity,
+        role="final_execution_identity",
+    )
+    predecessor = payload.get("predecessor_identities")
     if (
         payload.get("changed_domains") != ["evidence_workflow"]
         or payload.get("research_replay_required") is not False
@@ -68,6 +75,8 @@ def verify_evidence_workflow_only_change_impact(
         or payload.get("evidence_workflow_rehearsal_required") is not True
         or payload.get("stage7_stage8_research_results_reusable") is not True
         or payload.get("current_identities") != expected
+        or not isinstance(predecessor, dict)
+        or predecessor.get("final_execution") != predecessor_final_execution
     ):
         raise ValueError(
             "change-impact audit does not permit evidence-workflow-only reseal"

@@ -37,6 +37,7 @@ from ashare_multifactor.robustness.evidence_workflow_readiness import (
 )
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
 from ashare_multifactor.robustness.protocol_identities import (
+    validate_domain_identity,
     validate_protocol_identities,
 )
 from ashare_multifactor.robustness.successor_seal import (
@@ -477,6 +478,10 @@ def _verify_sealed_payload(sealed: dict[str, object]) -> str:
         raise ValueError("final-test authorization requires protocol v4 readiness")
     if protocol_version == 4:
         validate_protocol_identities(sealed.get("protocol_identities"))
+        validate_domain_identity(
+            sealed.get("predecessor_final_execution_identity"),
+            role="final_execution_identity",
+        )
     if (
         sealed.get("status") != "sealed"
         or sealed.get("opening_token_status") != "closed"
@@ -588,9 +593,16 @@ def _verify_frozen_contract(
             robustness_lineage_path.parent / "artifacts/change_impact_audit.json"
         )
         identities = validate_protocol_identities(sealed.get("protocol_identities"))
+        predecessor_final_execution = validate_domain_identity(
+            sealed.get("predecessor_final_execution_identity"),
+            role="final_execution_identity",
+        )
         if verify_evidence_workflow_only_change_impact(
             change_impact_path,
             expected_current_identities=identities,
+            expected_predecessor_final_execution_identity=(
+                predecessor_final_execution
+            ),
         ) != sealed.get("change_impact_audit_sha256"):
             raise ValueError("change-impact audit differs from successor seal")
         evidence_readiness_root = (
@@ -631,6 +643,8 @@ def _verify_frozen_contract(
         raise ValueError("successor lineage differs from sealed execution protocol")
     if sealed.get("protocol_version") == 4 and (
         lineage.get("protocol_identities") != sealed.get("protocol_identities")
+        or lineage.get("predecessor_final_execution_identity")
+        != sealed.get("predecessor_final_execution_identity")
         or execution_protocol.get("change_impact_audit_sha256")
         != sealed.get("change_impact_audit_sha256")
         or execution_protocol.get("evidence_workflow_readiness_audit_sha256")

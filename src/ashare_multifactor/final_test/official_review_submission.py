@@ -55,6 +55,9 @@ class VerifiedReviewSubmission:
     manifest_path: Path
     manifest_sha256: str
     ready: bool
+    reviewer_id: str
+    reviewed_at: str
+    batch_provenance: dict[str, object] | None
     announcement_decisions: pl.DataFrame
     corporate_action_dispositions: pl.DataFrame
     corporate_action_facts: pl.DataFrame
@@ -68,6 +71,9 @@ class VerifiedReviewSubmission:
             and self.manifest_path == other.manifest_path
             and self.manifest_sha256 == other.manifest_sha256
             and self.ready == other.ready
+            and self.reviewer_id == other.reviewer_id
+            and self.reviewed_at == other.reviewed_at
+            and self.batch_provenance == other.batch_provenance
             and self.announcement_decisions.equals(other.announcement_decisions)
             and self.corporate_action_dispositions.equals(
                 other.corporate_action_dispositions
@@ -97,6 +103,7 @@ def publish_review_submission(
     security_event_facts: pl.DataFrame,
     reviewer_id: str,
     reviewed_at: str,
+    batch_provenance: dict[str, object] | None = None,
 ) -> VerifiedReviewSubmission:
     """Validate every reviewer field before immutable publication."""
     queue = load_verified_review_queue(workspace)
@@ -105,6 +112,9 @@ def publish_review_submission(
         workspace=workspace,
     )
     reviewer, timestamp = _review_metadata(reviewer_id, reviewed_at)
+    review_mode = "batched" if batch_provenance is not None else "direct"
+    if batch_provenance is not None and not isinstance(batch_provenance, dict):
+        raise ValueError("review batch provenance is invalid")
     frames = validate_review_frames(
         queue,
         candidates.candidates,
@@ -129,6 +139,7 @@ def publish_review_submission(
         "candidate_manifest_sha256": candidates.manifest_sha256,
         "reviewer_id": reviewer,
         "reviewed_at": timestamp,
+        "review_mode": review_mode,
         "files": [
             {
                 "path": name,
@@ -139,6 +150,8 @@ def publish_review_submission(
             for index, (name, payload) in enumerate(sorted(data.items()))
         ],
     }
+    if batch_provenance is not None:
+        manifest["batch_provenance"] = batch_provenance
     manifest_bytes = canonical_json_bytes(manifest)
     submission_id = hashlib.sha256(manifest_bytes).hexdigest()
     destination = workspace.root.parent
@@ -233,6 +246,13 @@ def load_verified_review_submission(
         manifest_path=absolute,
         manifest_sha256=hashlib.sha256(files[MANIFEST_NAME]).hexdigest(),
         ready=True,
+        reviewer_id=str(manifest["reviewer_id"]),
+        reviewed_at=str(manifest["reviewed_at"]),
+        batch_provenance=(
+            manifest["batch_provenance"]
+            if isinstance(manifest.get("batch_provenance"), dict)
+            else None
+        ),
         announcement_decisions=frames[0],
         corporate_action_dispositions=frames[1],
         corporate_action_facts=frames[2],
@@ -325,6 +345,8 @@ def _validate_submission_manifest(
     attempt_id: str,
 ) -> None:
     records = manifest.get("files")
+    review_mode = manifest.get("review_mode")
+    batch_provenance = manifest.get("batch_provenance")
     if (
         manifest.get("schema_version") != _SCHEMA_VERSION
         or manifest.get("role") != "official_evidence_review_submission"
@@ -336,6 +358,9 @@ def _validate_submission_manifest(
         or not isinstance(records, list)
         or not isinstance(manifest.get("reviewer_id"), str)
         or not isinstance(manifest.get("reviewed_at"), str)
+        or review_mode not in {"direct", "batched"}
+        or (review_mode == "direct" and batch_provenance is not None)
+        or (review_mode == "batched" and not isinstance(batch_provenance, dict))
     ):
         raise ValueError("official review submission identity differs")
     record_by_path = {

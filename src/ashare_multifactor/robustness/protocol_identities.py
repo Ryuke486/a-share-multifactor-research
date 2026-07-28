@@ -6,6 +6,7 @@ from collections.abc import Mapping
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Any
 
 from ashare_multifactor.audit.records import sha256_file
@@ -90,6 +91,38 @@ def build_final_execution_identity(code_root: Path) -> dict[str, object]:
         "final_execution_identity",
         _file_records(root, _FINAL_EXECUTION_PATHS),
     )
+
+
+def build_final_execution_identity_at_revision(
+    code_root: Path,
+    *,
+    commit: str,
+    tree: str,
+) -> dict[str, object]:
+    """Rebuild the execution identity from one already sealed Git revision."""
+    if not _valid_git_oid(commit) or not _valid_git_oid(tree):
+        raise ValueError("sealed predecessor Git identity is invalid")
+    root = code_root.resolve()
+    actual_tree = _git_bytes(
+        root,
+        "rev-parse",
+        f"{commit}^{{tree}}",
+    ).decode().strip()
+    if actual_tree != tree:
+        raise ValueError("sealed predecessor Git tree differs from commit")
+    records: dict[str, object] = {}
+    for relative in _FINAL_EXECUTION_PATHS:
+        inventory = _git_bytes(root, "ls-tree", commit, "--", relative).decode()
+        if not inventory.startswith(("100644 blob ", "100755 blob ")):
+            raise ValueError(
+                f"sealed predecessor execution source is missing: {relative}"
+            )
+        payload = _git_bytes(root, "show", f"{commit}:{relative}")
+        records[relative] = {
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+        }
+    return identity_payload("final_execution_identity", records)
 
 
 def build_evidence_workflow_identity(code_root: Path) -> dict[str, object]:
@@ -216,3 +249,21 @@ def _canonical_json_bytes(payload: object) -> bytes:
         )
         + "\n"
     ).encode()
+
+
+def _valid_git_oid(value: str) -> bool:
+    return len(value) == 40 and all(
+        character in "0123456789abcdef" for character in value
+    )
+
+
+def _git_bytes(code_root: Path, *args: str) -> bytes:
+    result = subprocess.run(
+        ("git", *args),
+        cwd=code_root,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        raise ValueError("sealed predecessor Git identity cannot be resolved")
+    return result.stdout

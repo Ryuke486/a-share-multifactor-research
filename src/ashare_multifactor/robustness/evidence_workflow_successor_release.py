@@ -28,6 +28,7 @@ from ashare_multifactor.robustness.release_context import (
 )
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
 from ashare_multifactor.robustness.protocol_identities import (
+    build_final_execution_identity_at_revision,
     build_protocol_identities,
     identity_payload,
 )
@@ -56,6 +57,26 @@ def publish_evidence_workflow_successor_release(
         raise ValueError("evidence-workflow successor requires a clean Git identity")
     predecessor = resolve_current(data_root / "processed/robustness")
     predecessor_lineage = json.loads(predecessor.lineage.read_text(encoding="utf-8"))
+    predecessor_sealed = json.loads(
+        (predecessor.artifacts / "sealed_test_protocol.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    predecessor_code = predecessor_sealed.get("code")
+    if (
+        predecessor_sealed.get("protocol_version") != 3
+        or predecessor_sealed.get("status") != "sealed"
+        or not isinstance(predecessor_code, dict)
+        or predecessor_code.get("dirty") is not False
+    ):
+        raise ValueError("predecessor Stage-8 seal is not protocol v3")
+    predecessor_final_execution_identity = (
+        build_final_execution_identity_at_revision(
+            code_root,
+            commit=str(predecessor_code.get("commit", "")),
+            tree=str(predecessor_code.get("tree", "")),
+        )
+    )
     validation = resolve_current(data_root / "processed/validation_evaluation")
     research_config = load_config(code_root / "configs/research_protocol.yaml")
     assert_validation_market_scope(validation, research_config.supported_markets)
@@ -85,6 +106,9 @@ def publish_evidence_workflow_successor_release(
     change_impact_sha256 = verify_evidence_workflow_only_change_impact(
         change_impact_audit_path,
         expected_current_identities=expected_identities,
+        expected_predecessor_final_execution_identity=(
+            predecessor_final_execution_identity
+        ),
     )
     if (
         expected_identities["research"]
@@ -169,6 +193,9 @@ def publish_evidence_workflow_successor_release(
         collector_readiness_audit_sha256=collector_sha256,
         predecessor=supersession.to_dict(),
         protocol_identities=expected_identities,
+        predecessor_final_execution_identity=(
+            predecessor_final_execution_identity
+        ),
         change_impact_audit_sha256=change_impact_sha256,
         evidence_workflow_readiness_audit_sha256=evidence_readiness_sha256,
     )
@@ -191,6 +218,9 @@ def publish_evidence_workflow_successor_release(
         action_coverage_audit_sha256=action_audit_sha256,
         collector_readiness_audit_sha256=collector_sha256,
         protocol_identities=expected_identities,
+        predecessor_final_execution_identity=(
+            predecessor_final_execution_identity
+        ),
         change_impact_audit_sha256=change_impact_sha256,
         evidence_workflow_readiness_audit_sha256=evidence_readiness_sha256,
     )

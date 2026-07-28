@@ -9,6 +9,7 @@ from typing import Any
 
 from ashare_multifactor.robustness.protocol import RobustnessProtocol
 from ashare_multifactor.robustness.protocol_identities import (
+    validate_domain_identity,
     validate_protocol_identities,
 )
 
@@ -28,6 +29,7 @@ def seal_test_protocol(
     collector_readiness_audit_sha256: str | None = None,
     predecessor: dict[str, object] | None = None,
     protocol_identities: dict[str, dict[str, object]] | None = None,
+    predecessor_final_execution_identity: dict[str, object] | None = None,
     change_impact_audit_sha256: str | None = None,
     evidence_workflow_readiness_audit_sha256: str | None = None,
     supported_markets: tuple[str, ...] = ("sh", "sz"),
@@ -69,6 +71,7 @@ def seal_test_protocol(
             raise ValueError("Stage-8 successor predecessor identity is invalid")
     v4_values = (
         protocol_identities,
+        predecessor_final_execution_identity,
         change_impact_audit_sha256,
         evidence_workflow_readiness_audit_sha256,
     )
@@ -77,6 +80,10 @@ def seal_test_protocol(
         if not is_successor or any(value is None for value in v4_values):
             raise ValueError("Stage-8 evidence-workflow successor is incomplete")
         protocol_identities = validate_protocol_identities(protocol_identities)
+        predecessor_final_execution_identity = validate_domain_identity(
+            predecessor_final_execution_identity,
+            role="final_execution_identity",
+        )
         if not _valid_sha256(str(change_impact_audit_sha256)) or not _valid_sha256(
             str(evidence_workflow_readiness_audit_sha256)
         ):
@@ -122,6 +129,9 @@ def seal_test_protocol(
         payload.update(
             {
                 "protocol_identities": protocol_identities,
+                "predecessor_final_execution_identity": (
+                    predecessor_final_execution_identity
+                ),
                 "change_impact_audit_sha256": change_impact_audit_sha256,
                 "evidence_workflow_readiness_audit_sha256": (
                     evidence_workflow_readiness_audit_sha256

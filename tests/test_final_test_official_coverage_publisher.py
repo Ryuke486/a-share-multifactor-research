@@ -11,6 +11,13 @@ from ashare_multifactor.final_test.execution_sources import (
 from ashare_multifactor.final_test.official_coverage_publisher import (
     publish_official_execution_coverages,
 )
+from ashare_multifactor.final_test.official_review_batch_workspace import (
+    prepare_review_batch_workspace,
+)
+from ashare_multifactor.final_test.official_review_batches import (
+    finalize_review_batches,
+    publish_review_batch,
+)
 from ashare_multifactor.final_test.official_review_submission import (
     publish_review_submission,
 )
@@ -24,7 +31,7 @@ from test_final_test_resume import PreparedAttempt
 pytest_plugins = ("test_final_test_resume",)
 
 
-def test_coverage_publisher_atomically_builds_both_ready_coverages_without_pdf_copies(
+def test_ready_coverage_rejects_direct_review_without_batch_provenance(
     prepared_attempt: PreparedAttempt,
 ) -> None:
     (
@@ -44,6 +51,42 @@ def test_coverage_publisher_atomically_builds_both_ready_coverages_without_pdf_c
         security_event_facts=security_events,
         reviewer_id="human-reviewer-1",
         reviewed_at="2026-07-27T12:00:00+08:00",
+    )
+    evidence_inputs = _publisher_bindings(prepared_attempt)
+
+    with pytest.raises(ValueError, match="batch provenance"):
+        publish_official_execution_coverages(
+            preparation=evidence_inputs["preparation"],
+            authorization=evidence_inputs["authorization"],
+            contract=evidence_inputs["contract"],
+            workspace=workspace,
+            candidate_manifest_path=candidates.manifest_path,
+            submission_manifest_path=submission.manifest_path,
+            official_query_index_path=(
+                workspace.root.parent
+                / "official_query_coverage/official_query_coverage.json"
+            ),
+        )
+
+
+def test_coverage_publisher_atomically_builds_both_ready_coverages_without_pdf_copies(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    (
+        workspace,
+        candidates,
+        announcement_decisions,
+        dispositions,
+        corporate_facts,
+        security_events,
+    ) = _review_inputs(prepared_attempt)
+    submission = _publish_batched_submission(
+        workspace,
+        candidates,
+        announcement_decisions,
+        dispositions,
+        corporate_facts,
+        security_events,
     )
     evidence_inputs = _publisher_bindings(prepared_attempt)
 
@@ -110,15 +153,13 @@ def test_ready_coverage_rechecks_shared_document_bytes(
         corporate_facts,
         security_events,
     ) = _review_inputs(prepared_attempt)
-    submission = publish_review_submission(
-        workspace=workspace,
-        candidate_manifest_path=candidates.manifest_path,
-        announcement_decisions=announcement_decisions,
-        corporate_action_dispositions=dispositions,
-        corporate_action_facts=corporate_facts,
-        security_event_facts=security_events,
-        reviewer_id="human-reviewer-1",
-        reviewed_at="2026-07-27T12:00:00+08:00",
+    submission = _publish_batched_submission(
+        workspace,
+        candidates,
+        announcement_decisions,
+        dispositions,
+        corporate_facts,
+        security_events,
     )
     bindings = _publisher_bindings(prepared_attempt)
     publication = publish_official_execution_coverages(
@@ -163,3 +204,49 @@ def _publisher_bindings(attempt: PreparedAttempt) -> dict[str, object]:
             attempt.code_root / "configs/final_execution_sources.yaml"
         ),
     }
+
+
+def _publish_batched_submission(
+    workspace,
+    candidates,
+    announcement_decisions: pl.DataFrame,
+    dispositions: pl.DataFrame,
+    corporate_facts: pl.DataFrame,
+    security_events: pl.DataFrame,
+):
+    plan = prepare_review_batch_workspace(
+        workspace=workspace,
+        candidate_manifest_path=candidates.manifest_path,
+        symbols_per_batch=1,
+    )
+    for batch in plan.batches:
+        queue = pl.read_parquet(batch.queue_path)
+        candidate_frame = pl.read_parquet(batch.candidates_path)
+        catalog_ids = queue.get_column("catalog_id").to_list()
+        candidate_ids = candidate_frame.get_column("candidate_id").to_list()
+        publish_review_batch(
+            workspace=workspace,
+            candidate_manifest_path=candidates.manifest_path,
+            batch_manifest_path=batch.manifest_path,
+            announcement_decisions=announcement_decisions.filter(
+                pl.col("catalog_id").is_in(catalog_ids)
+            ),
+            corporate_action_dispositions=dispositions.filter(
+                pl.col("candidate_id").is_in(candidate_ids)
+            ),
+            corporate_action_facts=corporate_facts.filter(
+                pl.col("symbol").is_in(batch.symbols)
+            ),
+            security_event_facts=security_events.filter(
+                pl.col("source_symbol").is_in(batch.symbols)
+            ),
+            reviewer_id="human-reviewer-1",
+            reviewed_at="2026-07-27T12:00:00+08:00",
+        )
+    return finalize_review_batches(
+        workspace=workspace,
+        candidate_manifest_path=candidates.manifest_path,
+        batch_workspace_manifest_path=plan.manifest_path,
+        reviewer_id="human-reviewer-1",
+        reviewed_at="2026-07-27T18:00:00+08:00",
+    )

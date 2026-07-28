@@ -44,6 +44,7 @@ from ashare_multifactor.robustness.change_impact import (
     verify_evidence_workflow_only_change_impact,
 )
 from ashare_multifactor.robustness.protocol_identities import (
+    validate_domain_identity,
     validate_protocol_identities,
 )
 
@@ -349,10 +350,17 @@ def _load_destination_protocol(
     ):
         raise ValueError("final-test data reuse requires protocol v4")
     identities = validate_protocol_identities(sealed.get("protocol_identities"))
+    predecessor_final_execution = validate_domain_identity(
+        sealed.get("predecessor_final_execution_identity"),
+        role="final_execution_identity",
+    )
     audit_path = release.artifacts / "change_impact_audit.json"
     if verify_evidence_workflow_only_change_impact(
         audit_path,
         expected_current_identities=identities,
+        expected_predecessor_final_execution_identity=(
+            predecessor_final_execution
+        ),
     ) != sealed.get("change_impact_audit_sha256"):
         raise ValueError("final-test data reuse change-impact audit differs")
     return sealed

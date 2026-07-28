@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 import json
 from pathlib import Path
+import subprocess
 import xml.etree.ElementTree as ET
 
 import polars as pl
@@ -18,7 +19,11 @@ from ashare_multifactor.robustness.evidence_workflow_readiness import (
     verify_evidence_workflow_readiness_audit,
     write_evidence_workflow_readiness_audit,
 )
-from ashare_multifactor.robustness.protocol_identities import identity_payload
+from ashare_multifactor.robustness.protocol_identities import (
+    build_final_execution_identity,
+    build_final_execution_identity_at_revision,
+    identity_payload,
+)
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
 from ashare_multifactor.robustness.test_protocol import seal_test_protocol
 
@@ -60,6 +65,9 @@ def test_change_impact_keeps_research_results_when_only_evidence_changes(
         verify_evidence_workflow_only_change_impact(
             path,
             expected_current_identities=_identities(evidence="v4"),
+            expected_predecessor_final_execution_identity=_identities(
+                evidence="v3"
+            )["final_execution"],
         )
         == verify_change_impact_audit(path)
     )
@@ -87,7 +95,62 @@ def test_protocol_only_change_impact_rejects_final_execution_change(
         verify_evidence_workflow_only_change_impact(
             path,
             expected_current_identities=current,
+            expected_predecessor_final_execution_identity=_identities(
+                evidence="v3"
+            )["final_execution"],
         )
+
+
+def test_protocol_only_change_impact_rejects_forged_predecessor_identity(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "change-impact.json"
+    predecessor = _identities(evidence="v3")
+    current = _identities(evidence="v4")
+    forged_final_execution = identity_payload(
+        "final_execution_identity",
+        {"execution": "forged"},
+    )
+    predecessor["final_execution"] = forged_final_execution
+    current["final_execution"] = forged_final_execution
+    write_change_impact_audit(
+        path,
+        predecessor_identities=predecessor,
+        current_identities=current,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="does not permit evidence-workflow-only reseal",
+    ):
+        verify_evidence_workflow_only_change_impact(
+            path,
+            expected_current_identities=current,
+            expected_predecessor_final_execution_identity=_identities(
+                evidence="v3"
+            )["final_execution"],
+        )
+
+
+def test_final_execution_identity_can_be_rebuilt_from_a_sealed_git_tree() -> None:
+    commit = subprocess.run(
+        ("git", "rev-parse", "HEAD"),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    tree = subprocess.run(
+        ("git", "rev-parse", f"{commit}^{{tree}}"),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    assert build_final_execution_identity_at_revision(
+        Path.cwd(),
+        commit=commit,
+        tree=tree,
+    ) == build_final_execution_identity(Path.cwd())
 
 
 def test_evidence_readiness_requires_the_full_pre_resume_workflow(
@@ -142,12 +205,14 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             "incomplete_batch_finalization_rejected": True,
             "conflicting_batch_rejected": True,
             "frozen_batch_input_drift_rejected": True,
-            "cross_symbol_evidence_rejected": True,
+            "cross_symbol_disposition_rejected": True,
+            "cross_symbol_fact_rejected": True,
         },
         "coverage_publication.json": {
             **common,
             "status": "passed",
             "atomic_pair_publication": True,
+            "direct_review_without_batch_provenance_rejected": True,
             "zero_event_without_fake_pdf": True,
             "shared_evidence_drift_detected": True,
         },
@@ -223,6 +288,9 @@ def test_protocol_v4_binds_split_identities_and_new_readiness_gates(
             "status": "superseded_for_final_execution",
         },
         protocol_identities=_identities(evidence="v4"),
+        predecessor_final_execution_identity=_identities(evidence="v3")[
+            "final_execution"
+        ],
         change_impact_audit_sha256="5" * 64,
         evidence_workflow_readiness_audit_sha256="6" * 64,
     )
@@ -233,6 +301,9 @@ def test_protocol_v4_binds_split_identities_and_new_readiness_gates(
     )
     assert sealed["change_impact_audit_sha256"] == "5" * 64
     assert sealed["evidence_workflow_readiness_audit_sha256"] == "6" * 64
+    assert sealed["predecessor_final_execution_identity"] == _identities(
+        evidence="v3"
+    )["final_execution"]
 
 
 def test_rehearsal_binds_focused_tests_and_reroutes_real_historical_catalog(
@@ -307,3 +378,12 @@ def test_rehearsal_binds_focused_tests_and_reroutes_real_historical_catalog(
     assert historical["final_test_row_count"] == 0
     assert historical["symbol_count"] == 100
     assert historical["convertible_bond_exclusion_count"] == 2
+    review = json.loads(
+        (audit / "review_submission.json").read_text(encoding="utf-8")
+    )
+    assert (
+        "tests.test_final_test_official_review_batches::"
+        "test_review_batch_rejects_unlinked_cross_symbol_corporate_fact"
+        in review["test_cases"]
+    )
+    assert review["cross_symbol_fact_rejected"] is True

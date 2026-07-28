@@ -367,3 +367,108 @@ def test_review_batch_rejects_cross_symbol_official_evidence(
             reviewer_id="human-reviewer-1",
             reviewed_at="2026-07-28T12:00:00+08:00",
         )
+
+
+def test_review_batch_rejects_unlinked_cross_symbol_corporate_fact(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    workspace, candidates = _batch_inputs(prepared_attempt)
+    plan = prepare_review_batch_workspace(
+        workspace=workspace,
+        candidate_manifest_path=candidates.manifest_path,
+        symbols_per_batch=2,
+    )
+    batch = plan.batches[0]
+    queue = pl.read_parquet(batch.queue_path).sort("symbol")
+    candidate_rows = pl.read_parquet(batch.candidates_path).sort("symbol").rows(
+        named=True
+    )
+    catalog_by_symbol = {
+        row["symbol"]: row["catalog_id"]
+        for row in queue.rows(named=True)
+    }
+    decisions = pl.DataFrame(
+        {
+            "catalog_id": queue.get_column("catalog_id"),
+            "status": ["relevant"] * queue.height,
+            "explanation": ["official implementation announcement"] * queue.height,
+        }
+    )
+    dispositions = pl.DataFrame(
+        {
+            "candidate_id": [row["candidate_id"] for row in candidate_rows],
+            "status": ["accepted"] * len(candidate_rows),
+            "catalog_id": [
+                catalog_by_symbol[row["symbol"]] for row in candidate_rows
+            ],
+            "explanation": ["official fields match"] * len(candidate_rows),
+            "original_symbol": [row["symbol"] for row in candidate_rows],
+            "corrected_symbol": [None] * len(candidate_rows),
+            "original_ex_date": [row["ex_date"] for row in candidate_rows],
+            "corrected_ex_date": [None] * len(candidate_rows),
+            "original_effective_date": [
+                row["effective_date"] for row in candidate_rows
+            ],
+            "corrected_effective_date": [None] * len(candidate_rows),
+            "original_cash_per_share": [
+                row["cash_per_share"] for row in candidate_rows
+            ],
+            "corrected_cash_per_share": [None] * len(candidate_rows),
+            "original_share_ratio": [
+                row["share_ratio"] for row in candidate_rows
+            ],
+            "corrected_share_ratio": [None] * len(candidate_rows),
+            "correction_reason": [None] * len(candidate_rows),
+        }
+    )
+    linked_facts = [
+        {
+            "catalog_id": catalog_by_symbol[row["symbol"]],
+            "candidate_id": row["candidate_id"],
+            "announcement_date": date(2022, 8, 1),
+            "symbol": row["symbol"],
+            "ex_date": row["ex_date"],
+            "effective_date": row["effective_date"],
+            "cash_per_share": row["cash_per_share"],
+            "share_ratio": row["share_ratio"],
+        }
+        for row in candidate_rows
+    ]
+    corporate_facts = pl.DataFrame(
+        [
+            *linked_facts,
+            {
+                **linked_facts[1],
+                "catalog_id": linked_facts[0]["catalog_id"],
+                "candidate_id": None,
+            },
+        ]
+    )
+    security_facts = pl.DataFrame(
+        schema={
+            "catalog_id": pl.String,
+            "effective_date": pl.Date,
+            "source_symbol": pl.String,
+            "event_type": pl.String,
+            "target_symbol": pl.String,
+            "ratio": pl.Float64,
+            "cash_per_share": pl.Float64,
+            "explanation": pl.String,
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="corporate-action fact evidence symbol differs",
+    ):
+        publish_review_batch(
+            workspace=workspace,
+            candidate_manifest_path=candidates.manifest_path,
+            batch_manifest_path=batch.manifest_path,
+            announcement_decisions=decisions,
+            corporate_action_dispositions=dispositions,
+            corporate_action_facts=corporate_facts,
+            security_event_facts=security_facts,
+            reviewer_id="human-reviewer-1",
+            reviewed_at="2026-07-28T12:00:00+08:00",
+        )

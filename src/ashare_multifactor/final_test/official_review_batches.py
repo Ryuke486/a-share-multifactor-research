@@ -30,6 +30,7 @@ from ashare_multifactor.final_test.official_query_collection_root import (
 from ashare_multifactor.final_test.official_query_coverage import canonical_json_bytes
 from ashare_multifactor.final_test.official_review_batch_workspace import (
     PLAN_MANIFEST_NAME,
+    PLANS_DIRECTORY,
     ReviewBatch,
     VerifiedReviewBatchWorkspace,
     load_verified_review_batch_workspace,
@@ -43,6 +44,7 @@ from ashare_multifactor.final_test.official_review_submission import (
     CORPORATE_FACTS_NAME,
     SECURITY_FACTS_NAME,
     VerifiedReviewSubmission,
+    load_verified_review_submission,
     publish_review_submission,
 )
 from ashare_multifactor.final_test.recovery_secure_fs import open_directory_at
@@ -325,7 +327,116 @@ def finalize_review_batches(
         for item in reviewed
     ):
         raise ValueError("review batch reviewer or timestamp differs")
-    combined = tuple(
+    combined = _combined_batch_frames(reviewed)
+    submission = publish_review_submission(
+        workspace=workspace,
+        candidate_manifest_path=candidate_manifest_path,
+        announcement_decisions=combined[0],
+        corporate_action_dispositions=combined[1],
+        corporate_action_facts=combined[2],
+        security_event_facts=combined[3],
+        reviewer_id=reviewer,
+        reviewed_at=timestamp,
+        batch_provenance=_batch_provenance(plan, reviewed),
+    )
+    return load_verified_batch_review_submission(
+        submission.manifest_path,
+        workspace=workspace,
+        candidate_manifest_path=candidate_manifest_path,
+    )
+
+
+def load_verified_batch_review_submission(
+    manifest_path: Path,
+    *,
+    workspace: EvidenceWorkspace,
+    candidate_manifest_path: Path | None,
+) -> VerifiedReviewSubmission:
+    """Require one final submission to derive from every immutable review shard."""
+    submission = load_verified_review_submission(
+        manifest_path,
+        workspace=workspace,
+        candidate_manifest_path=candidate_manifest_path,
+    )
+    provenance = submission.batch_provenance
+    if not isinstance(provenance, dict):
+        raise ValueError("review batch provenance is required")
+    plan_id = provenance.get("plan_id")
+    if not isinstance(plan_id, str) or _SHA256.fullmatch(plan_id) is None:
+        raise ValueError("review batch provenance is invalid")
+    plan = load_verified_review_batch_workspace(
+        workspace.root.parent
+        / PLANS_DIRECTORY
+        / plan_id
+        / PLAN_MANIFEST_NAME,
+        workspace=workspace,
+        candidate_manifest_path=candidate_manifest_path,
+    )
+    queue = load_verified_review_queue(workspace)
+    reviewed: list[VerifiedReviewBatch] = []
+    for batch in plan.batches:
+        try:
+            reviewed.append(
+                _load_verified_review_batch_bound(
+                    _submission_manifest_path(
+                        workspace.root.parent,
+                        plan,
+                        batch,
+                    ),
+                    workspace=workspace,
+                    plan=plan,
+                    batch=batch,
+                    queue=queue,
+                )
+            )
+        except (FileNotFoundError, ValueError) as error:
+            raise ValueError("review batch provenance is incomplete") from error
+    if provenance != _batch_provenance(plan, reviewed):
+        raise ValueError("review batch provenance differs")
+    finalized_at = datetime.fromisoformat(submission.reviewed_at)
+    if any(
+        item.reviewer_id != submission.reviewer_id
+        or datetime.fromisoformat(item.reviewed_at) > finalized_at
+        for item in reviewed
+    ):
+        raise ValueError("review batch provenance reviewer or timestamp differs")
+    combined = _combined_batch_frames(reviewed)
+    submitted = (
+        submission.announcement_decisions,
+        submission.corporate_action_dispositions,
+        submission.corporate_action_facts,
+        submission.security_event_facts,
+    )
+    if any(
+        not actual.equals(expected)
+        for actual, expected in zip(submitted, combined, strict=True)
+    ):
+        raise ValueError("review batch provenance rows differ")
+    return submission
+
+
+def _batch_provenance(
+    plan: VerifiedReviewBatchWorkspace,
+    reviewed: list[VerifiedReviewBatch],
+) -> dict[str, object]:
+    return {
+        "role": "complete_official_review_batch_provenance",
+        "plan_id": plan.plan_id,
+        "plan_manifest_sha256": plan.manifest_sha256,
+        "batches": [
+            {
+                "batch_id": item.batch_id,
+                "submission_manifest_sha256": item.manifest_sha256,
+            }
+            for item in reviewed
+        ],
+    }
+
+
+def _combined_batch_frames(
+    reviewed: list[VerifiedReviewBatch],
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    return tuple(
         pl.concat(
             [getattr(item, attribute) for item in reviewed],
             how="vertical_relaxed",
@@ -336,16 +447,6 @@ def finalize_review_batches(
             "corporate_action_facts",
             "security_event_facts",
         )
-    )
-    return publish_review_submission(
-        workspace=workspace,
-        candidate_manifest_path=candidate_manifest_path,
-        announcement_decisions=combined[0],
-        corporate_action_dispositions=combined[1],
-        corporate_action_facts=combined[2],
-        security_event_facts=combined[3],
-        reviewer_id=reviewer,
-        reviewed_at=timestamp,
     )
 
 
