@@ -86,6 +86,8 @@ _IMPORT_TESTS = (
     "test_data_reuse_rejects_bound_inventory_authorization_drift",
     "tests.test_final_test_data_reuse::"
     "test_data_reuse_rejects_raw_inventory_drift_after_binding_validation",
+    "tests.test_evidence_workflow_successor::"
+    "test_v4_successor_publication_preserves_bound_research_identity",
 )
 _TEST_GROUPS = {
     "document_validation.json": _DOCUMENT_TESTS,

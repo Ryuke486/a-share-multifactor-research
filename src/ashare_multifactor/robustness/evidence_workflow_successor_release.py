@@ -8,7 +8,11 @@ from pathlib import Path
 import shutil
 
 from ashare_multifactor.audit.identity import code_identity
-from ashare_multifactor.audit.publication import publish_release, resolve_current
+from ashare_multifactor.audit.publication import (
+    PublishedRelease,
+    publish_release,
+    resolve_current,
+)
 from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.config import load_config
 from ashare_multifactor.execution.fee_protocol import validate_fee_protocol
@@ -31,6 +35,7 @@ from ashare_multifactor.robustness.protocol_identities import (
     build_final_execution_identity_at_revision,
     build_protocol_identities,
     identity_payload,
+    validate_protocol_identities,
 )
 from ashare_multifactor.robustness.successor_seal import (
     build_stage8_successor_lineage,
@@ -38,6 +43,40 @@ from ashare_multifactor.robustness.successor_seal import (
     verify_action_coverage_audit,
 )
 from ashare_multifactor.robustness.test_protocol import seal_test_protocol
+
+
+def _v4_research_records(
+    predecessor: PublishedRelease,
+    predecessor_lineage: dict[str, object],
+    predecessor_identities: dict[str, dict[str, object]],
+    validation: PublishedRelease,
+) -> dict[str, object]:
+    records = predecessor_lineage.get("research_reuse")
+    if not isinstance(records, dict):
+        raise ValueError("protocol v4 predecessor lacks bound research reuse")
+    research_records = dict(records)
+    if (
+        identity_payload("research_result_identity", research_records)
+        != predecessor_identities["research"]
+    ):
+        raise ValueError("protocol v4 predecessor research identity differs")
+    if (
+        research_records.get("validation_run_id") != validation.run_id
+        or research_records.get("validation_manifest_sha256")
+        != validation.manifest_sha256
+    ):
+        raise ValueError("protocol v4 predecessor validation identity differs")
+    bound_files = {
+        "robustness_results_sha256": (
+            predecessor.datasets / "robustness_results.parquet"
+        ),
+        "report_sha256": predecessor.artifacts / "report.md",
+        "protocol_gate_sha256": predecessor.artifacts / "protocol_gate.json",
+    }
+    for record, path in bound_files.items():
+        if research_records.get(record) != sha256_file(path):
+            raise ValueError("protocol v4 predecessor research artifact differs")
+    return research_records
 
 
 def publish_evidence_workflow_successor_release(
@@ -63,13 +102,14 @@ def publish_evidence_workflow_successor_release(
         )
     )
     predecessor_code = predecessor_sealed.get("code")
+    predecessor_protocol_version = predecessor_sealed.get("protocol_version")
     if (
-        predecessor_sealed.get("protocol_version") != 3
+        predecessor_protocol_version not in {3, 4}
         or predecessor_sealed.get("status") != "sealed"
         or not isinstance(predecessor_code, dict)
         or predecessor_code.get("dirty") is not False
     ):
-        raise ValueError("predecessor Stage-8 seal is not protocol v3")
+        raise ValueError("predecessor Stage-8 seal is not supported")
     predecessor_final_execution_identity = (
         build_final_execution_identity_at_revision(
             code_root,
@@ -85,24 +125,58 @@ def publish_evidence_workflow_successor_release(
             encoding="utf-8"
         )
     )
-    research_records = {
-        "validation_run_id": validation.run_id,
-        "validation_manifest_sha256": validation.manifest_sha256,
-        "predecessor_stage8_run_id": predecessor.run_id,
-        "predecessor_stage8_manifest_sha256": predecessor.manifest_sha256,
-        "predecessor_stage8_lineage_sha256": sha256_file(predecessor.lineage),
-        "robustness_results_sha256": sha256_file(
-            predecessor.datasets / "robustness_results.parquet"
-        ),
-        "report_sha256": sha256_file(predecessor.artifacts / "report.md"),
-        "protocol_gate_sha256": sha256_file(
-            predecessor.artifacts / "protocol_gate.json"
-        ),
-    }
+    predecessor_identities: dict[str, dict[str, object]] | None = None
+    if predecessor_protocol_version == 4:
+        predecessor_identities = validate_protocol_identities(
+            predecessor_sealed.get("protocol_identities")
+        )
+        if (
+            predecessor_identities["final_execution"]
+            != predecessor_final_execution_identity
+        ):
+            raise ValueError(
+                "protocol v4 predecessor final-execution identity differs"
+            )
+        research_records = _v4_research_records(
+            predecessor,
+            predecessor_lineage,
+            predecessor_identities,
+            validation,
+        )
+        supersession_reason = (
+            "predecessor protocol v4 evidence workflow requires a bounded "
+            "correctness repair"
+        )
+    else:
+        research_records = {
+            "validation_run_id": validation.run_id,
+            "validation_manifest_sha256": validation.manifest_sha256,
+            "predecessor_stage8_run_id": predecessor.run_id,
+            "predecessor_stage8_manifest_sha256": predecessor.manifest_sha256,
+            "predecessor_stage8_lineage_sha256": sha256_file(
+                predecessor.lineage
+            ),
+            "robustness_results_sha256": sha256_file(
+                predecessor.datasets / "robustness_results.parquet"
+            ),
+            "report_sha256": sha256_file(predecessor.artifacts / "report.md"),
+            "protocol_gate_sha256": sha256_file(
+                predecessor.artifacts / "protocol_gate.json"
+            ),
+        }
+        supersession_reason = (
+            "predecessor evidence workflow lacked validated PDF admission, "
+            "review publication, atomic coverage publication, and evidence import"
+        )
     expected_identities = build_protocol_identities(
         code_root,
         research_records=research_records,
     )
+    if (
+        predecessor_identities is not None
+        and expected_identities["research"] != predecessor_identities["research"]
+    ):
+        raise ValueError("protocol v4 successor research identity differs")
     change_impact_sha256 = verify_evidence_workflow_only_change_impact(
         change_impact_audit_path,
         expected_current_identities=expected_identities,
@@ -148,10 +222,7 @@ def publish_evidence_workflow_successor_release(
             "manifest_sha256": predecessor.manifest_sha256,
         },
         predecessor_manifest=predecessor.manifest,
-        reason=(
-            "predecessor evidence workflow lacked validated PDF admission, "
-            "review publication, atomic coverage publication, and evidence import"
-        ),
+        reason=supersession_reason,
     )
     staged = data_root / "artifacts/robustness/release_staging" / run_id
     if staged.exists():

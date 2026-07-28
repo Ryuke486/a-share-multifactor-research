@@ -4,12 +4,16 @@ from datetime import date
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 import xml.etree.ElementTree as ET
 
 import polars as pl
 import pytest
 
 from ashare_multifactor.audit.records import sha256_file
+from ashare_multifactor.robustness import (
+    evidence_workflow_successor_release as successor_release,
+)
 from ashare_multifactor.robustness.change_impact import (
     verify_change_impact_audit,
     verify_evidence_workflow_only_change_impact,
@@ -151,6 +155,183 @@ def test_final_execution_identity_can_be_rebuilt_from_a_sealed_git_tree() -> Non
         commit=commit,
         tree=tree,
     ) == build_final_execution_identity(Path.cwd())
+
+
+def test_v4_successor_publication_preserves_bound_research_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_root = tmp_path / "data"
+    predecessor_root = tmp_path / "predecessor"
+    predecessor_datasets = predecessor_root / "datasets"
+    predecessor_artifacts = predecessor_root / "artifacts"
+    predecessor_datasets.mkdir(parents=True)
+    predecessor_artifacts.mkdir()
+    results = predecessor_datasets / "robustness_results.parquet"
+    report = predecessor_artifacts / "report.md"
+    gate = predecessor_artifacts / "protocol_gate.json"
+    results.write_bytes(b"unchanged-results")
+    report.write_text("unchanged report", encoding="utf-8")
+    gate.write_text(
+        json.dumps({"sealed_test_protocol_allowed": True}),
+        encoding="utf-8",
+    )
+    validation = SimpleNamespace(
+        run_id="validation",
+        manifest_sha256="1" * 64,
+    )
+    research_records = {
+        "validation_run_id": validation.run_id,
+        "validation_manifest_sha256": validation.manifest_sha256,
+        "predecessor_stage8_run_id": "original-research-release",
+        "predecessor_stage8_manifest_sha256": "2" * 64,
+        "predecessor_stage8_lineage_sha256": "3" * 64,
+        "robustness_results_sha256": sha256_file(results),
+        "report_sha256": sha256_file(report),
+        "protocol_gate_sha256": sha256_file(gate),
+    }
+    predecessor_identities = {
+        "research": identity_payload(
+            "research_result_identity",
+            research_records,
+        ),
+        "final_execution": identity_payload(
+            "final_execution_identity",
+            {"execution": "same"},
+        ),
+        "evidence_workflow": identity_payload(
+            "evidence_workflow_identity",
+            {"workflow": "v4-predecessor"},
+        ),
+    }
+    current_identities = {
+        **predecessor_identities,
+        "evidence_workflow": identity_payload(
+            "evidence_workflow_identity",
+            {"workflow": "v4-successor"},
+        ),
+    }
+    lineage_path = predecessor_root / "lineage.json"
+    lineage_path.write_text(
+        json.dumps(
+            {
+                "inputs": {},
+                "reproducibility": {},
+                "research_reuse": research_records,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (predecessor_artifacts / "sealed_test_protocol.json").write_text(
+        json.dumps(
+            {
+                "protocol_version": 4,
+                "status": "sealed",
+                "code": {
+                    "commit": "a" * 40,
+                    "tree": "b" * 40,
+                    "dirty": False,
+                },
+                "protocol_identities": predecessor_identities,
+            }
+        ),
+        encoding="utf-8",
+    )
+    predecessor = SimpleNamespace(
+        run_id="v4-predecessor",
+        manifest_sha256="4" * 64,
+        lineage=lineage_path,
+        datasets=predecessor_datasets,
+        artifacts=predecessor_artifacts,
+        manifest=predecessor_root / "manifest.json",
+    )
+    validation_pointer = (
+        data_root / "processed/validation_evaluation/CURRENT.json"
+    )
+    validation_pointer.parent.mkdir(parents=True)
+    validation_pointer.write_text(
+        json.dumps(
+            {
+                "run_id": validation.run_id,
+                "manifest_sha256": validation.manifest_sha256,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        successor_release,
+        "resolve_robustness_data_root",
+        lambda _root: data_root,
+    )
+    monkeypatch.setattr(
+        successor_release,
+        "code_identity",
+        lambda _root: {
+            "commit": "c" * 40,
+            "tree": "d" * 40,
+            "dirty": False,
+        },
+    )
+    monkeypatch.setattr(
+        successor_release,
+        "resolve_current",
+        lambda root: (
+            predecessor if root.name == "robustness" else validation
+        ),
+    )
+    monkeypatch.setattr(
+        successor_release,
+        "build_final_execution_identity_at_revision",
+        lambda *_args, **_kwargs: predecessor_identities["final_execution"],
+    )
+    monkeypatch.setattr(
+        successor_release,
+        "load_config",
+        lambda _path: SimpleNamespace(supported_markets=("sh", "sz")),
+    )
+    monkeypatch.setattr(
+        successor_release,
+        "assert_validation_market_scope",
+        lambda *_args: None,
+    )
+
+    def build_identities(
+        _root: Path,
+        *,
+        research_records: dict[str, object],
+    ) -> dict[str, dict[str, object]]:
+        assert research_records == research_records_bound_to_v4
+        return current_identities
+
+    research_records_bound_to_v4 = research_records
+    monkeypatch.setattr(
+        successor_release,
+        "build_protocol_identities",
+        build_identities,
+    )
+
+    class ReachedChangeImpact(Exception):
+        pass
+
+    def reach_change_impact(*_args, **_kwargs) -> str:
+        raise ReachedChangeImpact
+
+    monkeypatch.setattr(
+        successor_release,
+        "verify_evidence_workflow_only_change_impact",
+        reach_change_impact,
+    )
+
+    with pytest.raises(ReachedChangeImpact):
+        successor_release.publish_evidence_workflow_successor_release(
+            Path.cwd(),
+            run_id="v4-successor",
+            action_audit_root=tmp_path / "action",
+            collector_readiness_root=tmp_path / "collector",
+            evidence_workflow_readiness_root=tmp_path / "evidence",
+            change_impact_audit_path=tmp_path / "change-impact.json",
+        )
 
 
 def test_evidence_readiness_requires_the_full_pre_resume_workflow(
