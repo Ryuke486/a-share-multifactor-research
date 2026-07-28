@@ -160,6 +160,7 @@ def _validate_reports(
         or candidates.get("interrupted_resume_verified") is not True
         or candidates.get("exact_query_coverage") is not True
         or candidates.get("out_of_scope_rejected") is not True
+        or candidates.get("missing_effective_date_preserved") is not True
         or review.get("status") != "passed"
         or review.get("exact_queue_coverage") is not True
         or review.get("exact_candidate_coverage") is not True
@@ -170,6 +171,8 @@ def _validate_reports(
         or review.get("frozen_batch_input_drift_rejected") is not True
         or review.get("cross_symbol_disposition_rejected") is not True
         or review.get("cross_symbol_fact_rejected") is not True
+        or review.get("missing_effective_date_requires_reconciliation") is not True
+        or review.get("null_original_comparison_safe") is not True
         or coverage.get("status") != "passed"
         or coverage.get("atomic_pair_publication") is not True
         or coverage.get("direct_review_without_batch_provenance_rejected")

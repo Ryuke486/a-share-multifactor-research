@@ -46,6 +46,8 @@ _CANDIDATE_TESTS = (
     "test_candidate_collection_rejects_response_outside_exact_query_scope",
     "tests.test_final_test_corporate_action_candidates::"
     "test_candidate_collection_rejects_changed_provider_schema",
+    "tests.test_final_test_corporate_action_candidates::"
+    "test_candidate_collection_preserves_missing_payment_date_for_review",
 )
 _REVIEW_TESTS = (
     "tests.test_final_test_official_review_submission::"
@@ -54,6 +56,14 @@ _REVIEW_TESTS = (
     "test_review_submission_rejects_incomplete_queue_decisions",
     "tests.test_final_test_official_review_submission::"
     "test_review_submission_rejects_fact_without_relevant_cached_document",
+    "tests.test_final_test_official_review_submission::"
+    "test_review_submission_requires_missing_payment_date_to_be_corrected",
+    "tests.test_final_test_official_review_submission::"
+    "test_review_submission_accepts_official_correction_for_missing_payment_date",
+    "tests.test_final_test_official_review_submission::"
+    "test_review_submission_accepts_rejection_for_missing_payment_date",
+    "tests.test_final_test_official_review_submission::"
+    "test_review_submission_detects_false_null_original_payment_date",
     "tests.test_final_test_official_review_batches::"
     "test_review_batches_resume_then_finalize_exact_submission",
     "tests.test_final_test_official_review_batches::"
@@ -147,6 +157,7 @@ def build_evidence_workflow_rehearsal(
             "interrupted_resume_verified": True,
             "exact_query_coverage": True,
             "out_of_scope_rejected": True,
+            "missing_effective_date_preserved": True,
         },
     )
     _write_json(
@@ -163,6 +174,8 @@ def build_evidence_workflow_rehearsal(
             "frozen_batch_input_drift_rejected": True,
             "cross_symbol_disposition_rejected": True,
             "cross_symbol_fact_rejected": True,
+            "missing_effective_date_requires_reconciliation": True,
+            "null_original_comparison_safe": True,
         },
     )
     _write_json(

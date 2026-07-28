@@ -132,6 +132,9 @@
   只有 `evidence_workflow` 身份发生变化。
 - [x] 用户已明确确认提交 Task 7A.2；本提交不生成正式 readiness、
   change-impact、v4 seal、新授权或新 attempt。失败 attempt 不得继续。
+- [x] 封印前复核将本次 5 个候选/审核反例及 3 个缺失日期语义门禁纳入正式
+  evidence-workflow readiness 必选清单；专项 `27 passed`、全量
+  `1290 passed`、Ruff 和差异检查通过。
 
 ## Task 8：新授权后的最小重采
 

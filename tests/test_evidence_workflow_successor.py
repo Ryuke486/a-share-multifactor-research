@@ -375,6 +375,7 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             "interrupted_resume_verified": True,
             "exact_query_coverage": True,
             "out_of_scope_rejected": True,
+            "missing_effective_date_preserved": True,
         },
         "review_submission.json": {
             **common,
@@ -388,6 +389,8 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             "frozen_batch_input_drift_rejected": True,
             "cross_symbol_disposition_rejected": True,
             "cross_symbol_fact_rejected": True,
+            "missing_effective_date_requires_reconciliation": True,
+            "null_original_comparison_safe": True,
         },
         "coverage_publication.json": {
             **common,
@@ -435,6 +438,29 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
 
     assert manifest["status"] == "ready"
     assert len(verify_evidence_workflow_readiness_audit(destination)) == 64
+    for report_name, field in (
+        ("candidate_collection.json", "missing_effective_date_preserved"),
+        (
+            "review_submission.json",
+            "missing_effective_date_requires_reconciliation",
+        ),
+        ("review_submission.json", "null_original_comparison_safe"),
+    ):
+        report_path = source / report_name
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report[field] = False
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+        with pytest.raises(
+            ValueError,
+            match="complete evidence workflow rehearsal is not ready",
+        ):
+            write_evidence_workflow_readiness_audit(
+                source,
+                tmp_path / f"rejected-{field}",
+                evidence_workflow_identity=identity,
+            )
+        report[field] = True
+        report_path.write_text(json.dumps(report), encoding="utf-8")
 
 
 def test_protocol_v4_binds_split_identities_and_new_readiness_gates(
@@ -562,9 +588,25 @@ def test_rehearsal_binds_focused_tests_and_reroutes_real_historical_catalog(
     review = json.loads(
         (audit / "review_submission.json").read_text(encoding="utf-8")
     )
+    candidates = json.loads(
+        (audit / "candidate_collection.json").read_text(encoding="utf-8")
+    )
+    assert (
+        "tests.test_final_test_corporate_action_candidates::"
+        "test_candidate_collection_preserves_missing_payment_date_for_review"
+        in candidates["test_cases"]
+    )
+    assert candidates["missing_effective_date_preserved"] is True
     assert (
         "tests.test_final_test_official_review_batches::"
         "test_review_batch_rejects_unlinked_cross_symbol_corporate_fact"
         in review["test_cases"]
     )
     assert review["cross_symbol_fact_rejected"] is True
+    assert (
+        "tests.test_final_test_official_review_submission::"
+        "test_review_submission_requires_missing_payment_date_to_be_corrected"
+        in review["test_cases"]
+    )
+    assert review["missing_effective_date_requires_reconciliation"] is True
+    assert review["null_original_comparison_safe"] is True
