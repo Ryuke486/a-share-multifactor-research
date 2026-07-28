@@ -60,7 +60,7 @@ COVERAGE_NAME = "query_coverage.parquet"
 CANDIDATES_NAME = "candidates.parquet"
 MANIFEST_NAME = "manifest.json"
 
-_SCHEMA_VERSION = "1"
+_SCHEMA_VERSION = "2"
 
 
 @dataclass(frozen=True)
@@ -341,6 +341,9 @@ def _snapshot_files(
         "successful_query_count": len(packages),
         "raw_row_count": raw.height,
         "candidate_count": candidates.height,
+        "missing_effective_date_candidate_count": candidates.filter(
+            pl.col("effective_date").is_null()
+        ).height,
         "files": [
             {
                 "path": name,
@@ -399,7 +402,21 @@ def _validate_snapshot(
     ):
         raise ValueError("corporate-action candidate query coverage is invalid")
     expected_candidates = normalize_corporate_action_candidates(raw, symbols=symbols)
-    if not candidates.equals(expected_candidates):
+    missing_effective_dates = candidates.filter(
+        pl.col("effective_date").is_null()
+    )
+    if (
+        manifest.get("schema_version") != _SCHEMA_VERSION
+        or manifest.get("candidate_count") != candidates.height
+        or manifest.get("missing_effective_date_candidate_count")
+        != missing_effective_dates.height
+        or missing_effective_dates.filter(
+            (pl.col("cash_per_share") <= 0)
+            | (pl.col("share_ratio") != 0)
+            | pl.col("ex_date").is_null()
+        ).height
+        or not candidates.equals(expected_candidates)
+    ):
         raise ValueError("corporate-action candidates differ from raw provider rows")
 
 

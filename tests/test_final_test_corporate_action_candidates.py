@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+import json
 
 import polars as pl
 import pytest
@@ -189,3 +190,46 @@ def test_candidate_collection_rejects_changed_provider_schema(
             query=changed_schema,
             max_queries=2,
         )
+
+
+def test_candidate_collection_preserves_missing_payment_date_for_review(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    inputs = _inputs(prepared_attempt)
+
+    def incomplete_cash_query(
+        code: str,
+        year: int,
+        year_type: str,
+    ) -> tuple[list[str], list[list[str]]]:
+        del year_type
+        if code == "sz.000001" and year == 2025:
+            return _FIELDS, [
+                [code, "2025-06-12", "", "", "0.10", "0", "0"]
+            ]
+        return _FIELDS, []
+
+    result = collect_corporate_action_candidates(
+        **inputs,
+        query=incomplete_cash_query,
+    )
+
+    candidates = pl.read_parquet(result.candidates_path)
+    assert candidates.select(
+        "symbol",
+        "ex_date",
+        "effective_date",
+        "cash_per_share",
+        "share_ratio",
+    ).to_dicts() == [
+        {
+            "symbol": "000001",
+            "ex_date": date(2025, 6, 12),
+            "effective_date": None,
+            "cash_per_share": 0.1,
+            "share_ratio": 0.0,
+        }
+    ]
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert manifest["schema_version"] == "2"
+    assert manifest["missing_effective_date_candidate_count"] == 1

@@ -777,22 +777,29 @@ def test_continuous_targets_require_exact_stage7_handoff_date() -> None:
         _continuous_targets(historical, _signals().target_weights)
 
 
+@pytest.mark.parametrize("missing_date", ["ex_date", "effective_date"])
 def test_final_action_dates_must_be_non_null_and_inside_sealed_period(
     tmp_path: Path,
+    missing_date: str,
 ) -> None:
     from ashare_multifactor.final_test.backtest import _load_final_actions
 
     path = tmp_path / "corporate_actions.parquet"
+    dates = {
+        "ex_date": date(2022, 1, 4),
+        "effective_date": date(2022, 1, 4),
+    }
+    dates[missing_date] = None
     pl.DataFrame(
         {
             "symbol": ["000001"],
-            "ex_date": [None],
-            "effective_date": [date(2022, 1, 4)],
+            "ex_date": [dates["ex_date"]],
+            "effective_date": [dates["effective_date"]],
             "cash_per_share": [0.1],
             "share_ratio": [0.0],
             "source": ["synthetic"],
         },
-        schema_overrides={"ex_date": pl.Date},
+        schema_overrides={"ex_date": pl.Date, "effective_date": pl.Date},
     ).write_parquet(path)
 
     with pytest.raises(ValueError, match="corporate-action execution contract"):

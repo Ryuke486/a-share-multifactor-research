@@ -44,6 +44,7 @@ CORPORATE_FACTS_NAME = "corporate_action_facts.parquet"
 SECURITY_FACTS_NAME = "security_event_facts.parquet"
 
 _SCHEMA_VERSION = "1"
+_CANDIDATE_SNAPSHOT_SCHEMA_VERSION = "2"
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
@@ -292,7 +293,8 @@ def load_verified_candidate_snapshot(
     )
     records = manifest.get("files")
     if (
-        manifest.get("role") != "baostock_corporate_action_candidate_snapshot"
+        manifest.get("schema_version") != _CANDIDATE_SNAPSHOT_SCHEMA_VERSION
+        or manifest.get("role") != "baostock_corporate_action_candidate_snapshot"
         or manifest.get("status") != "complete"
         or manifest.get("attempt_id") != workspace.root.parent.name
         or manifest.get("period")
@@ -322,10 +324,21 @@ def load_verified_candidate_snapshot(
     except pl.exceptions.PolarsError as error:
         raise ValueError("corporate-action candidate snapshot is invalid") from error
     required = {"candidate_id", *CANDIDATE_FIELDS}
+    if not required.issubset(candidates.columns):
+        raise ValueError("corporate-action candidate rows are invalid")
+    missing_effective_dates = candidates.filter(
+        pl.col("effective_date").is_null()
+    )
     if (
-        not required.issubset(candidates.columns)
-        or candidates.height != manifest.get("candidate_count")
+        candidates.height != manifest.get("candidate_count")
+        or manifest.get("missing_effective_date_candidate_count")
+        != missing_effective_dates.height
         or candidates.select(pl.col("candidate_id").is_duplicated().any()).item()
+        or missing_effective_dates.filter(
+            (pl.col("cash_per_share") <= 0)
+            | (pl.col("share_ratio") != 0)
+            | pl.col("ex_date").is_null()
+        ).height
     ):
         raise ValueError("corporate-action candidate rows are invalid")
     return VerifiedCandidateSnapshot(

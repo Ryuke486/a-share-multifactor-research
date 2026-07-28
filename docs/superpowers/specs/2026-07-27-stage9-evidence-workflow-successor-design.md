@@ -63,6 +63,8 @@ protocol-only 路径还必须证明 `final_execution_rehearsal_required=false`�
 - BaoStock 只生产候选，不生产执行事实。
 - 查询按证券和经营年度拆成不可变小包；中断后只查询缺失包。
 - 每个响应都校验字段、行宽、证券范围、经营年度和日期语义。
+- 现金分红候选缺少 `dividPayDate` 时保留 `effective_date=null`，候选快照
+  显式核销缺失日期数量；不得猜测、回填或将其直接当作执行事实。
 - 完整快照必须精确核销全部证券年度查询。
 
 ### 3. 人工审核
@@ -71,6 +73,9 @@ protocol-only 路径还必须证明 `final_execution_rehearsal_required=false`�
   `relevant`、`irrelevant` 或 `unusable`。
 - 每个结构化候选必须有且只有一个 disposition：
   `accepted`、`corrected` 或 `rejected`。
+- `effective_date=null` 的候选只能依据官方 PDF 补齐非空日期后标记为
+  `corrected`，或标记为 `rejected`；不得直接 `accepted`。最终执行事实仍
+  必须具有合法的非空生效日期。
 - substantive 决定和执行事实只能引用已缓存且通过 PDF 准入的官方文档。
 - 修正必须同时保留原字段、修正字段和修正理由。
 - 审核提交不可变，并绑定队列、候选快照、审核者和带时区时间。

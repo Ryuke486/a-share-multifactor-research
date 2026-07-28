@@ -38,7 +38,11 @@ _FIELDS = [
 ]
 
 
-def _review_inputs(attempt: PreparedAttempt):
+def _review_inputs(
+    attempt: PreparedAttempt,
+    *,
+    missing_payment_date: bool = False,
+):
     inputs = _complete_query_coverage(
         attempt,
         transport=RoutedAnnouncementTransport(),
@@ -63,7 +67,15 @@ def _review_inputs(attempt: PreparedAttempt):
     ) -> tuple[list[str], list[list[str]]]:
         if code == "sz.000001" and year == 2024:
             return _FIELDS, [
-                [code, "2024-06-01", "2024-06-08", "", "0.10", "0", "0"]
+                [
+                    code,
+                    "2024-06-01",
+                    "" if missing_payment_date else "2024-06-08",
+                    "",
+                    "0.10",
+                    "0",
+                    "0",
+                ]
             ]
         return _FIELDS, []
 
@@ -95,7 +107,9 @@ def _review_inputs(attempt: PreparedAttempt):
             "corrected_symbol": [None],
             "original_ex_date": [date(2024, 6, 1)],
             "corrected_ex_date": [None],
-            "original_effective_date": [date(2024, 6, 8)],
+            "original_effective_date": [
+                None if missing_payment_date else date(2024, 6, 8)
+            ],
             "corrected_effective_date": [None],
             "original_cash_per_share": [0.1],
             "corrected_cash_per_share": [None],
@@ -136,6 +150,135 @@ def _review_inputs(attempt: PreparedAttempt):
         corporate_facts,
         security_events,
     )
+
+
+def test_review_submission_requires_missing_payment_date_to_be_corrected(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    (
+        workspace,
+        candidates,
+        announcement_decisions,
+        dispositions,
+        corporate_facts,
+        security_events,
+    ) = _review_inputs(prepared_attempt, missing_payment_date=True)
+
+    with pytest.raises(
+        ValueError,
+        match="missing effective date requires correction or rejection",
+    ):
+        publish_review_submission(
+            workspace=workspace,
+            candidate_manifest_path=candidates.manifest_path,
+            announcement_decisions=announcement_decisions,
+            corporate_action_dispositions=dispositions,
+            corporate_action_facts=corporate_facts,
+            security_event_facts=security_events,
+            reviewer_id="human-reviewer-1",
+            reviewed_at="2026-07-27T12:00:00+08:00",
+        )
+
+
+def test_review_submission_accepts_official_correction_for_missing_payment_date(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    (
+        workspace,
+        candidates,
+        announcement_decisions,
+        dispositions,
+        corporate_facts,
+        security_events,
+    ) = _review_inputs(prepared_attempt, missing_payment_date=True)
+    corrected = dispositions.with_columns(
+        pl.lit("corrected").alias("status"),
+        pl.lit(date(2024, 6, 8)).alias("corrected_effective_date"),
+        pl.lit("payment date supplied by the official announcement").alias(
+            "correction_reason"
+        ),
+    )
+
+    submission = publish_review_submission(
+        workspace=workspace,
+        candidate_manifest_path=candidates.manifest_path,
+        announcement_decisions=announcement_decisions,
+        corporate_action_dispositions=corrected,
+        corporate_action_facts=corporate_facts,
+        security_event_facts=security_events,
+        reviewer_id="human-reviewer-1",
+        reviewed_at="2026-07-27T12:00:00+08:00",
+    )
+
+    assert submission.ready is True
+    assert submission.corporate_action_dispositions.item(
+        0, "corrected_effective_date"
+    ) == date(2024, 6, 8)
+
+
+def test_review_submission_accepts_rejection_for_missing_payment_date(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    (
+        workspace,
+        candidates,
+        announcement_decisions,
+        dispositions,
+        corporate_facts,
+        security_events,
+    ) = _review_inputs(prepared_attempt, missing_payment_date=True)
+
+    submission = publish_review_submission(
+        workspace=workspace,
+        candidate_manifest_path=candidates.manifest_path,
+        announcement_decisions=announcement_decisions,
+        corporate_action_dispositions=dispositions.with_columns(
+            pl.lit("rejected").alias("status"),
+            pl.lit("official announcement does not support an execution fact").alias(
+                "explanation"
+            ),
+        ),
+        corporate_action_facts=corporate_facts.clear(),
+        security_event_facts=security_events,
+        reviewer_id="human-reviewer-1",
+        reviewed_at="2026-07-27T12:00:00+08:00",
+    )
+
+    assert submission.ready is True
+    assert submission.corporate_action_facts.height == 0
+
+
+def test_review_submission_detects_false_null_original_payment_date(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    (
+        workspace,
+        candidates,
+        announcement_decisions,
+        dispositions,
+        corporate_facts,
+        security_events,
+    ) = _review_inputs(prepared_attempt, missing_payment_date=True)
+    false_original = dispositions.with_columns(
+        pl.lit("corrected").alias("status"),
+        pl.lit(date(2024, 6, 8)).alias("original_effective_date"),
+        pl.lit(date(2024, 6, 8)).alias("corrected_effective_date"),
+        pl.lit("payment date supplied by the official announcement").alias(
+            "correction_reason"
+        ),
+    )
+
+    with pytest.raises(ValueError, match="original fields are false"):
+        publish_review_submission(
+            workspace=workspace,
+            candidate_manifest_path=candidates.manifest_path,
+            announcement_decisions=announcement_decisions,
+            corporate_action_dispositions=false_original,
+            corporate_action_facts=corporate_facts,
+            security_event_facts=security_events,
+            reviewer_id="human-reviewer-1",
+            reviewed_at="2026-07-27T12:00:00+08:00",
+        )
 
 
 def test_review_submission_exactly_covers_queue_and_provider_candidates(

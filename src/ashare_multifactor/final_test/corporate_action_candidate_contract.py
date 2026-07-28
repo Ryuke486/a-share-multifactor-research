@@ -67,8 +67,6 @@ def normalize_corporate_action_candidates(
     if parsed.filter(~pl.col("symbol").is_in(allowed_symbols)).height:
         raise ValueError("BaoStock response symbol escapes the prepared scope")
     cash = parsed.filter(pl.col("cash_per_share") > 0)
-    if cash.filter(pl.col("dividPayDate").is_null()).height:
-        raise ValueError("final cash dividend is missing payment date")
     shares = parsed.filter(pl.col("share_ratio") > 0)
     candidates = pl.concat(
         (
@@ -103,11 +101,14 @@ def normalize_corporate_action_candidates(
         ],
         maintain_order=True,
     )
-    if candidates.filter(
+    invalid_effective_date = pl.col("effective_date").is_not_null() & (
         (pl.col("effective_date") < pl.col("ex_date"))
         | ~pl.col("effective_date").is_between(FINAL_TEST_START, FINAL_TEST_END)
-    ).height:
+    )
+    if candidates.filter(invalid_effective_date).height:
         raise ValueError("final corporate action effective date is invalid")
+    # BaoStock is a candidate source, not execution evidence. A missing cash
+    # payment date stays null until official review corrects or rejects it.
     return normalize_corporate_actions(
         candidates,
         maximum_date=FINAL_TEST_END,

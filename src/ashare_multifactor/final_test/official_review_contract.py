@@ -216,17 +216,17 @@ def _corporate_dispositions(
     ).height:
         raise ValueError("corporate-action disposition evidence symbol differs")
     if joined.filter(
-        (pl.col("original_symbol") != pl.col("candidate_symbol"))
-        | (pl.col("original_ex_date") != pl.col("candidate_ex_date"))
-        | (
-            pl.col("original_effective_date")
-            != pl.col("candidate_effective_date")
+        pl.col("original_symbol").ne_missing(pl.col("candidate_symbol"))
+        | pl.col("original_ex_date").ne_missing(pl.col("candidate_ex_date"))
+        | pl.col("original_effective_date").ne_missing(
+            pl.col("candidate_effective_date")
         )
-        | (
-            pl.col("original_cash_per_share")
-            != pl.col("candidate_cash_per_share")
+        | pl.col("original_cash_per_share").ne_missing(
+            pl.col("candidate_cash_per_share")
         )
-        | (pl.col("original_share_ratio") != pl.col("candidate_share_ratio"))
+        | pl.col("original_share_ratio").ne_missing(
+            pl.col("candidate_share_ratio")
+        )
     ).height:
         raise ValueError("corporate-action disposition original fields are false")
     corrected_columns = [
@@ -247,6 +247,19 @@ def _corporate_dispositions(
         | pl.col("correction_reason").str.strip_chars().eq("")
     ).height:
         raise ValueError("corrected candidate lacks explicit field reconciliation")
+    if joined.filter(
+        pl.col("candidate_effective_date").is_null()
+        & (
+            (pl.col("status") == "accepted")
+            | (
+                (pl.col("status") == "corrected")
+                & pl.col("corrected_effective_date").is_null()
+            )
+        )
+    ).height:
+        raise ValueError(
+            "candidate missing effective date requires correction or rejection"
+        )
     return dispositions
 
 
@@ -339,7 +352,7 @@ def _corporate_facts(
             if corrected in comparison.columns
             else pl.col(field)
         )
-        mismatch = mismatch | (expected_value != pl.col(f"fact_{field}"))
+        mismatch = mismatch | expected_value.ne_missing(pl.col(f"fact_{field}"))
     if comparison.filter(mismatch).height:
         raise ValueError("candidate disposition fields differ from corporate-action fact")
     return facts

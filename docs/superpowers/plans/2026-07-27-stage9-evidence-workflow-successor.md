@@ -118,6 +118,21 @@
 - [x] 用户已明确确认提交 Task 7A.1；本提交不生成正式 readiness、
   change-impact 或 v4 seal。
 
+## Task 7A.2：BaoStock 缺失支付日失败关闭修复
+
+- [x] 用现金分红 `dividPayDate` 为空的反例复现候选采集失败。
+- [x] 候选层保留 `effective_date=null`，候选快照 schema 升至 v2 并记录
+  缺失日期候选数量，不伪造支付日期。
+- [x] 审核层使用 null-safe 原值/事实对比；缺失日期候选只能由官方 PDF
+  `corrected` 为非空日期或 `rejected`，不得直接 `accepted`。
+- [x] 最终 execution fact 契约继续拒绝空日期，候选修复不放宽正式执行输入。
+- [x] 完成相关 `69 passed`、全量 `1290 passed`、Ruff、差异与身份失效
+  范围审计；`final_execution` 身份仍为
+  `95fafab8b735e47c9011d3ec851320678ccf9376cc772994bcb0e725b369cfbf`，
+  只有 `evidence_workflow` 身份发生变化。
+- [x] 用户已明确确认提交 Task 7A.2；本提交不生成正式 readiness、
+  change-impact、v4 seal、新授权或新 attempt。失败 attempt 不得继续。
+
 ## Task 8：新授权后的最小重采
 
 - [ ] 用户对精确 v4 seal 提供新的一次性授权。
