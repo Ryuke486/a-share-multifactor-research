@@ -80,6 +80,12 @@ _IMPORT_TESTS = (
     "test_source_attempt_can_be_verified_after_code_head_moves",
     "tests.test_final_test_data_reuse::"
     "test_data_reuse_receipt_binds_source_claim_panel_and_v4_protocol",
+    "tests.test_final_test_data_reuse::"
+    "test_foreign_published_claim_gets_v4_reuse_receipt",
+    "tests.test_final_test_data_reuse::"
+    "test_data_reuse_rejects_bound_inventory_authorization_drift",
+    "tests.test_final_test_data_reuse::"
+    "test_data_reuse_rejects_raw_inventory_drift_after_binding_validation",
 )
 _TEST_GROUPS = {
     "document_validation.json": _DOCUMENT_TESTS,

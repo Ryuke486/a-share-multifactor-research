@@ -207,8 +207,7 @@ def _publish_reuse_receipt(
         FINAL_TEST_END,
         discover=discover_daily_pairs,
     )
-    if recorded_inventory != current_inventory:
-        raise ValueError("final-test raw inventory changed; panel reuse is forbidden")
+    _verify_source_input_inventory(recorded_inventory, current_inventory, source)
     identities = validate_protocol_identities(sealed.get("protocol_identities"))
     receipt = {
         "schema_version": RECEIPT_SCHEMA_VERSION,
@@ -274,6 +273,30 @@ def _publish_reuse_receipt(
         relative_path=f"data-reuse/{authorization.attempt_id}.json",
         payload=payload,
     )
+
+
+def _verify_source_input_inventory(
+    recorded_inventory: dict[str, Any],
+    current_inventory: dict[str, object],
+    source: FinalTestAuthorization,
+) -> None:
+    raw_fields = ("schema_version", "period", "pairs")
+    if set(recorded_inventory) != {*raw_fields, "authorization_identity"}:
+        raise ValueError("final-test source input inventory schema is invalid")
+    expected_authorization = {
+        **authorization_identity(source),
+        "registered_at": source.registered_at,
+    }
+    if recorded_inventory.get("authorization_identity") != expected_authorization:
+        raise ValueError(
+            "final-test source authorization identity differs in input inventory"
+        )
+    recorded_raw_inventory = {
+        field: recorded_inventory[field]
+        for field in raw_fields
+    }
+    if recorded_raw_inventory != current_inventory:
+        raise ValueError("final-test raw inventory changed; panel reuse is forbidden")
 
 
 def _verify_reuse_receipt_at(

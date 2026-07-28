@@ -10,6 +10,7 @@ import pytest
 
 from test_build import _config
 
+from ashare_multifactor.final_test import data_extension as data_extension_module
 from ashare_multifactor.final_test import data_reuse as data_reuse_module
 from ashare_multifactor.final_test import preparation as preparation_module
 from ashare_multifactor.final_test.data_reuse import bind_final_test_data_panel
@@ -34,6 +35,28 @@ def _authorization() -> FinalTestAuthorization:
         robustness_lineage_sha256="5" * 64,
         test_period=(date(2022, 1, 1), date(2025, 12, 31)),
     )
+
+
+def _source_authorization() -> FinalTestAuthorization:
+    return replace(
+        _authorization(),
+        attempt_id="source-attempt",
+        approval_id="source-approval",
+        git_commit="a" * 40,
+        git_tree="b" * 40,
+        sealed_protocol_sha256="c" * 64,
+        robustness_release="stage8-v3",
+        robustness_manifest_sha256="d" * 64,
+        robustness_lineage_sha256="e" * 64,
+    )
+
+
+def _raw_inventory() -> dict[str, object]:
+    return {
+        "schema_version": "1",
+        "period": ["2022-01-01", "2025-12-31"],
+        "pairs": [{"trade_date": "2022-01-04", "files": []}],
+    }
 
 
 def _identities() -> dict[str, dict[str, object]]:
@@ -135,6 +158,62 @@ def test_data_reuse_receipt_rejects_identity_drift(
         )
 
 
+def test_data_reuse_rejects_bound_inventory_authorization_drift() -> None:
+    source = _source_authorization()
+    bound_inventory = data_extension_module._bound_input_inventory(
+        _raw_inventory(),
+        source,
+    )
+    source_identity = bound_inventory["authorization_identity"]
+    assert isinstance(source_identity, dict)
+    bound_inventory["authorization_identity"] = {
+        **source_identity,
+        "attempt_id": "different-source-attempt",
+    }
+
+    with pytest.raises(ValueError, match="source authorization"):
+        data_reuse_module._verify_source_input_inventory(
+            bound_inventory,
+            _raw_inventory(),
+            source,
+        )
+
+
+def test_data_reuse_rejects_raw_inventory_drift_after_binding_validation() -> None:
+    source = _source_authorization()
+    bound_inventory = data_extension_module._bound_input_inventory(
+        _raw_inventory(),
+        source,
+    )
+    changed_inventory = _raw_inventory()
+    changed_inventory["pairs"] = [
+        {"trade_date": "2022-01-04", "files": [{"sha256": "f" * 64}]}
+    ]
+
+    with pytest.raises(ValueError, match="raw inventory changed"):
+        data_reuse_module._verify_source_input_inventory(
+            bound_inventory,
+            changed_inventory,
+            source,
+        )
+
+
+def test_data_reuse_rejects_unexpected_bound_inventory_fields() -> None:
+    source = _source_authorization()
+    bound_inventory = data_extension_module._bound_input_inventory(
+        _raw_inventory(),
+        source,
+    )
+    bound_inventory["unexpected"] = True
+
+    with pytest.raises(ValueError, match="schema"):
+        data_reuse_module._verify_source_input_inventory(
+            bound_inventory,
+            _raw_inventory(),
+            source,
+        )
+
+
 def test_foreign_published_claim_gets_v4_reuse_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -144,26 +223,16 @@ def test_foreign_published_claim_gets_v4_reuse_receipt(
     (final_root / "attempts").mkdir(parents=True)
     panel = final_root / "daily_panel"
     panel.mkdir()
-    inventory = {
-        "schema_version": "1",
-        "period": ["2022-01-01", "2025-12-31"],
-        "pairs": [{"trade_date": "2022-01-04", "files": []}],
-    }
-    (panel / "input_files.json").write_text(
-        json.dumps(inventory),
-        encoding="utf-8",
-    )
     destination = _authorization()
-    source = replace(
-        destination,
-        attempt_id="source-attempt",
-        approval_id="source-approval",
-        git_commit="a" * 40,
-        git_tree="b" * 40,
-        sealed_protocol_sha256="c" * 64,
-        robustness_release="stage8-v3",
-        robustness_manifest_sha256="d" * 64,
-        robustness_lineage_sha256="e" * 64,
+    source = _source_authorization()
+    raw_inventory = _raw_inventory()
+    bound_inventory = data_extension_module._bound_input_inventory(
+        raw_inventory,
+        source,
+    )
+    (panel / "input_files.json").write_text(
+        json.dumps(bound_inventory),
+        encoding="utf-8",
     )
     resolution = SimpleNamespace(
         root=panel,
@@ -210,7 +279,7 @@ def test_foreign_published_claim_gets_v4_reuse_receipt(
     monkeypatch.setattr(
         data_reuse_module,
         "build_input_inventory",
-        lambda *_args, **_kwargs: inventory,
+        lambda *_args, **_kwargs: raw_inventory,
     )
 
     with FinalRootBinding.open(final_root) as root_binding:
