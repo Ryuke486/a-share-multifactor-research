@@ -13,7 +13,9 @@ from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.config import load_config
 from ashare_multifactor.execution.fee_protocol import validate_fee_protocol
 from ashare_multifactor.execution.fees import load_market_rules
-from ashare_multifactor.robustness.change_impact import verify_change_impact_audit
+from ashare_multifactor.robustness.change_impact import (
+    verify_evidence_workflow_only_change_impact,
+)
 from ashare_multifactor.robustness.collector_readiness import (
     verify_collector_readiness_audit,
 )
@@ -80,13 +82,12 @@ def publish_evidence_workflow_successor_release(
         code_root,
         research_records=research_records,
     )
-    change_impact_sha256 = verify_change_impact_audit(change_impact_audit_path)
-    change_impact = json.loads(change_impact_audit_path.read_text(encoding="utf-8"))
+    change_impact_sha256 = verify_evidence_workflow_only_change_impact(
+        change_impact_audit_path,
+        expected_current_identities=expected_identities,
+    )
     if (
-        change_impact.get("research_replay_required") is not False
-        or change_impact.get("stage7_stage8_research_results_reusable") is not True
-        or change_impact.get("current_identities") != expected_identities
-        or expected_identities["research"]
+        expected_identities["research"]
         != identity_payload("research_result_identity", research_records)
     ):
         raise ValueError("change-impact audit does not permit protocol-only reseal")

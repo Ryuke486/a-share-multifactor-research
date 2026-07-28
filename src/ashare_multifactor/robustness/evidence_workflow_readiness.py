@@ -164,6 +164,11 @@ def _validate_reports(
         or review.get("exact_queue_coverage") is not True
         or review.get("exact_candidate_coverage") is not True
         or review.get("unsupported_document_rejected") is not True
+        or review.get("resumable_batch_review") is not True
+        or review.get("incomplete_batch_finalization_rejected") is not True
+        or review.get("conflicting_batch_rejected") is not True
+        or review.get("frozen_batch_input_drift_rejected") is not True
+        or review.get("cross_symbol_evidence_rejected") is not True
         or coverage.get("status") != "passed"
         or coverage.get("atomic_pair_publication") is not True
         or coverage.get("zero_event_without_fake_pdf") is not True

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import signal
+from types import SimpleNamespace
 
 import pytest
 
@@ -413,3 +414,50 @@ def test_publish_review_rejects_foreign_workspace_after_authorization_preflight(
 
     with pytest.raises(ValueError, match="output root differs from attempt"):
         final_test.main(argv)
+
+
+def test_prepare_review_batches_cli_dispatches_bound_symbol_shards(
+    prepared_cli: PreparedCli,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ashare_multifactor.cli import final_test
+    from ashare_multifactor.cli import final_test_review
+
+    queue = (
+        prepared_cli.output_root
+        / "official_document_workspace/review_sessions/session/review_queue.parquet"
+    )
+    candidate_manifest = prepared_cli.output_root / "candidate/manifest.json"
+    manifest = prepared_cli.output_root / "batch-plan/review_batch_plan.json"
+    captured: dict[str, object] = {}
+
+    def prepare(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return SimpleNamespace(manifest_path=manifest, batches=(object(), object()))
+
+    monkeypatch.setattr(
+        final_test_review,
+        "prepare_review_batch_workspace",
+        prepare,
+    )
+
+    final_test.main(
+        [
+            "prepare-review-batches",
+            *prepared_cli.argv,
+            "--review-queue",
+            str(queue),
+            "--candidate-manifest",
+            str(candidate_manifest),
+            "--symbols-per-batch",
+            "50",
+        ]
+    )
+
+    assert captured["candidate_manifest_path"] == candidate_manifest
+    assert captured["symbols_per_batch"] == 50
+    assert capsys.readouterr().out.splitlines() == [
+        str(manifest),
+        "batch_count=2",
+    ]

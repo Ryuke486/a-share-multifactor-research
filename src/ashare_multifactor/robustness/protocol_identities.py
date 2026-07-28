@@ -25,6 +25,7 @@ _FINAL_EXECUTION_PATHS = (
 _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "pyproject.toml",
     "src/ashare_multifactor/cli/final_test.py",
+    "src/ashare_multifactor/cli/final_test_review.py",
     "src/ashare_multifactor/cli/robustness.py",
     "src/ashare_multifactor/final_test/corporate_action_candidate_contract.py",
     "src/ashare_multifactor/final_test/corporate_action_candidate_packages.py",
@@ -55,6 +56,7 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "tests/test_final_test_official_document_validation.py",
     "tests/test_final_test_official_evidence_import.py",
     "tests/test_final_test_official_evidence_workspace.py",
+    "tests/test_final_test_official_review_batches.py",
     "tests/test_final_test_official_review_submission.py",
     "tests/test_final_test_pipeline.py",
     "tests/test_final_test_preparation.py",

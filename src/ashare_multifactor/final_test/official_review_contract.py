@@ -202,7 +202,19 @@ def _corporate_dispositions(
         ),
         on="candidate_id",
         how="inner",
+    ).join(
+        relevant.filter(pl.col("candidate_type") == "corporate_action").select(
+            "catalog_id",
+            pl.col("symbol").alias("evidence_symbol"),
+        ),
+        on="catalog_id",
+        how="inner",
     )
+    if joined.filter(
+        pl.coalesce("corrected_symbol", "candidate_symbol")
+        != pl.col("evidence_symbol")
+    ).height:
+        raise ValueError("corporate-action disposition evidence symbol differs")
     if joined.filter(
         (pl.col("original_symbol") != pl.col("candidate_symbol"))
         | (pl.col("original_ex_date") != pl.col("candidate_ex_date"))
@@ -258,12 +270,18 @@ def _corporate_facts(
     ).sort("effective_date", "symbol", "candidate_id")
     evidence = relevant.filter(pl.col("candidate_type") == "corporate_action")
     joined = facts.join(
-        evidence.select("catalog_id", "source"),
+        evidence.select(
+            "catalog_id",
+            "source",
+            pl.col("symbol").alias("evidence_symbol"),
+        ),
         on="catalog_id",
         how="left",
     )
     if joined.filter(pl.col("source").is_null()).height:
         raise ValueError("corporate-action fact lacks a relevant cached document")
+    if joined.filter(pl.col("symbol") != pl.col("evidence_symbol")).height:
+        raise ValueError("corporate-action fact evidence symbol differs")
     if joined.filter(
         pl.col("announcement_date").is_null()
         | (pl.col("announcement_date") > pl.col("ex_date"))

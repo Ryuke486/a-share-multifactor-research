@@ -78,7 +78,9 @@ class VerifiedReviewSubmission:
 
 
 @dataclass(frozen=True)
-class _CandidateSnapshot:
+class VerifiedCandidateSnapshot:
+    """One complete candidate snapshot with its frozen bytes rechecked."""
+
     manifest_path: Path
     manifest_sha256: str
     manifest: dict[str, object]
@@ -98,7 +100,10 @@ def publish_review_submission(
 ) -> VerifiedReviewSubmission:
     """Validate every reviewer field before immutable publication."""
     queue = load_verified_review_queue(workspace)
-    candidates = _load_candidate_snapshot(candidate_manifest_path, workspace=workspace)
+    candidates = load_verified_candidate_snapshot(
+        candidate_manifest_path,
+        workspace=workspace,
+    )
     reviewer, timestamp = _review_metadata(reviewer_id, reviewed_at)
     frames = validate_review_frames(
         queue,
@@ -168,7 +173,10 @@ def load_verified_review_submission(
 ) -> VerifiedReviewSubmission:
     """Reload a published submission and repeat all semantic checks."""
     queue = load_verified_review_queue(workspace)
-    candidates = _load_candidate_snapshot(candidate_manifest_path, workspace=workspace)
+    candidates = load_verified_candidate_snapshot(
+        candidate_manifest_path,
+        workspace=workspace,
+    )
     absolute = manifest_path.absolute()
     root = absolute.parent
     expected_parent = workspace.root.parent / SUBMISSIONS_DIRECTORY
@@ -232,11 +240,12 @@ def load_verified_review_submission(
     )
 
 
-def _load_candidate_snapshot(
+def load_verified_candidate_snapshot(
     manifest_path: Path | None,
     *,
     workspace: EvidenceWorkspace,
-) -> _CandidateSnapshot:
+) -> VerifiedCandidateSnapshot:
+    """Reload a candidate snapshot after verifying its complete frozen tree."""
     if manifest_path is None:
         raise ValueError("corporate-action candidate snapshot is incomplete")
     absolute = manifest_path.absolute()
@@ -299,7 +308,7 @@ def _load_candidate_snapshot(
         or candidates.select(pl.col("candidate_id").is_duplicated().any()).item()
     ):
         raise ValueError("corporate-action candidate rows are invalid")
-    return _CandidateSnapshot(
+    return VerifiedCandidateSnapshot(
         manifest_path=absolute,
         manifest_sha256=hashlib.sha256(files["manifest.json"]).hexdigest(),
         manifest=manifest,
@@ -312,7 +321,7 @@ def _validate_submission_manifest(
     *,
     files: dict[str, bytes],
     queue: VerifiedReviewQueue,
-    candidates: _CandidateSnapshot,
+    candidates: VerifiedCandidateSnapshot,
     attempt_id: str,
 ) -> None:
     records = manifest.get("files")

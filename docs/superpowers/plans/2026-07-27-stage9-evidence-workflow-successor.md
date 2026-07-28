@@ -78,6 +78,25 @@
 - [ ] 复用并重验既有 Stage 7/8 研究文件，发布 v4 protocol-only successor。
 - [ ] 核验 v4 seal 为关闭状态，且未创建新 attempt。
 
+## Task 7A：封印前门禁收紧与可恢复人工审核
+
+- [x] protocol-only 发布、Stage 9 授权和最终期日面板复用共同要求
+  `changed_domains=["evidence_workflow"]`，且
+  `final_execution_rehearsal_required=false`。
+- [x] 将完整队列与候选按证券冻结为确定性批次计划；计划绑定两类上游
+  manifest，任何分片字节漂移失败关闭。
+- [x] 单批审核独立执行字段级门禁并不可变发布；相同批次可幂等恢复，冲突
+  提交不得覆盖。
+- [x] 只有全部批次齐备、审核者一致且批次时间不晚于汇总时间时才可汇总；
+  汇总后再次执行原有全队列、全候选精确核销。
+- [x] 将中断恢复、缺批拒绝、冲突拒绝、分片漂移和跨证券证据引用反例纳入
+  Stage 8 evidence-workflow readiness 必选测试。
+- [x] 完成 Task 7A 全量 `1276 passed`、Ruff、差异审计和旧 attempt
+  不变性复核；旧 attempt 仍为 `awaiting_official_evidence`，无批次计划、
+  审核提交、execution coverage 或最终测试 `CURRENT.json`。
+- [ ] 经用户明确确认后提交 Task 7A；随后基于新代码身份重新生成正式
+  readiness 和 change-impact，旧 development readiness 不再作为发布输入。
+
 ## Task 8：新授权后的最小重采
 
 - [ ] 用户对精确 v4 seal 提供新的一次性授权。
@@ -85,7 +104,7 @@
 - [ ] 发布并验证最终期日面板复用凭证，不重新构建共享日面板。
 - [ ] 导入并重验旧官方身份、查询包和有效 PDF。
 - [ ] 只请求导入报告列出的无效/缺失 URL；预期当前为 2 个。
-- [ ] 收集/恢复 BaoStock 候选，重建队列并完成字段级人工协调。
+- [ ] 收集/恢复 BaoStock 候选，重建队列并通过可恢复批次完成字段级人工协调。
 - [ ] 原子发布两类 `ready` execution coverage。
 - [ ] 停在 `resume` 前，单独报告新 attempt、导入/补采数量和两类 manifest
   哈希，等待用户明确确认。

@@ -9,6 +9,11 @@ import sys
 
 import polars as pl
 
+from ashare_multifactor.cli.final_test_review import (
+    REVIEW_BATCH_COMMANDS,
+    add_review_batch_commands,
+    run_review_batch_command,
+)
 from ashare_multifactor.final_test.action_source_contract import (
     load_action_source_contract,
 )
@@ -157,6 +162,12 @@ def _build_parser() -> argparse.ArgumentParser:
     review.add_argument("--security-facts", type=Path, required=True)
     review.add_argument("--reviewer-id", required=True)
     review.add_argument("--reviewed-at", required=True)
+
+    add_review_batch_commands(
+        commands,
+        add_common_arguments=_add_common_arguments,
+        positive_int=_positive_int,
+    )
 
     coverages = commands.add_parser(
         "publish-coverages",
@@ -348,13 +359,20 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(f"missing_documents={len(result.missing_urls)}")
         return
 
-    if args.command == "publish-review":
+    if args.command in {
+        *REVIEW_BATCH_COMMANDS,
+        "publish-review",
+    }:
         _authorization, _preparation, _contract = _load_prepared_inputs(
             args,
             approval_key=approval_key,
         )
         _assert_attempt_output_root(args)
         workspace = _workspace_from_queue(args.output_root, args.review_queue)
+        if args.command in REVIEW_BATCH_COMMANDS:
+            for line in run_review_batch_command(args, workspace=workspace):
+                print(line)
+            return
         result = publish_review_submission(
             workspace=workspace,
             candidate_manifest_path=args.candidate_manifest,

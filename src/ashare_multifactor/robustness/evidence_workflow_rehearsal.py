@@ -54,6 +54,14 @@ _REVIEW_TESTS = (
     "test_review_submission_rejects_incomplete_queue_decisions",
     "tests.test_final_test_official_review_submission::"
     "test_review_submission_rejects_fact_without_relevant_cached_document",
+    "tests.test_final_test_official_review_batches::"
+    "test_review_batches_resume_then_finalize_exact_submission",
+    "tests.test_final_test_official_review_batches::"
+    "test_review_batch_rejects_conflicting_resubmission",
+    "tests.test_final_test_official_review_batches::"
+    "test_review_batch_workspace_rejects_frozen_input_drift",
+    "tests.test_final_test_official_review_batches::"
+    "test_review_batch_rejects_cross_symbol_official_evidence",
 )
 _COVERAGE_TESTS = (
     "tests.test_final_test_official_coverage_publisher::"
@@ -137,6 +145,11 @@ def build_evidence_workflow_rehearsal(
             "exact_queue_coverage": True,
             "exact_candidate_coverage": True,
             "unsupported_document_rejected": True,
+            "resumable_batch_review": True,
+            "incomplete_batch_finalization_rejected": True,
+            "conflicting_batch_rejected": True,
+            "frozen_batch_input_drift_rejected": True,
+            "cross_symbol_evidence_rejected": True,
         },
     )
     _write_json(

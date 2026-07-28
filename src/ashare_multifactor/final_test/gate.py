@@ -30,7 +30,7 @@ from ashare_multifactor.robustness.collector_readiness import (
     verify_collector_readiness_audit,
 )
 from ashare_multifactor.robustness.change_impact import (
-    verify_change_impact_audit,
+    verify_evidence_workflow_only_change_impact,
 )
 from ashare_multifactor.robustness.evidence_workflow_readiness import (
     verify_evidence_workflow_readiness_audit,
@@ -587,19 +587,12 @@ def _verify_frozen_contract(
         change_impact_path = (
             robustness_lineage_path.parent / "artifacts/change_impact_audit.json"
         )
-        if verify_change_impact_audit(change_impact_path) != sealed.get(
-            "change_impact_audit_sha256"
-        ):
+        identities = validate_protocol_identities(sealed.get("protocol_identities"))
+        if verify_evidence_workflow_only_change_impact(
+            change_impact_path,
+            expected_current_identities=identities,
+        ) != sealed.get("change_impact_audit_sha256"):
             raise ValueError("change-impact audit differs from successor seal")
-        change_impact = json.loads(change_impact_path.read_text(encoding="utf-8"))
-        if (
-            change_impact.get("research_replay_required") is not False
-            or change_impact.get("stage7_stage8_research_results_reusable")
-            is not True
-            or change_impact.get("current_identities")
-            != sealed.get("protocol_identities")
-        ):
-            raise ValueError("change-impact audit does not permit research reuse")
         evidence_readiness_root = (
             robustness_lineage_path.parent
             / "artifacts/evidence_workflow_readiness"
@@ -615,10 +608,8 @@ def _verify_frozen_contract(
                 encoding="utf-8"
             )
         )
-        identities = sealed.get("protocol_identities")
         if (
-            not isinstance(identities, dict)
-            or evidence_readiness.get("evidence_workflow_identity")
+            evidence_readiness.get("evidence_workflow_identity")
             != identities.get("evidence_workflow")
         ):
             raise ValueError("evidence workflow readiness identity differs")

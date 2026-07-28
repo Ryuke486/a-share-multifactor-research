@@ -49,6 +49,33 @@ def write_change_impact_audit(
 
 def verify_change_impact_audit(path: Path) -> str:
     """Verify both the audit hash and the logical rerun decisions."""
+    raw, _payload = _load_verified_change_impact(path)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def verify_evidence_workflow_only_change_impact(
+    path: Path,
+    *,
+    expected_current_identities: dict[str, dict[str, object]],
+) -> str:
+    """Permit protocol-only reuse only when evidence workflow is the sole change."""
+    raw, payload = _load_verified_change_impact(path)
+    expected = validate_protocol_identities(expected_current_identities)
+    if (
+        payload.get("changed_domains") != ["evidence_workflow"]
+        or payload.get("research_replay_required") is not False
+        or payload.get("final_execution_rehearsal_required") is not False
+        or payload.get("evidence_workflow_rehearsal_required") is not True
+        or payload.get("stage7_stage8_research_results_reusable") is not True
+        or payload.get("current_identities") != expected
+    ):
+        raise ValueError(
+            "change-impact audit does not permit evidence-workflow-only reseal"
+        )
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _load_verified_change_impact(path: Path) -> tuple[bytes, dict[str, Any]]:
     try:
         raw = path.read_bytes()
         payload = json.loads(raw)
@@ -77,7 +104,7 @@ def verify_change_impact_audit(path: Path) -> str:
         != ("research" not in changed)
     ):
         raise ValueError("change-impact audit decisions are inconsistent")
-    return hashlib.sha256(raw).hexdigest()
+    return raw, payload
 
 
 def _canonical_json_bytes(payload: object) -> bytes:

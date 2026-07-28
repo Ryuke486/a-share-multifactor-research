@@ -41,7 +41,7 @@ from ashare_multifactor.final_test.recovery_secure_fs import (
     write_bytes_exclusive_at,
 )
 from ashare_multifactor.robustness.change_impact import (
-    verify_change_impact_audit,
+    verify_evidence_workflow_only_change_impact,
 )
 from ashare_multifactor.robustness.protocol_identities import (
     validate_protocol_identities,
@@ -350,20 +350,11 @@ def _load_destination_protocol(
         raise ValueError("final-test data reuse requires protocol v4")
     identities = validate_protocol_identities(sealed.get("protocol_identities"))
     audit_path = release.artifacts / "change_impact_audit.json"
-    if verify_change_impact_audit(audit_path) != sealed.get(
-        "change_impact_audit_sha256"
-    ):
+    if verify_evidence_workflow_only_change_impact(
+        audit_path,
+        expected_current_identities=identities,
+    ) != sealed.get("change_impact_audit_sha256"):
         raise ValueError("final-test data reuse change-impact audit differs")
-    audit = _json_object(
-        audit_path.read_bytes(),
-        label="final-test data reuse change-impact audit",
-    )
-    if (
-        audit.get("research_replay_required") is not False
-        or audit.get("stage7_stage8_research_results_reusable") is not True
-        or audit.get("current_identities") != identities
-    ):
-        raise ValueError("final-test data reuse is not authorized by change impact")
     return sealed
 
 

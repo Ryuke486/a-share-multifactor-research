@@ -6,10 +6,12 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 
 import polars as pl
+import pytest
 
 from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.robustness.change_impact import (
     verify_change_impact_audit,
+    verify_evidence_workflow_only_change_impact,
     write_change_impact_audit,
 )
 from ashare_multifactor.robustness.evidence_workflow_readiness import (
@@ -54,6 +56,38 @@ def test_change_impact_keeps_research_results_when_only_evidence_changes(
     assert payload["evidence_workflow_rehearsal_required"] is True
     assert payload["stage7_stage8_research_results_reusable"] is True
     assert len(verify_change_impact_audit(path)) == 64
+    assert (
+        verify_evidence_workflow_only_change_impact(
+            path,
+            expected_current_identities=_identities(evidence="v4"),
+        )
+        == verify_change_impact_audit(path)
+    )
+
+
+def test_protocol_only_change_impact_rejects_final_execution_change(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "change-impact.json"
+    current = _identities(evidence="v4")
+    current["final_execution"] = identity_payload(
+        "final_execution_identity",
+        {"execution": "changed"},
+    )
+    write_change_impact_audit(
+        path,
+        predecessor_identities=_identities(evidence="v3"),
+        current_identities=current,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="does not permit evidence-workflow-only reseal",
+    ):
+        verify_evidence_workflow_only_change_impact(
+            path,
+            expected_current_identities=current,
+        )
 
 
 def test_evidence_readiness_requires_the_full_pre_resume_workflow(
@@ -104,6 +138,11 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             "exact_queue_coverage": True,
             "exact_candidate_coverage": True,
             "unsupported_document_rejected": True,
+            "resumable_batch_review": True,
+            "incomplete_batch_finalization_rejected": True,
+            "conflicting_batch_rejected": True,
+            "frozen_batch_input_drift_rejected": True,
+            "cross_symbol_evidence_rejected": True,
         },
         "coverage_publication.json": {
             **common,
