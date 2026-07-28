@@ -25,9 +25,11 @@ _FINAL_EXECUTION_PATHS = (
 )
 _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "pyproject.toml",
+    "src/ashare_multifactor/audit/identity.py",
     "src/ashare_multifactor/cli/final_test.py",
     "src/ashare_multifactor/cli/final_test_review.py",
     "src/ashare_multifactor/cli/robustness.py",
+    "src/ashare_multifactor/final_test/baostock_dividend_client.py",
     "src/ashare_multifactor/final_test/corporate_action_candidate_contract.py",
     "src/ashare_multifactor/final_test/corporate_action_candidate_packages.py",
     "src/ashare_multifactor/final_test/corporate_action_candidates.py",
@@ -48,6 +50,7 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "src/ashare_multifactor/robustness/release_context.py",
     "src/ashare_multifactor/robustness/successor_seal.py",
     "src/ashare_multifactor/robustness/test_protocol.py",
+    "tests/test_audit_publication.py",
     "tests/test_evidence_workflow_successor.py",
     "tests/test_final_test_corporate_action_candidates.py",
     "tests/test_final_test_cli.py",

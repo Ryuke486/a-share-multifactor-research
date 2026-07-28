@@ -158,6 +158,7 @@ def _validate_reports(
         or documents.get("unreadable_pdf_rejected") is not True
         or candidates.get("status") != "passed"
         or candidates.get("interrupted_resume_verified") is not True
+        or candidates.get("peer_eof_recovery_verified") is not True
         or candidates.get("exact_query_coverage") is not True
         or candidates.get("out_of_scope_rejected") is not True
         or candidates.get("missing_effective_date_preserved") is not True

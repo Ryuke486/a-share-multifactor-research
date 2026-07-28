@@ -10,6 +10,7 @@ from ashare_multifactor.final_test.action_source_contract import (
     load_action_source_contract,
 )
 from ashare_multifactor.final_test.corporate_action_candidates import (
+    collect_baostock_corporate_action_candidates,
     collect_corporate_action_candidates,
 )
 from ashare_multifactor.final_test.preparation import verify_preparation
@@ -137,6 +138,110 @@ def test_candidate_collection_publishes_exact_resumable_snapshot(
         query=lambda *_args: pytest.fail("complete query package was fetched again"),
     )
     assert recovered == complete
+
+
+def test_baostock_candidate_collection_recovers_after_peer_eof(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import baostock as bs
+    import baostock.common.context as context
+    import baostock.util.socketutil as socketutil
+    import socket
+
+    inputs = _inputs(prepared_attempt)
+    query_attempts = 0
+    connection_timeouts: list[float] = []
+
+    class PeerEofSocket:
+        def __init__(self) -> None:
+            self.recv_count = 0
+
+        def settimeout(self, _seconds: float) -> None:
+            pass
+
+        def send(self, payload: bytes) -> int:
+            return len(payload)
+
+        def recv(self, _size: int) -> bytes:
+            self.recv_count += 1
+            if self.recv_count > 2:
+                raise TimeoutError("test guard stopped the EOF busy loop")
+            return b""
+
+        def close(self) -> None:
+            pass
+
+    class Result:
+        def __init__(
+            self,
+            *,
+            error_code: str = "0",
+            error_msg: str = "",
+        ) -> None:
+            self.error_code = error_code
+            self.error_msg = error_msg
+            self.fields = _FIELDS
+
+        def next(self) -> bool:
+            return False
+
+        def get_row_data(self) -> list[str]:
+            raise AssertionError("empty result has no rows")
+
+    def create_connection(
+        _address: tuple[str, int],
+        timeout: float,
+    ) -> PeerEofSocket:
+        connection_timeouts.append(timeout)
+        return PeerEofSocket()
+
+    def unbounded_connect_must_not_run(_self: object) -> None:
+        raise AssertionError("BaoStock's unbounded connect path was used")
+
+    def login() -> Result:
+        socketutil.SocketUtil().connect()
+        return Result()
+
+    def query_dividend_data(
+        *,
+        code: str,
+        year: str,
+        yearType: str,
+    ) -> Result:
+        nonlocal query_attempts
+        del code, year, yearType
+        query_attempts += 1
+        if query_attempts == 1:
+            assert socketutil.send_msg("peer-eof-probe") is None
+            return Result(
+                error_code="10002007",
+                error_msg="network receive error",
+            )
+        return Result()
+
+    def logout() -> Result:
+        context.default_socket.close()
+        return Result()
+
+    monkeypatch.setattr(socket, "create_connection", create_connection)
+    monkeypatch.setattr(
+        socketutil.SocketUtil,
+        "connect",
+        unbounded_connect_must_not_run,
+    )
+    monkeypatch.setattr(bs, "login", login)
+    monkeypatch.setattr(bs, "query_dividend_data", query_dividend_data)
+    monkeypatch.setattr(bs, "logout", logout)
+
+    result = collect_baostock_corporate_action_candidates(
+        **inputs,
+        max_queries=1,
+    )
+
+    assert result.completed_queries == 1
+    assert query_attempts == 2
+    assert connection_timeouts == [20.0, 20.0]
 
 
 def test_candidate_collection_rejects_response_outside_exact_query_scope(

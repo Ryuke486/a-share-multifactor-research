@@ -1,4 +1,5 @@
 import hashlib
+from importlib.metadata import version
 import json
 from pathlib import Path
 import shutil
@@ -507,6 +508,7 @@ def test_code_identity_records_dirty_diff_and_source_hashes(tmp_path: Path) -> N
     assert len(identity["tree"]) == 40
     assert identity["dirty"] is True
     assert len(identity["diff_sha256"]) == 64
+    assert identity["dependencies"]["baostock"] == version("baostock")
     assert identity["sources"] == [
         {
             "path": "src/package/module.py",

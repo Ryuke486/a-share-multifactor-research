@@ -24,6 +24,7 @@ from ashare_multifactor.robustness.evidence_workflow_readiness import (
     write_evidence_workflow_readiness_audit,
 )
 from ashare_multifactor.robustness.protocol_identities import (
+    build_evidence_workflow_identity,
     build_final_execution_identity,
     build_final_execution_identity_at_revision,
     identity_payload,
@@ -47,6 +48,17 @@ def _identities(*, evidence: str) -> dict[str, dict[str, object]]:
             {"workflow": evidence},
         ),
     }
+
+
+def test_evidence_workflow_identity_binds_baostock_transport() -> None:
+    identity = build_evidence_workflow_identity(Path.cwd())
+
+    assert (
+        "src/ashare_multifactor/final_test/baostock_dividend_client.py"
+        in identity["records"]
+    )
+    assert "src/ashare_multifactor/audit/identity.py" in identity["records"]
+    assert "tests/test_audit_publication.py" in identity["records"]
 
 
 def test_change_impact_keeps_research_results_when_only_evidence_changes(
@@ -373,6 +385,7 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             **common,
             "status": "passed",
             "interrupted_resume_verified": True,
+            "peer_eof_recovery_verified": True,
             "exact_query_coverage": True,
             "out_of_scope_rejected": True,
             "missing_effective_date_preserved": True,
@@ -439,6 +452,7 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
     assert manifest["status"] == "ready"
     assert len(verify_evidence_workflow_readiness_audit(destination)) == 64
     for report_name, field in (
+        ("candidate_collection.json", "peer_eof_recovery_verified"),
         ("candidate_collection.json", "missing_effective_date_preserved"),
         (
             "review_submission.json",
@@ -596,6 +610,12 @@ def test_rehearsal_binds_focused_tests_and_reroutes_real_historical_catalog(
         "test_candidate_collection_preserves_missing_payment_date_for_review"
         in candidates["test_cases"]
     )
+    assert (
+        "tests.test_final_test_corporate_action_candidates::"
+        "test_baostock_candidate_collection_recovers_after_peer_eof"
+        in candidates["test_cases"]
+    )
+    assert candidates["peer_eof_recovery_verified"] is True
     assert candidates["missing_effective_date_preserved"] is True
     assert (
         "tests.test_final_test_official_review_batches::"

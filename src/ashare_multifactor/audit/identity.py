@@ -29,7 +29,14 @@ def code_identity(root: Path) -> dict[str, object]:
         "python": platform.python_version(),
         "dependencies": {
             package: version(package)
-            for package in ("numpy", "polars", "scipy", "PyYAML", "matplotlib")
+            for package in (
+                "baostock",
+                "numpy",
+                "polars",
+                "scipy",
+                "PyYAML",
+                "matplotlib",
+            )
         },
     }
 

@@ -41,6 +41,8 @@ _DOCUMENT_TESTS = (
 )
 _CANDIDATE_TESTS = (
     "tests.test_final_test_corporate_action_candidates::"
+    "test_baostock_candidate_collection_recovers_after_peer_eof",
+    "tests.test_final_test_corporate_action_candidates::"
     "test_candidate_collection_publishes_exact_resumable_snapshot",
     "tests.test_final_test_corporate_action_candidates::"
     "test_candidate_collection_rejects_response_outside_exact_query_scope",
@@ -155,6 +157,7 @@ def build_evidence_workflow_rehearsal(
             **common,
             "test_cases": matched["candidate_collection.json"],
             "interrupted_resume_verified": True,
+            "peer_eof_recovery_verified": True,
             "exact_query_coverage": True,
             "out_of_scope_rejected": True,
             "missing_effective_date_preserved": True,

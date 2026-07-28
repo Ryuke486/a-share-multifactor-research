@@ -17,6 +17,9 @@ from ashare_multifactor.audit.secure_tree import (
     write_frozen_tree_at,
 )
 from ashare_multifactor.final_test.action_source_contract import FinalActionSourceContract
+from ashare_multifactor.final_test.baostock_dividend_client import (
+    BaoStockDividendClient,
+)
 from ashare_multifactor.final_test.corporate_action_candidate_contract import (
     normalize_corporate_action_candidates,
 )
@@ -157,40 +160,20 @@ def collect_baostock_corporate_action_candidates(
         import baostock as bs
     except ImportError as error:  # pragma: no cover - environment failure
         raise RuntimeError("baostock is required for corporate-action candidates") from error
-    login = bs.login()
-    if login.error_code != "0":
-        raise RuntimeError(f"BaoStock login failed: {login.error_msg}")
 
-    def query(
-        code: str,
-        year: int,
-        year_type: str,
-    ) -> tuple[list[str], list[list[str]]]:
-        result = bs.query_dividend_data(
-            code=code,
-            year=str(year),
-            yearType=year_type,
-        )
-        if result.error_code != "0":
-            raise RuntimeError(
-                f"BaoStock dividend query failed: {code} {year} {result.error_msg}"
-            )
-        rows: list[list[str]] = []
-        while result.next():
-            rows.append(result.get_row_data())
-        return list(result.fields), rows
-
-    try:
+    with BaoStockDividendClient(bs) as client:
         return collect_corporate_action_candidates(
             preparation=preparation,
             authorization=authorization,
             contract=contract,
             output_root=output_root,
-            query=query,
+            query=lambda code, year, year_type: client.query(
+                code=code,
+                year=year,
+                year_type=year_type,
+            ),
             max_queries=max_queries,
         )
-    finally:
-        bs.logout()
 
 
 def _collect_bound(
