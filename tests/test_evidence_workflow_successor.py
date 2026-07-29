@@ -4,6 +4,7 @@ from datetime import date
 import json
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
 import xml.etree.ElementTree as ET
 
@@ -50,6 +51,200 @@ def _identities(*, evidence: str) -> dict[str, dict[str, object]]:
     }
 
 
+def _ready_candidate_admission(root: Path) -> SimpleNamespace:
+    decisions_path = root / "candidate_admission_decisions.parquet"
+    pl.DataFrame(
+        {
+            "pair_id": ["pair-a", "pair-b"],
+            "historical_candidate_id": ["candidate-a", "candidate-b"],
+            "symbol": ["000001", "600000"],
+            "ex_date": [date(2021, 6, 1), date(2021, 7, 1)],
+            "catalog_id": ["catalog-a", "catalog-b"],
+            "status": ["admitted", "admitted"],
+            "route": ["candidate", "candidate"],
+            "candidate_type": ["corporate_action", "corporate_action"],
+            "routing_reason": [
+                "corporate_action_strong_implementation:equity_distribution",
+                "corporate_action_strong_implementation:profit_distribution",
+            ],
+            "pdf_sha256": ["a" * 64, "b" * 64],
+            "lag_calendar_days": [4, 13],
+            "failure_codes": [[], []],
+        }
+    ).write_parquet(decisions_path)
+    unresolved_path = root / "unresolved_candidates.parquet"
+    pl.DataFrame(
+        schema={
+            "candidate_id": pl.String,
+            "symbol": pl.String,
+            "ex_date": pl.Date,
+            "effective_date": pl.Date,
+            "failure_codes": pl.List(pl.String),
+            "same_symbol_announcement_count": pl.Int64,
+            "strong_implementation_announcement_count": pl.Int64,
+            "valid_cached_official_pdf_count": pl.Int64,
+            "frozen_date_window_hit_count": pl.Int64,
+            "related_catalog_ids": pl.List(pl.String),
+        }
+    ).write_parquet(unresolved_path)
+    manifest = {
+        "schema_version": "1",
+        "role": "candidate_review_admission",
+        "status": "ready",
+        "attempt_id": "historical-rehearsal",
+        "review_session_id": "a" * 64,
+        "review_queue": {
+            "relative_path": "official_document_workspace/review_queue.parquet",
+            "manifest_sha256": "1" * 64,
+        },
+        "candidate_snapshot": {
+            "relative_path": (
+                "corporate_action_candidate_collection/snapshot/manifest.json"
+            ),
+            "manifest_sha256": "2" * 64,
+        },
+        "routing": {
+            "routing_sha256": "3" * 64,
+            "rule_version": "stage9-shared-routing-v5",
+            "rules_sha256": "4" * 64,
+            "identity_sha256": "5" * 64,
+        },
+        "date_rule": {
+            "path": (
+                "configs/evidence/"
+                "stage9_candidate_review_admission_date_rule.json"
+            ),
+            "sha256": "6" * 64,
+            "derivation_manifest_sha256": "7" * 64,
+            "derivation_parquet_sha256": "8" * 64,
+            "period": ["2017-01-01", "2021-12-31"],
+            "minimum_calendar_days": 4,
+            "maximum_calendar_days": 13,
+            "interval_closed": True,
+        },
+        "inputs": [
+            {
+                "path": f"/frozen/{role}",
+                "role": role,
+                "sha256": str(index) * 64,
+                "size_bytes": index,
+                "row_count": 1,
+            }
+            for index, role in enumerate(
+                (
+                    "historical_candidate_derivation",
+                    "historical_candidate_derivation_manifest",
+                    "historical_pdf_discovery",
+                    "historical_pdf_receipt_index",
+                    "historical_pdf_existing_inventory",
+                    "historical_pdf_cache",
+                    "candidate_review_admission_date_rule",
+                ),
+                start=1,
+            )
+        ],
+        "candidate_count": 2,
+        "admitted_count": 2,
+        "unresolved_count": 0,
+        "candidate_decisions": {
+            "path": "candidate_admission_decisions.parquet",
+            "sha256": sha256_file(decisions_path),
+            "size_bytes": decisions_path.stat().st_size,
+            "row_count": 2,
+        },
+        "unresolved_candidates": {
+            "path": "unresolved_candidates.parquet",
+            "sha256": sha256_file(unresolved_path),
+            "size_bytes": unresolved_path.stat().st_size,
+            "row_count": 0,
+        },
+        "text_extraction": {
+            "engine": "pypdf",
+            "normalization": "nfkc_remove_unicode_whitespace_v1",
+        },
+        "final_test_strategy_outputs_read": False,
+    }
+    manifest_path = root / "candidate_review_admission.json"
+    manifest_path.write_bytes(
+        (
+            json.dumps(
+                manifest,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode()
+    )
+    return SimpleNamespace(
+        ready=True,
+        manifest=manifest,
+        manifest_path=manifest_path,
+        manifest_sha256=sha256_file(manifest_path),
+        unresolved=pl.read_parquet(unresolved_path),
+        unresolved_path=unresolved_path,
+        decisions_path=decisions_path,
+    )
+
+
+def _write_historical_collector(
+    root: Path,
+    *,
+    announcement_time_raw: list[str],
+) -> None:
+    root.mkdir()
+    symbols = [f"{index:06d}" for index in range(1, 101)]
+    pl.DataFrame(
+        {
+            "symbol": symbols,
+            "latest_date": [date(2021, 12, 31)] * 100,
+        }
+    ).write_parquet(root / "sample.parquet")
+    pl.DataFrame(
+        {
+            "catalog_id": ["a", "b"],
+            "symbol": symbols[:2],
+            "announcement_title": [
+                "关于实施2020年度权益分派时某转债停止转股的提示性公告",
+                "关于2020年度权益分派调整可转债转股价格的公告",
+            ],
+            "announcement_time_raw": announcement_time_raw,
+        }
+    ).write_parquet(root / "catalog.parquet")
+
+
+def _write_focused_junit(
+    path: Path,
+    *,
+    test_groups: dict[str, tuple[str, ...]],
+) -> None:
+    suites = ET.Element("testsuites")
+    suite = ET.SubElement(
+        suites,
+        "testsuite",
+        errors="0",
+        failures="0",
+        skipped="0",
+    )
+    required = sorted(
+        {test for tests in test_groups.values() for test in tests}
+    )
+    suite.set("tests", str(len(required)))
+    for node_id in required:
+        classname, name = node_id.split("::", maxsplit=1)
+        ET.SubElement(
+            suite,
+            "testcase",
+            classname=classname,
+            name=name,
+        )
+    ET.ElementTree(suites).write(
+        path,
+        encoding="utf-8",
+        xml_declaration=True,
+    )
+
+
 def test_evidence_workflow_identity_binds_baostock_transport() -> None:
     identity = build_evidence_workflow_identity(Path.cwd())
 
@@ -59,6 +254,29 @@ def test_evidence_workflow_identity_binds_baostock_transport() -> None:
     )
     assert "src/ashare_multifactor/audit/identity.py" in identity["records"]
     assert "tests/test_audit_publication.py" in identity["records"]
+
+
+def test_evidence_workflow_identity_binds_candidate_admission_seam() -> None:
+    identity = build_evidence_workflow_identity(Path.cwd())
+
+    required = {
+        "configs/evidence/stage9_candidate_review_admission_date_rule.json",
+        "configs/evidence/stage9_known_routing_cases.csv",
+        "src/ashare_multifactor/final_test/official_candidate_review_admission.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_review_admission_historical.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_review_admission_historical_evaluation.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_review_admission_historical_inputs.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_review_admission_storage.py",
+        "src/ashare_multifactor/final_test/routing_audit.py",
+        "tests/test_final_test_official_candidate_review_admission.py",
+        "tests/test_final_test_routing_audit.py",
+    }
+
+    assert required <= set(identity["records"])
 
 
 def test_change_impact_keeps_research_results_when_only_evidence_changes(
@@ -364,9 +582,10 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             "route": ["excluded"],
             "candidate_type": [""],
             "reason": ["convertible_bond_conversion_pause"],
-            "rule_version": ["stage9-shared-routing-v4"],
+            "rule_version": ["stage9-shared-routing-v5"],
         }
     ).write_parquet(source / "historical_routing.parquet")
+    admission = _ready_candidate_admission(source)
     common = {
         "evidence_workflow_identity_sha256": identity["sha256"],
         "focused_tests_sha256": sha256_file(source / "focused_tests.xml"),
@@ -425,10 +644,14 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             "status": "passed",
             "period": ["2017-01-01", "2021-12-31"],
             "final_test_row_count": 0,
+            "announcement_time_epoch_unit": "ms",
+            "announcement_time_source_timezone": "UTC",
+            "announcement_publication_timezone": "Asia/Shanghai",
             "symbol_count": 100,
             "announcement_count": 1,
             "rehearsal_mode": (
-                "real_catalog_routing_plus_synthetic_field_publication_fixtures"
+                "real_catalog_routing_plus_verified_candidate_admission_and_"
+                "synthetic_field_publication_fixtures"
             ),
             "historical_catalog_rerouted": True,
             "coverage_pair_fixture_ready": True,
@@ -437,6 +660,22 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             "historical_routing_sha256": sha256_file(
                 source / "historical_routing.parquet"
             ),
+            "candidate_admission_closure_recomputed": True,
+            "candidate_admission_candidate_count": 2,
+            "candidate_admission_unresolved_count": 0,
+            "candidate_admission_manifest_sha256": (
+                admission.manifest_sha256
+            ),
+            "candidate_admission_unresolved_manifest_sha256": sha256_file(
+                admission.unresolved_path
+            ),
+            "candidate_admission_decisions_sha256": sha256_file(
+                admission.decisions_path
+            ),
+            "candidate_admission_input_identity_sha256": (
+                admission.manifest["review_session_id"]
+            ),
+            "admission_date_rule_sha256": "6" * 64,
         },
     }
     for name, payload in reports.items():
@@ -451,6 +690,10 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
 
     assert manifest["status"] == "ready"
     assert len(verify_evidence_workflow_readiness_audit(destination)) == 64
+    assert {
+        "evidence_candidate_review_admission",
+        "evidence_candidate_review_admission_unresolved",
+    } <= {record["role"] for record in manifest["files"]}
     for report_name, field in (
         ("candidate_collection.json", "peer_eof_recovery_verified"),
         ("candidate_collection.json", "missing_effective_date_preserved"),
@@ -475,6 +718,39 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             )
         report[field] = True
         report_path.write_text(json.dumps(report), encoding="utf-8")
+
+    historical_path = source / "historical_rehearsal.json"
+    historical = json.loads(historical_path.read_text(encoding="utf-8"))
+    historical["announcement_publication_timezone"] = "UTC"
+    historical_path.write_text(json.dumps(historical), encoding="utf-8")
+    with pytest.raises(
+        ValueError,
+        match="complete evidence workflow rehearsal is not ready",
+    ):
+        write_evidence_workflow_readiness_audit(
+            source,
+            tmp_path / "rejected-publication-timezone",
+            evidence_workflow_identity=identity,
+        )
+    historical["announcement_publication_timezone"] = "Asia/Shanghai"
+    historical_path.write_text(json.dumps(historical), encoding="utf-8")
+
+    pl.DataFrame(
+        {
+            "candidate_id": ["drift"],
+            "symbol": ["000001"],
+            "ex_date": [date(2021, 6, 1)],
+        }
+    ).write_parquet(source / "unresolved_candidates.parquet")
+    with pytest.raises(
+        ValueError,
+        match="complete evidence workflow rehearsal is not ready",
+    ):
+        write_evidence_workflow_readiness_audit(
+            source,
+            tmp_path / "rejected-admission-drift",
+            evidence_workflow_identity=identity,
+        )
 
 
 def test_protocol_v4_binds_split_identities_and_new_readiness_gates(
@@ -534,62 +810,54 @@ def test_rehearsal_binds_focused_tests_and_reroutes_real_historical_catalog(
     from ashare_multifactor.robustness import evidence_workflow_rehearsal as rehearsal
 
     collector = tmp_path / "collector"
-    collector.mkdir()
-    symbols = [f"{index:06d}" for index in range(1, 101)]
-    pl.DataFrame(
-        {
-            "symbol": symbols,
-            "latest_date": [date(2021, 12, 31)] * 100,
-        }
-    ).write_parquet(collector / "sample.parquet")
-    pl.DataFrame(
-        {
-            "catalog_id": ["a", "b"],
-            "symbol": symbols[:2],
-            "announcement_title": [
-                "关于实施2020年度权益分派时某转债停止转股的提示性公告",
-                "关于2020年度权益分派调整可转债转股价格的公告",
-            ],
-            "announcement_time_raw": ["1577836800000", "1609455600000"],
-        }
-    ).write_parquet(collector / "catalog.parquet")
+    _write_historical_collector(
+        collector,
+        announcement_time_raw=["1577836800000", "1609455600000"],
+    )
     monkeypatch.setattr(
         rehearsal,
         "verify_collector_readiness_audit",
         lambda _root: "a" * 64,
     )
-    suites = ET.Element("testsuites")
-    suite = ET.SubElement(
-        suites,
-        "testsuite",
-        errors="0",
-        failures="0",
-        skipped="0",
-    )
-    required = sorted(
-        {
-            test
-            for tests in rehearsal._TEST_GROUPS.values()
-            for test in tests
-        }
-    )
-    suite.set("tests", str(len(required)))
-    for node_id in required:
-        classname, name = node_id.split("::", maxsplit=1)
-        ET.SubElement(
-            suite,
-            "testcase",
-            classname=classname,
-            name=name,
-        )
     junit = tmp_path / "focused.xml"
-    ET.ElementTree(suites).write(junit, encoding="utf-8", xml_declaration=True)
+    _write_focused_junit(junit, test_groups=rehearsal._TEST_GROUPS)
+    derivation_path = tmp_path / "derivation.parquet"
+    derivation_manifest_path = tmp_path / "derivation-manifest.json"
+    discovery_path = tmp_path / "discovery.parquet"
+    receipt_index_path = tmp_path / "receipt-index.json"
+    existing_inventory_path = tmp_path / "existing-inventory.json"
+    pdf_cache_root = tmp_path / "pdf-cache"
+    date_rule_path = (
+        Path.cwd()
+        / "configs/evidence/stage9_candidate_review_admission_date_rule.json"
+    )
+    admission_root = tmp_path / "admission"
+    admission_root.mkdir()
+    admission = _ready_candidate_admission(admission_root)
+    captured: dict[str, object] = {}
+
+    def require_admission(**kwargs: object) -> SimpleNamespace:
+        captured.update(kwargs)
+        return admission
+
+    monkeypatch.setattr(
+        rehearsal,
+        "require_historical_candidate_review_admission",
+        require_admission,
+    )
 
     audit = rehearsal.build_evidence_workflow_rehearsal(
         code_root=Path.cwd(),
         collector_readiness_root=collector,
         junit_path=junit,
         output_root=tmp_path / "output",
+        historical_derivation_path=derivation_path,
+        historical_derivation_manifest_path=derivation_manifest_path,
+        historical_pdf_discovery_path=discovery_path,
+        historical_pdf_receipt_index_path=receipt_index_path,
+        historical_pdf_existing_inventory_path=existing_inventory_path,
+        historical_pdf_cache_root=pdf_cache_root,
+        admission_date_rule_path=date_rule_path,
     )
 
     assert len(verify_evidence_workflow_readiness_audit(audit)) == 64
@@ -597,8 +865,36 @@ def test_rehearsal_binds_focused_tests_and_reroutes_real_historical_catalog(
         (audit / "historical_rehearsal.json").read_text(encoding="utf-8")
     )
     assert historical["final_test_row_count"] == 0
+    assert historical["announcement_time_epoch_unit"] == "ms"
+    assert historical["announcement_time_source_timezone"] == "UTC"
+    assert historical["announcement_publication_timezone"] == "Asia/Shanghai"
     assert historical["symbol_count"] == 100
     assert historical["convertible_bond_exclusion_count"] == 2
+    assert historical["candidate_admission_closure_recomputed"] is True
+    assert historical["candidate_admission_candidate_count"] == 2
+    assert historical["candidate_admission_unresolved_count"] == 0
+    assert historical["candidate_admission_manifest_sha256"] == (
+        admission.manifest_sha256
+    )
+    assert historical["candidate_admission_unresolved_manifest_sha256"] == (
+        sha256_file(admission.unresolved_path)
+    )
+    assert historical["candidate_admission_decisions_sha256"] == sha256_file(
+        admission.decisions_path
+    )
+    assert historical["candidate_admission_input_identity_sha256"] == (
+        admission.manifest["review_session_id"]
+    )
+    assert captured["derivation_path"] == derivation_path
+    assert captured["derivation_manifest_path"] == derivation_manifest_path
+    assert captured["discovery_path"] == discovery_path
+    assert captured["receipt_index_path"] == receipt_index_path
+    assert captured["existing_inventory_path"] == existing_inventory_path
+    assert captured["pdf_cache_root"] == pdf_cache_root
+    assert captured["date_rule_path"] == date_rule_path
+    assert (audit / "candidate_review_admission.json").is_file()
+    assert (audit / "unresolved_candidates.parquet").is_file()
+    assert (audit / "candidate_admission_decisions.parquet").is_file()
     review = json.loads(
         (audit / "review_submission.json").read_text(encoding="utf-8")
     )
@@ -630,3 +926,128 @@ def test_rehearsal_binds_focused_tests_and_reroutes_real_historical_catalog(
     )
     assert review["missing_effective_date_requires_reconciliation"] is True
     assert review["null_original_comparison_safe"] is True
+
+
+def test_rehearsal_rejects_catalog_crossing_final_test_in_shanghai_time(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from ashare_multifactor.robustness import evidence_workflow_rehearsal as rehearsal
+
+    collector = tmp_path / "collector"
+    _write_historical_collector(
+        collector,
+        announcement_time_raw=[
+            "1640966400000",
+            "1609455600000",
+        ],
+    )
+    monkeypatch.setattr(
+        rehearsal,
+        "verify_collector_readiness_audit",
+        lambda _root: "a" * 64,
+    )
+    junit = tmp_path / "focused.xml"
+    _write_focused_junit(junit, test_groups=rehearsal._TEST_GROUPS)
+    admission_root = tmp_path / "admission"
+    admission_root.mkdir()
+    admission = _ready_candidate_admission(admission_root)
+    monkeypatch.setattr(
+        rehearsal,
+        "require_historical_candidate_review_admission",
+        lambda **_kwargs: admission,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="historical evidence workflow rehearsal is incomplete",
+    ):
+        rehearsal.build_evidence_workflow_rehearsal(
+            code_root=Path.cwd(),
+            collector_readiness_root=collector,
+            junit_path=junit,
+            output_root=tmp_path / "output",
+            historical_derivation_path=tmp_path / "derivation.parquet",
+            historical_derivation_manifest_path=(
+                tmp_path / "derivation-manifest.json"
+            ),
+            historical_pdf_discovery_path=tmp_path / "discovery.parquet",
+            historical_pdf_receipt_index_path=tmp_path / "receipt-index.json",
+            historical_pdf_existing_inventory_path=(
+                tmp_path / "existing-inventory.json"
+            ),
+            historical_pdf_cache_root=tmp_path / "pdf-cache",
+            admission_date_rule_path=(
+                Path.cwd()
+                / "configs/evidence/"
+                "stage9_candidate_review_admission_date_rule.json"
+            ),
+        )
+
+
+def test_rehearsal_cli_forwards_verified_candidate_admission_inputs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from ashare_multifactor.cli import robustness
+
+    captured: dict[str, object] = {}
+    result = tmp_path / "audit"
+
+    def build(**kwargs: object) -> Path:
+        captured.update(kwargs)
+        return result
+
+    monkeypatch.setattr(robustness, "build_evidence_workflow_rehearsal", build)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "ashare-robustness",
+            "rehearse-evidence",
+            "--root",
+            str(Path.cwd()),
+            "--collector-readiness-root",
+            str(tmp_path / "collector"),
+            "--junit-report",
+            str(tmp_path / "focused.xml"),
+            "--readiness-output-root",
+            str(tmp_path / "output"),
+            "--historical-derivation",
+            str(tmp_path / "derivation.parquet"),
+            "--historical-derivation-manifest",
+            str(tmp_path / "derivation-manifest.json"),
+            "--historical-pdf-discovery",
+            str(tmp_path / "discovery.parquet"),
+            "--historical-pdf-receipt-index",
+            str(tmp_path / "receipt-index.json"),
+            "--historical-pdf-existing-inventory",
+            str(tmp_path / "existing-inventory.json"),
+            "--historical-pdf-cache-root",
+            str(tmp_path / "pdf-cache"),
+            "--admission-date-rule",
+            str(tmp_path / "date_rule.json"),
+        ],
+    )
+
+    robustness.main()
+
+    assert captured["historical_derivation_path"] == (
+        tmp_path / "derivation.parquet"
+    )
+    assert captured["historical_derivation_manifest_path"] == (
+        tmp_path / "derivation-manifest.json"
+    )
+    assert captured["historical_pdf_discovery_path"] == (
+        tmp_path / "discovery.parquet"
+    )
+    assert captured["historical_pdf_receipt_index_path"] == (
+        tmp_path / "receipt-index.json"
+    )
+    assert captured["historical_pdf_existing_inventory_path"] == (
+        tmp_path / "existing-inventory.json"
+    )
+    assert captured["historical_pdf_cache_root"] == tmp_path / "pdf-cache"
+    assert captured["admission_date_rule_path"] == tmp_path / "date_rule.json"
+    assert capsys.readouterr().out.strip() == str(result)

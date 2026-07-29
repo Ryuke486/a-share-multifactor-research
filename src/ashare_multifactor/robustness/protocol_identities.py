@@ -24,6 +24,8 @@ _FINAL_EXECUTION_PATHS = (
     "src/ashare_multifactor/final_test/resume.py",
 )
 _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
+    "configs/evidence/stage9_candidate_review_admission_date_rule.json",
+    "configs/evidence/stage9_known_routing_cases.csv",
     "pyproject.toml",
     "src/ashare_multifactor/audit/identity.py",
     "src/ashare_multifactor/cli/final_test.py",
@@ -40,6 +42,7 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "src/ashare_multifactor/final_test/gate.py",
     "src/ashare_multifactor/final_test/historical_attempt.py",
     "src/ashare_multifactor/final_test/preparation.py",
+    "src/ashare_multifactor/final_test/routing_audit.py",
     "src/ashare_multifactor/final_test/shared_evidence.py",
     "src/ashare_multifactor/final_test/signals.py",
     "src/ashare_multifactor/robustness/change_impact.py",
@@ -56,6 +59,7 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "tests/test_final_test_cli.py",
     "tests/test_final_test_data_reuse.py",
     "tests/test_final_test_official_announcement_routing.py",
+    "tests/test_final_test_official_candidate_review_admission.py",
     "tests/test_final_test_official_coverage_publisher.py",
     "tests/test_final_test_official_document_validation.py",
     "tests/test_final_test_official_evidence_import.py",
@@ -65,6 +69,7 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "tests/test_final_test_pipeline.py",
     "tests/test_final_test_preparation.py",
     "tests/test_final_test_resume.py",
+    "tests/test_final_test_routing_audit.py",
     "tests/test_final_test_signals.py",
     "tests/test_final_test_two_phase.py",
 )

@@ -14,6 +14,13 @@ from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.final_test.official_announcement_routing import (
     announcement_routing_frame,
 )
+from ashare_multifactor.final_test.official_candidate_review_admission import (
+    ADMISSION_MANIFEST_NAME,
+    DECISIONS_NAME,
+    UNRESOLVED_NAME,
+    VerifiedCandidateReviewAdmission,
+    require_historical_candidate_review_admission,
+)
 from ashare_multifactor.robustness.collector_readiness import (
     verify_collector_readiness_audit,
 )
@@ -52,6 +59,20 @@ _CANDIDATE_TESTS = (
     "test_candidate_collection_preserves_missing_payment_date_for_review",
 )
 _REVIEW_TESTS = (
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_candidate_review_admission_accepts_both_closed_date_boundaries",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_candidate_review_admission_blocks_when_cached_pdf_bytes_drift",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_candidate_review_admission_does_not_join_partial_requirements_across_announcements",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_candidate_review_admission_keeps_blocked_identity_after_targeted_recovery",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_historical_candidate_admission_recomputes_frozen_pairs",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_historical_candidate_admission_publishes_nonzero_unresolved_on_route_drift",
+    "tests.test_evidence_workflow_successor::"
+    "test_rehearsal_rejects_catalog_crossing_final_test_in_shanghai_time",
     "tests.test_final_test_official_review_submission::"
     "test_review_submission_exactly_covers_queue_and_provider_candidates",
     "tests.test_final_test_official_review_submission::"
@@ -66,6 +87,8 @@ _REVIEW_TESTS = (
     "test_review_submission_accepts_rejection_for_missing_payment_date",
     "tests.test_final_test_official_review_submission::"
     "test_review_submission_detects_false_null_original_payment_date",
+    "tests.test_final_test_official_review_batches::"
+    "test_review_batch_workspace_blocks_before_writing_plan_when_admission_is_not_ready",
     "tests.test_final_test_official_review_batches::"
     "test_review_batches_resume_then_finalize_exact_submission",
     "tests.test_final_test_official_review_batches::"
@@ -109,6 +132,8 @@ _TEST_GROUPS = {
     "evidence_import.json": _IMPORT_TESTS,
 }
 _PERIOD = ["2017-01-01", "2021-12-31"]
+_ANNOUNCEMENT_EPOCH_TIME_ZONE = "UTC"
+_ANNOUNCEMENT_PUBLICATION_TIME_ZONE = "Asia/Shanghai"
 
 
 def build_evidence_workflow_rehearsal(
@@ -117,6 +142,13 @@ def build_evidence_workflow_rehearsal(
     collector_readiness_root: Path,
     junit_path: Path,
     output_root: Path,
+    historical_derivation_path: Path,
+    historical_derivation_manifest_path: Path,
+    historical_pdf_discovery_path: Path,
+    historical_pdf_receipt_index_path: Path,
+    historical_pdf_existing_inventory_path: Path,
+    historical_pdf_cache_root: Path,
+    admission_date_rule_path: Path,
 ) -> Path:
     """Freeze focused seam results plus a rerouted 2017-2021 real catalog."""
     if output_root.exists():
@@ -207,6 +239,20 @@ def build_evidence_workflow_rehearsal(
         source=source,
         common=common,
         coverage_tests=matched["coverage_publication.json"],
+        admission=_recompute_candidate_admission(
+            code_root=code_root,
+            derivation_path=historical_derivation_path,
+            derivation_manifest_path=historical_derivation_manifest_path,
+            discovery_path=historical_pdf_discovery_path,
+            receipt_index_path=historical_pdf_receipt_index_path,
+            existing_inventory_path=(
+                historical_pdf_existing_inventory_path
+            ),
+            pdf_cache_root=historical_pdf_cache_root,
+            date_rule_path=admission_date_rule_path,
+            source=source,
+            destination=output_root,
+        ),
     )
     _write_json(source / "historical_rehearsal.json", historical)
     audit = output_root / "audit"
@@ -224,6 +270,7 @@ def _historical_report(
     source: Path,
     common: dict[str, object],
     coverage_tests: list[str],
+    admission: VerifiedCandidateReviewAdmission,
 ) -> dict[str, object]:
     collector_sha256 = verify_collector_readiness_audit(collector_root)
     sample = pl.read_parquet(collector_root / "sample.parquet")
@@ -255,7 +302,10 @@ def _historical_report(
         pl.from_epoch(
             pl.col("announcement_time_raw").cast(pl.Int64, strict=True),
             time_unit="ms",
-        ).alias("announcement_time")
+        )
+        .dt.replace_time_zone(_ANNOUNCEMENT_EPOCH_TIME_ZONE)
+        .dt.convert_time_zone(_ANNOUNCEMENT_PUBLICATION_TIME_ZONE)
+        .alias("announcement_time")
     )
     final_test_rows = timestamps.filter(
         pl.col("announcement_time").dt.date() >= date(2022, 1, 1)
@@ -274,15 +324,24 @@ def _historical_report(
     ).height
     if final_test_rows or exclusions < 1:
         raise ValueError("historical evidence workflow rehearsal is incomplete")
+    date_rule = admission.manifest["date_rule"]
     return {
         **common,
         "test_cases": coverage_tests,
         "period": _PERIOD,
         "final_test_row_count": final_test_rows,
+        "announcement_time_epoch_unit": "ms",
+        "announcement_time_source_timezone": (
+            _ANNOUNCEMENT_EPOCH_TIME_ZONE
+        ),
+        "announcement_publication_timezone": (
+            _ANNOUNCEMENT_PUBLICATION_TIME_ZONE
+        ),
         "symbol_count": sample.height,
         "announcement_count": catalog.height,
         "rehearsal_mode": (
-            "real_catalog_routing_plus_synthetic_field_publication_fixtures"
+            "real_catalog_routing_plus_verified_candidate_admission_and_"
+            "synthetic_field_publication_fixtures"
         ),
         "historical_catalog_rerouted": True,
         "coverage_pair_fixture_ready": True,
@@ -291,7 +350,61 @@ def _historical_report(
         "sample_sha256": sha256_file(collector_root / "sample.parquet"),
         "catalog_sha256": sha256_file(collector_root / "catalog.parquet"),
         "historical_routing_sha256": sha256_file(routing_path),
+        "candidate_admission_closure_recomputed": True,
+        "candidate_admission_candidate_count": admission.manifest[
+            "candidate_count"
+        ],
+        "candidate_admission_unresolved_count": admission.unresolved.height,
+        "candidate_admission_manifest_sha256": sha256_file(
+            source / ADMISSION_MANIFEST_NAME
+        ),
+        "candidate_admission_unresolved_manifest_sha256": sha256_file(
+            source / UNRESOLVED_NAME
+        ),
+        "candidate_admission_decisions_sha256": sha256_file(
+            source / DECISIONS_NAME
+        ),
+        "candidate_admission_input_identity_sha256": admission.manifest[
+            "review_session_id"
+        ],
+        "admission_date_rule_sha256": date_rule["sha256"],
     }
+
+
+def _recompute_candidate_admission(
+    *,
+    code_root: Path,
+    derivation_path: Path,
+    derivation_manifest_path: Path,
+    discovery_path: Path,
+    receipt_index_path: Path,
+    existing_inventory_path: Path,
+    pdf_cache_root: Path,
+    date_rule_path: Path,
+    source: Path,
+    destination: Path,
+) -> VerifiedCandidateReviewAdmission:
+    admission = require_historical_candidate_review_admission(
+        code_root=code_root,
+        derivation_path=derivation_path,
+        derivation_manifest_path=derivation_manifest_path,
+        discovery_path=discovery_path,
+        receipt_index_path=receipt_index_path,
+        existing_inventory_path=existing_inventory_path,
+        date_rule_path=date_rule_path,
+        pdf_cache_root=pdf_cache_root,
+        destination=destination,
+    )
+    if (
+        not admission.ready
+        or not admission.unresolved.is_empty()
+        or admission.decisions_path is None
+    ):
+        raise ValueError("historical candidate admission is not ready")
+    shutil.copy2(admission.manifest_path, source / ADMISSION_MANIFEST_NAME)
+    shutil.copy2(admission.unresolved_path, source / UNRESOLVED_NAME)
+    shutil.copy2(admission.decisions_path, source / DECISIONS_NAME)
+    return admission
 
 
 def _passed_test_cases(path: Path) -> set[str]:

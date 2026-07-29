@@ -30,7 +30,29 @@ ROUTING_NAME = "routing.parquet"
 ROUTING_MANIFEST_NAME = "routing_manifest.json"
 
 _SCHEMA_VERSION = "1"
-_RULE_VERSION = "stage9-shared-routing-v4"
+_RULE_VERSION = "stage9-shared-routing-v5"
+_STRONG_CORPORATE_ACTION_PATTERNS = (
+    (
+        "equity_distribution",
+        ("权益",),
+        ("分配", "派息", "分派"),
+    ),
+    (
+        "dividend_distribution",
+        (),
+        ("股息", "红利", "分红", "派息"),
+    ),
+    (
+        "profit_distribution",
+        (),
+        ("利润分配", "利润分派"),
+    ),
+    (
+        "share_distribution",
+        (),
+        ("送股", "转增"),
+    ),
+)
 _CORPORATE_ACTION_CANDIDATE_RULES = (
     ("corporate_action", "权益分派"),
     ("corporate_action", "分红派息"),
@@ -56,7 +78,42 @@ _PRE_EVENT_WARNING_KEYWORDS = (
     "主办券商",
     "去向安排",
 )
+_EQUITY_INCENTIVE_CONTEXTS = (
+    "员工持股",
+    "限制性股票",
+    "股票期权",
+    "股权激励",
+    "激励计划",
+)
+_EQUITY_INCENTIVE_ADJUSTMENT_VERBS = ("调整", "修正")
+_EQUITY_INCENTIVE_PARAMETER_TARGETS = (
+    "价格",
+    "数量",
+    "底价",
+    "行权价",
+    "回购价",
+    "转换价",
+    "转股价",
+    "发行价",
+    "授予价",
+    "购买价",
+    "参数",
+    "比例",
+)
+_CORPORATE_ACTION_IMPLEMENTATION_CONTEXTS = (
+    "权益分派",
+    "权益分配",
+    "利润分配",
+    "利润分派",
+    "分红",
+    "派息",
+    "股息",
+    "红利",
+    "送股",
+    "转增",
+)
 _CONTEXT_EXCLUSIONS = (
+    ("preferred_share_dividend", ("优先股",)),
     ("convertible_bond_conversion_pause", ("停止转股",)),
     ("convertible_bond_price_adjustment", ("可转债", "转股价格")),
     ("convertible_bond_price_adjustment", ("转债", "转股价格")),
@@ -284,6 +341,12 @@ def route_announcement_title(title: str) -> dict[str, str]:
     """Apply the frozen recall-first title rule without creating event facts."""
     if not isinstance(title, str):
         raise TypeError("official announcement title is invalid")
+    if _is_equity_incentive_parameter_adjustment(title):
+        return {
+            "route": "excluded",
+            "candidate_type": "",
+            "reason": "distribution_related_equity_incentive_parameter_adjustment",
+        }
     for reason, required_keywords in _CONTEXT_EXCLUSIONS:
         if all(keyword in title for keyword in required_keywords):
             return {
@@ -291,6 +354,13 @@ def route_announcement_title(title: str) -> dict[str, str]:
                 "candidate_type": "",
                 "reason": reason,
             }
+    strong_reason = _strong_corporate_action_reason(title)
+    if strong_reason is not None:
+        return {
+            "route": "candidate",
+            "candidate_type": "corporate_action",
+            "reason": strong_reason,
+        }
     for candidate_type, keyword in _CORPORATE_ACTION_CANDIDATE_RULES:
         if keyword in title:
             return {
@@ -349,6 +419,9 @@ def _rules_sha256() -> str:
         canonical_json_bytes(
             {
                 "rule_version": _RULE_VERSION,
+                "strong_corporate_action_patterns": (
+                    _STRONG_CORPORATE_ACTION_PATTERNS
+                ),
                 "corporate_action_candidate_rules": (
                     _CORPORATE_ACTION_CANDIDATE_RULES
                 ),
@@ -358,12 +431,52 @@ def _rules_sha256() -> str:
                 ),
                 "final_termination_keywords": _FINAL_TERMINATION_KEYWORDS,
                 "pre_event_warning_keywords": _PRE_EVENT_WARNING_KEYWORDS,
+                "equity_incentive_contexts": _EQUITY_INCENTIVE_CONTEXTS,
+                "equity_incentive_adjustment_verbs": (
+                    _EQUITY_INCENTIVE_ADJUSTMENT_VERBS
+                ),
+                "equity_incentive_parameter_targets": (
+                    _EQUITY_INCENTIVE_PARAMETER_TARGETS
+                ),
+                "corporate_action_implementation_contexts": (
+                    _CORPORATE_ACTION_IMPLEMENTATION_CONTEXTS
+                ),
                 "context_exclusions": _CONTEXT_EXCLUSIONS,
                 "ambiguous_security_keywords": _AMBIGUOUS_SECURITY_KEYWORDS,
                 "default": "excluded:no_supported_event_term",
             }
         )
     ).hexdigest()
+
+
+def _is_equity_incentive_parameter_adjustment(title: str) -> bool:
+    return (
+        "实施" in title
+        and any(
+            context in title
+            for context in _CORPORATE_ACTION_IMPLEMENTATION_CONTEXTS
+        )
+        and any(
+            context in title for context in _EQUITY_INCENTIVE_CONTEXTS
+        )
+        and any(
+            verb in title for verb in _EQUITY_INCENTIVE_ADJUSTMENT_VERBS
+        )
+        and any(
+            target in title for target in _EQUITY_INCENTIVE_PARAMETER_TARGETS
+        )
+    )
+
+
+def _strong_corporate_action_reason(title: str) -> str | None:
+    if "实施" not in title:
+        return None
+    for pattern_id, required, alternatives in _STRONG_CORPORATE_ACTION_PATTERNS:
+        if all(keyword in title for keyword in required) and any(
+            keyword in title for keyword in alternatives
+        ):
+            return f"corporate_action_strong_implementation:{pattern_id}"
+    return None
 
 
 def _parquet_bytes(frame: pl.DataFrame) -> bytes:

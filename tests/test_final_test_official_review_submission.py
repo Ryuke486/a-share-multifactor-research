@@ -17,9 +17,12 @@ from ashare_multifactor.final_test.official_document_fetcher import (
 from ashare_multifactor.final_test.official_review_submission import (
     publish_review_submission,
 )
+from test_final_test_official_candidate_review_admission import (
+    _AdmissionAnnouncementTransport,
+    _AdmissionDocumentTransport,
+    _pdf_bytes,
+)
 from test_final_test_official_evidence_workspace import (
-    DocumentTransport,
-    RoutedAnnouncementTransport,
     _complete_query_coverage,
 )
 from test_final_test_resume import PreparedAttempt
@@ -45,7 +48,16 @@ def _review_inputs(
 ):
     inputs = _complete_query_coverage(
         attempt,
-        transport=RoutedAnnouncementTransport(),
+        transport=_AdmissionAnnouncementTransport(
+            titles={
+                "000001": "2024年度权益分派实施公告",
+                "600000": "2024年第三季度报告",
+            },
+            announcement_dates={
+                "000001": date(2024, 5, 28),
+                "600000": date(2024, 6, 18),
+            },
+        ),
     )
     catalog = build_announcement_catalog(
         inputs.index_path,
@@ -57,7 +69,12 @@ def _review_inputs(
     workspace = fetch_official_documents(
         catalog,
         destination=inputs.output_root,
-        transport=DocumentTransport(),
+        transport=_AdmissionDocumentTransport(
+            {
+                "000001": _pdf_bytes("2024-06-01"),
+                "600000": _pdf_bytes("2024-07-01"),
+            }
+        ),
     )
 
     def query(

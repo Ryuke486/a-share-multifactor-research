@@ -37,12 +37,34 @@ def main() -> None:
     parser.add_argument("--change-impact-audit", type=Path)
     parser.add_argument("--junit-report", type=Path)
     parser.add_argument("--readiness-output-root", type=Path)
+    parser.add_argument("--historical-derivation", type=Path)
+    parser.add_argument("--historical-derivation-manifest", type=Path)
+    parser.add_argument("--historical-pdf-discovery", type=Path)
+    parser.add_argument("--historical-pdf-receipt-index", type=Path)
+    parser.add_argument("--historical-pdf-existing-inventory", type=Path)
+    parser.add_argument("--historical-pdf-cache-root", type=Path)
+    parser.add_argument("--admission-date-rule", type=Path)
     args = parser.parse_args()
     if args.command == "rehearse-evidence":
         required = {
             "--collector-readiness-root": args.collector_readiness_root,
             "--junit-report": args.junit_report,
             "--readiness-output-root": args.readiness_output_root,
+            "--historical-derivation": args.historical_derivation,
+            "--historical-derivation-manifest": (
+                args.historical_derivation_manifest
+            ),
+            "--historical-pdf-discovery": (
+                args.historical_pdf_discovery
+            ),
+            "--historical-pdf-receipt-index": (
+                args.historical_pdf_receipt_index
+            ),
+            "--historical-pdf-existing-inventory": (
+                args.historical_pdf_existing_inventory
+            ),
+            "--historical-pdf-cache-root": args.historical_pdf_cache_root,
+            "--admission-date-rule": args.admission_date_rule,
         }
         missing = [name for name, value in required.items() if value is None]
         if missing:
@@ -52,6 +74,21 @@ def main() -> None:
             collector_readiness_root=args.collector_readiness_root,
             junit_path=args.junit_report,
             output_root=args.readiness_output_root,
+            historical_derivation_path=args.historical_derivation,
+            historical_derivation_manifest_path=(
+                args.historical_derivation_manifest
+            ),
+            historical_pdf_discovery_path=(
+                args.historical_pdf_discovery
+            ),
+            historical_pdf_receipt_index_path=(
+                args.historical_pdf_receipt_index
+            ),
+            historical_pdf_existing_inventory_path=(
+                args.historical_pdf_existing_inventory
+            ),
+            historical_pdf_cache_root=args.historical_pdf_cache_root,
+            admission_date_rule_path=args.admission_date_rule,
         )
         print(result)
     elif args.command == "run":

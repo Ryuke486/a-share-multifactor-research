@@ -18,6 +18,11 @@ from ashare_multifactor.audit.secure_tree import (
     read_frozen_tree_at,
     write_frozen_tree_at,
 )
+from ashare_multifactor.final_test.official_candidate_review_admission import (
+    DEFAULT_ADMISSION_DATE_RULE_PATH,
+    VerifiedCandidateReviewAdmission,
+    require_candidate_review_admission,
+)
 from ashare_multifactor.final_test.official_evidence_workspace import (
     EvidenceWorkspace,
     VerifiedReviewQueue,
@@ -68,6 +73,8 @@ class VerifiedReviewBatchWorkspace:
     plan_id: str
     symbols_per_batch: int
     batches: tuple[ReviewBatch, ...]
+    admission_manifest_path: Path
+    admission_manifest_sha256: str
 
 
 def prepare_review_batch_workspace(
@@ -83,10 +90,17 @@ def prepare_review_batch_workspace(
         candidate_manifest_path,
         workspace=workspace,
     )
+    admission = require_candidate_review_admission(
+        workspace=workspace,
+        queue=queue,
+        candidates=candidates,
+        date_rule_path=DEFAULT_ADMISSION_DATE_RULE_PATH,
+    )
     files, manifest_bytes = _plan_files(
         workspace=workspace,
         queue=queue,
         candidates=candidates,
+        admission=admission,
         symbols_per_batch=size,
     )
     plan_id = hashlib.sha256(manifest_bytes).hexdigest()
@@ -154,11 +168,18 @@ def load_verified_review_batch_workspace(
         candidate_manifest_path,
         workspace=workspace,
     )
+    admission = require_candidate_review_admission(
+        workspace=workspace,
+        queue=queue,
+        candidates=candidates,
+        date_rule_path=DEFAULT_ADMISSION_DATE_RULE_PATH,
+    )
     size = _positive_int(manifest.get("symbols_per_batch"))
     expected, expected_manifest = _plan_files(
         workspace=workspace,
         queue=queue,
         candidates=candidates,
+        admission=admission,
         symbols_per_batch=size,
     )
     if actual != expected or manifest_bytes != expected_manifest:
@@ -177,6 +198,8 @@ def load_verified_review_batch_workspace(
         plan_id=root.name,
         symbols_per_batch=size,
         batches=batches,
+        admission_manifest_path=admission.manifest_path,
+        admission_manifest_sha256=admission.manifest_sha256,
     )
 
 
@@ -185,8 +208,10 @@ def _plan_files(
     workspace: EvidenceWorkspace,
     queue: VerifiedReviewQueue,
     candidates: VerifiedCandidateSnapshot,
+    admission: VerifiedCandidateReviewAdmission,
     symbols_per_batch: int,
 ) -> tuple[dict[str, bytes], bytes]:
+    admission_record = _admission_record(workspace, admission)
     symbols = sorted(
         set(queue.frame.get_column("symbol").cast(pl.String).to_list())
         | set(candidates.candidates.get_column("symbol").cast(pl.String).to_list())
@@ -212,6 +237,7 @@ def _plan_files(
             "review_session_id": queue.session_id,
             "review_manifest_sha256": queue.manifest_sha256,
             "candidate_manifest_sha256": candidates.manifest_sha256,
+            "candidate_review_admission": admission_record,
             "ordinal": ordinal,
             "symbols": list(group),
             "files": [
@@ -250,6 +276,7 @@ def _plan_files(
         "review_session_id": queue.session_id,
         "review_manifest_sha256": queue.manifest_sha256,
         "candidate_manifest_sha256": candidates.manifest_sha256,
+        "candidate_review_admission": admission_record,
         "symbols_per_batch": symbols_per_batch,
         "symbol_count": len(symbols),
         "queue_row_count": queue.frame.height,
@@ -260,6 +287,21 @@ def _plan_files(
     manifest_bytes = canonical_json_bytes(plan)
     files[PLAN_MANIFEST_NAME] = manifest_bytes
     return files, manifest_bytes
+
+
+def _admission_record(
+    workspace: EvidenceWorkspace,
+    admission: VerifiedCandidateReviewAdmission,
+) -> dict[str, object]:
+    if not admission.ready or admission.manifest.get("status") != "ready":
+        raise ValueError("candidate review admission is not ready")
+    return {
+        "relative_path": admission.manifest_path.relative_to(
+            workspace.root.parent
+        ).as_posix(),
+        "sha256": admission.manifest_sha256,
+        "status": "ready",
+    }
 
 
 def _batch_from_record(root: Path, record: object) -> ReviewBatch:

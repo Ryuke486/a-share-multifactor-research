@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, time
+import json
+from pathlib import Path
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import polars as pl
 import pytest
@@ -27,6 +31,7 @@ from test_final_test_official_evidence_workspace import (
     DocumentTransport,
     _complete_query_coverage,
 )
+from test_final_test_official_candidate_review_admission import _pdf_bytes
 from test_final_test_resume import PreparedAttempt
 
 
@@ -57,20 +62,53 @@ class _TwoCorporateActionTransport(AnnouncementTransport):
                 form,
                 timeout_seconds=timeout_seconds,
             )
-        return super().fetch(
-            endpoint,
-            {
-                **form,
-                "stock": form["stock"],
-            },
-            timeout_seconds=timeout_seconds,
-        ).replace(
-            "关于主动终止上市方案的公告".encode(),
-            "2024年度权益分派实施公告".encode(),
+        del timeout_seconds
+        symbol = form["stock"].split(",", maxsplit=1)[0]
+        announcement_date = (
+            date(2024, 5, 28)
+            if symbol == "000001"
+            else date(2024, 6, 18)
         )
+        timestamp = int(
+            datetime.combine(
+                announcement_date,
+                time.min,
+                tzinfo=ZoneInfo("Asia/Shanghai"),
+            ).timestamp()
+            * 1000
+        )
+        return json.dumps(
+            {
+                "totalpages": 1,
+                "totalAnnouncement": 1,
+                "announcements": [
+                    {
+                        "announcementId": f"{symbol}-announcement",
+                        "announcementTitle": "2024年度权益分派实施公告",
+                        "announcementTime": timestamp,
+                        "adjunctUrl": (
+                            f"finalpage/{announcement_date.isoformat()}/{symbol}.PDF"
+                        ),
+                    }
+                ],
+            },
+            separators=(",", ":"),
+        ).encode()
 
 
-def _batch_inputs(attempt: PreparedAttempt):
+class _ReviewDocumentTransport:
+    def fetch(self, url: str, *, timeout_seconds: float) -> bytes:
+        del timeout_seconds
+        symbol = Path(urlparse(url).path).stem
+        ex_date = "2024-06-01" if symbol == "000001" else "2024-07-01"
+        return _pdf_bytes(ex_date)
+
+
+def _batch_inputs(
+    attempt: PreparedAttempt,
+    *,
+    admission_ready: bool = True,
+):
     inputs = _complete_query_coverage(
         attempt,
         transport=_TwoCorporateActionTransport(),
@@ -85,7 +123,11 @@ def _batch_inputs(attempt: PreparedAttempt):
     workspace = fetch_official_documents(
         catalog,
         destination=inputs.output_root,
-        transport=DocumentTransport(),
+        transport=(
+            _ReviewDocumentTransport()
+            if admission_ready
+            else DocumentTransport()
+        ),
     )
 
     def query(
@@ -111,6 +153,32 @@ def _batch_inputs(attempt: PreparedAttempt):
         query=query,
     )
     return workspace, candidates
+
+
+def test_review_batch_workspace_blocks_before_writing_plan_when_admission_is_not_ready(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    workspace, candidates = _batch_inputs(
+        prepared_attempt,
+        admission_ready=False,
+    )
+    plans_root = workspace.root.parent / "official_review_batch_plans"
+    plans_before = set(plans_root.iterdir()) if plans_root.exists() else set()
+    admission_error: ValueError | None = None
+
+    try:
+        prepare_review_batch_workspace(
+            workspace=workspace,
+            candidate_manifest_path=candidates.manifest_path,
+            symbols_per_batch=1,
+        )
+    except ValueError as error:
+        admission_error = error
+
+    plans_after = set(plans_root.iterdir()) if plans_root.exists() else set()
+    assert plans_after == plans_before
+    assert admission_error is not None
+    assert "candidate review admission" in str(admission_error).lower()
 
 
 def _batch_frames(batch):
@@ -263,6 +331,17 @@ def test_review_batches_resume_then_finalize_exact_submission(
         symbols_per_batch=1,
     )
     assert len(plan.batches) == 2
+    plan_manifest = json.loads(plan.manifest_path.read_bytes())
+    assert plan_manifest["candidate_review_admission"] == {
+        "relative_path": plan.admission_manifest_path.relative_to(
+            workspace.root.parent
+        ).as_posix(),
+        "sha256": plan.admission_manifest_sha256,
+        "status": "ready",
+    }
+    assert plan.admission_manifest_path.parent.parent.name == (
+        "candidate_review_admissions"
+    )
 
     first = _publish_batch(workspace, candidates, plan.batches[0])
     recovered = load_verified_review_batch_workspace(
@@ -337,6 +416,60 @@ def test_review_batch_workspace_rejects_frozen_input_drift(
     plan.batches[0].queue_path.write_bytes(b"changed")
 
     with pytest.raises(ValueError, match="review batch workspace"):
+        load_verified_review_batch_workspace(
+            plan.manifest_path,
+            workspace=workspace,
+            candidate_manifest_path=candidates.manifest_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "drift_target",
+    ["admission", "queue", "candidate", "date_rule", "routing"],
+)
+def test_review_batch_workspace_rejects_bound_admission_identity_drift(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    drift_target: str,
+) -> None:
+    from ashare_multifactor.final_test import (
+        official_candidate_review_admission as admission_module,
+    )
+    from ashare_multifactor.final_test import (
+        official_review_batch_workspace as workspace_module,
+    )
+
+    date_rule = tmp_path / "stage9_candidate_review_admission_date_rule.json"
+    date_rule.write_bytes(
+        admission_module.DEFAULT_ADMISSION_DATE_RULE_PATH.read_bytes()
+    )
+    monkeypatch.setattr(
+        admission_module,
+        "DEFAULT_ADMISSION_DATE_RULE_PATH",
+        date_rule,
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "DEFAULT_ADMISSION_DATE_RULE_PATH",
+        date_rule,
+    )
+    workspace, candidates = _batch_inputs(prepared_attempt)
+    plan = prepare_review_batch_workspace(
+        workspace=workspace,
+        candidate_manifest_path=candidates.manifest_path,
+        symbols_per_batch=1,
+    )
+    targets = {
+        "admission": plan.admission_manifest_path,
+        "queue": workspace.review_queue_path,
+        "candidate": candidates.manifest_path,
+        "date_rule": date_rule,
+        "routing": workspace.routing_path,
+    }
+    targets[drift_target].write_bytes(b"changed")
+
+    with pytest.raises(ValueError):
         load_verified_review_batch_workspace(
             plan.manifest_path,
             workspace=workspace,

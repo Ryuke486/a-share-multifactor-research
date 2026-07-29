@@ -31,6 +31,15 @@ _REPORTS = {
 _ATTACHMENTS = {
     "focused_tests.xml": "evidence_workflow_focused_tests",
     "historical_routing.parquet": "evidence_historical_routing",
+    "candidate_review_admission.json": (
+        "evidence_candidate_review_admission"
+    ),
+    "unresolved_candidates.parquet": (
+        "evidence_candidate_review_admission_unresolved"
+    ),
+    "candidate_admission_decisions.parquet": (
+        "evidence_candidate_review_admission_decisions"
+    ),
 }
 _FILES = {**_REPORTS, **_ATTACHMENTS}
 
@@ -133,14 +142,25 @@ def _validate_reports(
     coverage = _read_json(root / "coverage_publication.json")
     imported = _read_json(root / "evidence_import.json")
     historical = _read_json(root / "historical_rehearsal.json")
+    admission_path = root / "candidate_review_admission.json"
+    admission = _read_json(admission_path)
     junit_sha256 = sha256_file(root / "focused_tests.xml")
     routing_sha256 = sha256_file(root / "historical_routing.parquet")
     reports = (documents, candidates, review, coverage, imported, historical)
     passed_tests = _passed_test_cases(root / "focused_tests.xml")
     try:
         routing = pl.read_parquet(root / "historical_routing.parquet")
+        unresolved = pl.read_parquet(root / "unresolved_candidates.parquet")
+        decisions = pl.read_parquet(
+            root / "candidate_admission_decisions.parquet"
+        )
     except pl.exceptions.PolarsError as error:
-        raise ValueError("historical evidence routing is invalid") from error
+        raise ValueError("historical evidence closure is invalid") from error
+    unresolved_record = admission.get("unresolved_candidates")
+    decisions_record = admission.get("candidate_decisions")
+    admission_routing = admission.get("routing")
+    date_rule = admission.get("date_rule")
+    admission_inputs = admission.get("inputs")
     if (
         any(
             report.get("evidence_workflow_identity_sha256")
@@ -187,9 +207,16 @@ def _validate_reports(
         or historical.get("status") != "passed"
         or historical.get("period") != ["2017-01-01", "2021-12-31"]
         or historical.get("final_test_row_count") != 0
+        or historical.get("announcement_time_epoch_unit") != "ms"
+        or historical.get("announcement_time_source_timezone") != "UTC"
+        or historical.get("announcement_publication_timezone")
+        != "Asia/Shanghai"
         or historical.get("symbol_count", 0) < 100
         or historical.get("rehearsal_mode")
-        != "real_catalog_routing_plus_synthetic_field_publication_fixtures"
+        != (
+            "real_catalog_routing_plus_verified_candidate_admission_and_"
+            "synthetic_field_publication_fixtures"
+        )
         or historical.get("historical_catalog_rerouted") is not True
         or historical.get("coverage_pair_fixture_ready") is not True
         or historical.get("historical_routing_sha256") != routing_sha256
@@ -207,12 +234,89 @@ def _validate_reports(
         or routing.height != historical.get("announcement_count")
         or routing.get_column("catalog_id").n_unique() != routing.height
         or routing.filter(
-            pl.col("rule_version") != "stage9-shared-routing-v4"
+            pl.col("rule_version") != "stage9-shared-routing-v5"
         ).height
         or routing.filter(
             pl.col("reason").str.starts_with("convertible_bond_")
         ).height
         != historical.get("convertible_bond_exclusion_count")
+        or admission_path.read_bytes() != _canonical_json_bytes(admission)
+        or admission.get("schema_version") != "1"
+        or admission.get("role") != "candidate_review_admission"
+        or admission.get("status") != "ready"
+        or admission.get("final_test_strategy_outputs_read") is not False
+        or not isinstance(admission_routing, dict)
+        or admission_routing.get("rule_version")
+        != "stage9-shared-routing-v5"
+        or not isinstance(date_rule, dict)
+        or date_rule.get("period") != ["2017-01-01", "2021-12-31"]
+        or not _valid_sha256(date_rule.get("sha256"))
+        or not isinstance(unresolved_record, dict)
+        or unresolved_record.get("path") != "unresolved_candidates.parquet"
+        or unresolved_record.get("sha256")
+        != sha256_file(root / "unresolved_candidates.parquet")
+        or unresolved_record.get("size_bytes")
+        != (root / "unresolved_candidates.parquet").stat().st_size
+        or unresolved_record.get("row_count") != unresolved.height
+        or admission.get("candidate_count", 0) < 1
+        or admission.get("admitted_count") != admission.get("candidate_count")
+        or admission.get("unresolved_count") != 0
+        or not unresolved.is_empty()
+        or not isinstance(decisions_record, dict)
+        or decisions_record.get("path")
+        != "candidate_admission_decisions.parquet"
+        or decisions_record.get("sha256")
+        != sha256_file(root / "candidate_admission_decisions.parquet")
+        or decisions_record.get("size_bytes")
+        != (root / "candidate_admission_decisions.parquet").stat().st_size
+        or decisions_record.get("row_count") != decisions.height
+        or decisions.height != admission.get("candidate_count")
+        or not {"pair_id", "status", "failure_codes"} <= set(decisions.columns)
+        or decisions.get_column("pair_id").n_unique() != decisions.height
+        or decisions.filter(pl.col("status") != "admitted").height
+        or not isinstance(admission_inputs, list)
+        or {
+            record.get("role")
+            for record in admission_inputs
+            if isinstance(record, dict)
+        }
+        != {
+            "historical_candidate_derivation",
+            "historical_candidate_derivation_manifest",
+            "historical_pdf_discovery",
+            "historical_pdf_receipt_index",
+            "historical_pdf_existing_inventory",
+            "historical_pdf_cache",
+            "candidate_review_admission_date_rule",
+        }
+        or any(
+            not isinstance(record, dict)
+            or not isinstance(record.get("path"), str)
+            or not _valid_sha256(record.get("sha256"))
+            or not isinstance(record.get("size_bytes"), int)
+            or record.get("size_bytes", -1) < 0
+            or not isinstance(record.get("row_count"), int)
+            or record.get("row_count", 0) < 1
+            for record in admission_inputs
+        )
+        or historical.get("candidate_admission_closure_recomputed") is not True
+        or historical.get("candidate_admission_candidate_count")
+        != admission.get("candidate_count")
+        or historical.get("candidate_admission_unresolved_count") != 0
+        or historical.get("candidate_admission_manifest_sha256")
+        != sha256_file(admission_path)
+        or historical.get(
+            "candidate_admission_unresolved_manifest_sha256"
+        )
+        != sha256_file(root / "unresolved_candidates.parquet")
+        or historical.get("candidate_admission_decisions_sha256")
+        != sha256_file(root / "candidate_admission_decisions.parquet")
+        or historical.get(
+            "candidate_admission_input_identity_sha256"
+        )
+        != admission.get("review_session_id")
+        or historical.get("admission_date_rule_sha256")
+        != date_rule.get("sha256")
     ):
         raise ValueError("complete evidence workflow rehearsal is not ready")
 
@@ -233,6 +337,18 @@ def _valid_sha256(value: object) -> bool:
         and len(value) == 64
         and all(character in "0123456789abcdef" for character in value)
     )
+
+
+def _canonical_json_bytes(payload: dict[str, Any]) -> bytes:
+    return (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
 
 
 def _passed_test_cases(path: Path) -> set[str]:

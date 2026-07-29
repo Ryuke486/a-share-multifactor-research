@@ -99,7 +99,7 @@ def test_routing_audit_rejects_a_known_event_excluded_by_the_frozen_rule() -> No
         )
 
 
-def test_all_registered_pre_2022_known_titles_are_captured() -> None:
+def test_all_registered_known_titles_are_captured() -> None:
     from ashare_multifactor.final_test.official_announcement_routing import (
         route_announcement_title,
     )
@@ -109,7 +109,21 @@ def test_all_registered_pre_2022_known_titles_are_captured() -> None:
         / "configs/evidence/stage9_known_routing_cases.csv"
     )
 
-    assert cases.height == 7
+    required_incident_cases = {
+        "300286_1213109109",
+        "300284_1213381051",
+        "600028_1213588741",
+        "600941_1213499830",
+        "601088_1213929820",
+        "603039_1216842970",
+        "300750_1224474223",
+        "002014_1224674836",
+        "300415_1213417519",
+        "603929_1224662033",
+    }
+
+    assert cases.get_column("case_id").n_unique() == cases.height
+    assert required_incident_cases <= set(cases.get_column("case_id"))
     assert all(
         route_announcement_title(title)["route"] != "excluded"
         for title in cases.get_column("title")
