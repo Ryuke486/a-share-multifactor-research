@@ -304,6 +304,7 @@ def verify_preparation(
     authorization: FinalTestAuthorization,
     expected_state: str = "awaiting_official_evidence",
     root_binding: FinalRootBinding | None = None,
+    require_current_stage8: bool = True,
 ) -> FinalTestPreparation:
     """Verify exact files and identities; never rebuild or replace symbol scope."""
     if not isinstance(authorization, FinalTestAuthorization):
@@ -334,6 +335,7 @@ def verify_preparation(
             preparation_root=final_root / "preparations" / attempt_id,
             authorization=authorization,
             resolution=resolution,
+            require_current_stage8=require_current_stage8,
         )
     else:
         resolution = resolve_final_test_data_panel_at(final_root, root_binding.final_fd)
@@ -345,6 +347,7 @@ def verify_preparation(
             final_fd=root_binding.final_fd,
             authorization=authorization,
             resolution=resolution,
+            require_current_stage8=require_current_stage8,
         )
         root_binding.assert_bound()
     if state["identities"].get("prepare_manifest_sha256") != result.manifest_sha256:
@@ -695,6 +698,7 @@ def _verify_preparation_files(
     preparation_root: Path,
     authorization: FinalTestAuthorization,
     resolution: FinalTestDataResolution,
+    require_current_stage8: bool = True,
 ) -> FinalTestPreparation:
     if preparation_root.is_symlink() or not preparation_root.is_dir():
         raise ValueError("final-test preparation directory is missing or uses a symlink")
@@ -713,6 +717,7 @@ def _verify_preparation_files(
         manifest,
         authorization,
         resolution,
+        require_current_stage8=require_current_stage8,
     )
     data_path = verify_file_identity(final_root, manifest["data_manifest"], "data manifest")
     if data_path != resolution.root / "data_manifest.json":
@@ -739,6 +744,7 @@ def _verify_preparation_files_at(
     final_fd: int,
     authorization: FinalTestAuthorization,
     resolution: FinalTestDataResolution,
+    require_current_stage8: bool = True,
 ) -> FinalTestPreparation:
     """Verify preparation evidence only through one held final-root descriptor."""
     with opened_directory_at(
@@ -765,6 +771,7 @@ def _verify_preparation_files_at(
                 authorization,
                 resolution,
                 final_fd=final_fd,
+                require_current_stage8=require_current_stage8,
             )
             symbol_count, symbols_sha256, symbols = _verify_symbol_scope_at(
                 preparation_fd,
@@ -872,6 +879,7 @@ def _verify_manifest_data_binding(
     resolution: FinalTestDataResolution,
     *,
     final_fd: int | None = None,
+    require_current_stage8: bool = True,
 ) -> None:
     if manifest.get("schema_version") == _LEGACY_SCHEMA_VERSION:
         _assert_data_claim_identity(
@@ -887,6 +895,7 @@ def _verify_manifest_data_binding(
         resolution,
         manifest.get("data_binding"),
         final_fd=final_fd,
+        require_current_stage8=require_current_stage8,
     )
 
 

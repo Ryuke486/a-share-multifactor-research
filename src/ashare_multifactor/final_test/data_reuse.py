@@ -93,6 +93,7 @@ def verify_preparation_data_binding(
     binding: object,
     *,
     final_fd: int | None = None,
+    require_current_stage8: bool = True,
 ) -> None:
     """Verify the manifest-bound direct claim or v4 reuse receipt."""
     if final_fd is None:
@@ -103,6 +104,7 @@ def verify_preparation_data_binding(
                 resolution,
                 binding,
                 final_fd=opened.final_fd,
+                require_current_stage8=require_current_stage8,
             )
             return
     if not isinstance(binding, dict) or set(binding) != {
@@ -143,6 +145,7 @@ def verify_preparation_data_binding(
         resolution,
         payload,
         final_fd=final_fd,
+        require_current_stage8=require_current_stage8,
     )
 
 
@@ -165,6 +168,7 @@ def verify_final_test_data_reuse(
             resolution,
             payload,
             final_fd=root_binding.final_fd,
+            require_current_stage8=True,
         )
 
 
@@ -306,6 +310,7 @@ def _verify_reuse_receipt_at(
     receipt_bytes: bytes,
     *,
     final_fd: int,
+    require_current_stage8: bool,
 ) -> None:
     receipt = _json_object(receipt_bytes, label="final-test data reuse receipt")
     claim_bytes = read_data_claim_bytes_at(final_fd)
@@ -324,7 +329,7 @@ def _verify_reuse_receipt_at(
     sealed = _load_destination_protocol(
         final_root.parent / "robustness",
         authorization,
-        require_current=True,
+        require_current=require_current_stage8,
     )
     validate_data_reuse_receipt(
         receipt,

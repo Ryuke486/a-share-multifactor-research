@@ -104,6 +104,23 @@ def load_evidence_import_source_authorization(
     )
 
 
+def verify_historical_evidence_source_preparation(
+    final_root: Path,
+    *,
+    attempt_id: str,
+    authorization: FinalTestAuthorization,
+    root_binding: FinalRootBinding | None = None,
+) -> FinalTestPreparation:
+    """Verify the immutable preparation selected by source authorization."""
+    return verify_preparation(
+        final_root,
+        attempt_id=attempt_id,
+        authorization=authorization,
+        root_binding=root_binding,
+        require_current_stage8=False,
+    )
+
+
 def import_compatible_official_evidence(
     *,
     source_preparation: FinalTestPreparation,
@@ -128,7 +145,7 @@ def import_compatible_official_evidence(
     ).absolute():
         raise ValueError("evidence import root differs from attempt binding")
     with FinalRootBinding.open(destination_final) as binding:
-        source_verified = verify_preparation(
+        source_verified = verify_historical_evidence_source_preparation(
             source_final,
             attempt_id=source_authorization.attempt_id,
             authorization=source_authorization,

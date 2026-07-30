@@ -33,6 +33,7 @@ from ashare_multifactor.final_test.official_document_fetcher import (
 from ashare_multifactor.final_test.official_evidence_import import (
     import_compatible_official_evidence,
     load_evidence_import_source_authorization,
+    verify_historical_evidence_source_preparation,
 )
 from ashare_multifactor.final_test.official_evidence_workspace import (
     EvidenceWorkspace,
@@ -337,7 +338,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             data_root=args.data_root,
             attempt_id=args.source_attempt_id,
         )
-        source_preparation = verify_preparation(
+        source_preparation = verify_historical_evidence_source_preparation(
             args.data_root / "processed/final_test",
             attempt_id=args.source_attempt_id,
             authorization=source_authorization,

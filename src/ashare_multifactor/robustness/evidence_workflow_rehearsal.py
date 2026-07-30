@@ -124,6 +124,23 @@ _COVERAGE_TESTS = (
     "test_ready_coverage_rechecks_shared_document_bytes",
 )
 _IMPORT_TESTS = (
+    "tests.test_final_test_historical_evidence_import::"
+    "test_import_evidence_accepts_historical_v4_reused_panel_after_current_advances",
+    "tests.test_final_test_historical_evidence_import::"
+    "test_import_evidence_still_requires_destination_stage8_to_be_current",
+    "tests.test_final_test_historical_evidence_import::"
+    "test_import_evidence_rejects_historical_source_bound_release_identity_drift"
+    "[manifest.json]",
+    "tests.test_final_test_historical_evidence_import::"
+    "test_import_evidence_rejects_historical_source_bound_release_identity_drift"
+    "[lineage.json]",
+    "tests.test_final_test_historical_evidence_import::"
+    "test_import_evidence_rejects_historical_source_bound_release_identity_drift"
+    "[artifacts/sealed_test_protocol.json]",
+    "tests.test_final_test_historical_evidence_import::"
+    "test_import_evidence_rejects_unregistered_historical_source",
+    "tests.test_final_test_historical_evidence_import::"
+    "test_import_evidence_rejects_mismatched_historical_source_authorization",
     "tests.test_final_test_official_evidence_import::"
     "test_evidence_import_reuses_complete_queries_and_only_valid_legacy_documents",
     "tests.test_final_test_official_evidence_import::"

@@ -58,6 +58,7 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "tests/test_final_test_corporate_action_candidates.py",
     "tests/test_final_test_cli.py",
     "tests/test_final_test_data_reuse.py",
+    "tests/test_final_test_historical_evidence_import.py",
     "tests/test_final_test_official_announcement_routing.py",
     "tests/test_final_test_official_candidate_review_admission.py",
     "tests/test_final_test_official_coverage_publisher.py",
