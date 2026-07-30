@@ -150,6 +150,7 @@ def run_historical_candidate_review_admission(
             "minimum_calendar_days": minimum_lag,
             "maximum_calendar_days": maximum_lag,
             "interval_closed": True,
+            "temporal_policy": date_rule["temporal_policy"],
         },
         "inputs": inputs,
         "candidate_count": verified.derivation.height,

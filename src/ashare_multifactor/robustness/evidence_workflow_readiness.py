@@ -42,6 +42,13 @@ _ATTACHMENTS = {
     ),
 }
 _FILES = {**_REPORTS, **_ATTACHMENTS}
+_REQUIRED_TEMPORAL_POLICY = {
+    "predicate": "publication_date_lte_candidate_ex_date",
+    "publication_date_source": "cninfo_finalpage_path_date",
+    "same_day_allowed": True,
+    "historical_lag_interval_usage": "diagnostic_only",
+    "final_test_gap_distribution_used_to_select_predicate": False,
+}
 
 
 def write_evidence_workflow_readiness_audit(
@@ -251,6 +258,7 @@ def _validate_reports(
         or not isinstance(date_rule, dict)
         or date_rule.get("period") != ["2017-01-01", "2021-12-31"]
         or not _valid_sha256(date_rule.get("sha256"))
+        or date_rule.get("temporal_policy") != _REQUIRED_TEMPORAL_POLICY
         or not isinstance(unresolved_record, dict)
         or unresolved_record.get("path") != "unresolved_candidates.parquet"
         or unresolved_record.get("sha256")
@@ -271,7 +279,14 @@ def _validate_reports(
         != (root / "candidate_admission_decisions.parquet").stat().st_size
         or decisions_record.get("row_count") != decisions.height
         or decisions.height != admission.get("candidate_count")
-        or not {"pair_id", "status", "failure_codes"} <= set(decisions.columns)
+        or not {
+            "pair_id",
+            "status",
+            "failure_codes",
+            "historical_lag_interval_hit",
+        }
+        <= set(decisions.columns)
+        or decisions.schema["historical_lag_interval_hit"] != pl.Boolean
         or decisions.get_column("pair_id").n_unique() != decisions.height
         or decisions.filter(pl.col("status") != "admitted").height
         or not isinstance(admission_inputs, list)
@@ -317,6 +332,8 @@ def _validate_reports(
         != admission.get("review_session_id")
         or historical.get("admission_date_rule_sha256")
         != date_rule.get("sha256")
+        or historical.get("candidate_admission_temporal_policy")
+        != _REQUIRED_TEMPORAL_POLICY
     ):
         raise ValueError("complete evidence workflow rehearsal is not ready")
 

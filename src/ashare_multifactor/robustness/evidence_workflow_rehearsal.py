@@ -60,7 +60,19 @@ _CANDIDATE_TESTS = (
 )
 _REVIEW_TESTS = (
     "tests.test_final_test_official_candidate_review_admission::"
-    "test_candidate_review_admission_accepts_both_closed_date_boundaries",
+    "test_candidate_review_admission_"
+    "accepts_exact_date_at_historical_diagnostic_boundaries",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_candidate_review_admission_"
+    "accepts_causally_valid_exact_date[lag-0]",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_candidate_review_admission_"
+    "accepts_causally_valid_exact_date[lag-14]",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_candidate_review_admission_"
+    "accepts_causally_valid_exact_date[lag-18]",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_candidate_review_admission_rejects_post_event_announcement",
     "tests.test_final_test_official_candidate_review_admission::"
     "test_candidate_review_admission_blocks_when_cached_pdf_bytes_drift",
     "tests.test_final_test_official_candidate_review_admission::"
@@ -69,6 +81,9 @@ _REVIEW_TESTS = (
     "test_candidate_review_admission_keeps_blocked_identity_after_targeted_recovery",
     "tests.test_final_test_official_candidate_review_admission::"
     "test_historical_candidate_admission_recomputes_frozen_pairs",
+    "tests.test_final_test_official_candidate_review_admission::"
+    "test_historical_candidate_admission_"
+    "treats_lag_window_as_diagnostic",
     "tests.test_final_test_official_candidate_review_admission::"
     "test_historical_candidate_admission_publishes_nonzero_unresolved_on_route_drift",
     "tests.test_evidence_workflow_successor::"
@@ -368,6 +383,9 @@ def _historical_report(
             "review_session_id"
         ],
         "admission_date_rule_sha256": date_rule["sha256"],
+        "candidate_admission_temporal_policy": date_rule[
+            "temporal_policy"
+        ],
     }
 
 

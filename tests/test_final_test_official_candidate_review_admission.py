@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 import hashlib
 from io import BytesIO
 import json
@@ -161,21 +161,8 @@ class _SplitRequirementAnnouncementTransport(_AdmissionAnnouncementTransport):
             return super().fetch(endpoint, form, timeout_seconds=0)
         announcements = [
             {
-                "announcementId": "000001-strong",
+                "announcementId": "000001-prior",
                 "announcementTitle": "2024年度权益分派实施公告",
-                "announcementTime": int(
-                    datetime.combine(
-                        date(2024, 5, 29),
-                        time.min,
-                        tzinfo=ZoneInfo("Asia/Shanghai"),
-                    ).timestamp()
-                    * 1000
-                ),
-                "adjunctUrl": "finalpage/2024-05-29/000001-strong.PDF",
-            },
-            {
-                "announcementId": "000001-weak",
-                "announcementTitle": "关于2024年度权益分派的公告",
                 "announcementTime": int(
                     datetime.combine(
                         date(2024, 5, 28),
@@ -184,7 +171,20 @@ class _SplitRequirementAnnouncementTransport(_AdmissionAnnouncementTransport):
                     ).timestamp()
                     * 1000
                 ),
-                "adjunctUrl": "finalpage/2024-05-28/000001-weak.PDF",
+                "adjunctUrl": "finalpage/2024-05-28/000001-prior.PDF",
+            },
+            {
+                "announcementId": "000001-post",
+                "announcementTitle": "2024年度权益分派实施公告",
+                "announcementTime": int(
+                    datetime.combine(
+                        date(2024, 6, 2),
+                        time.min,
+                        tzinfo=ZoneInfo("Asia/Shanghai"),
+                    ).timestamp()
+                    * 1000
+                ),
+                "adjunctUrl": "finalpage/2024-06-02/000001-post.PDF",
             },
         ]
         return json.dumps(
@@ -288,9 +288,6 @@ def _scenario(
     if name == "candidate_date_not_in_pdf":
         payloads["000001"] = _pdf_bytes("implementation announcement")
         return titles, dates, payloads, "candidate_date_not_found_in_pdf"
-    if name == "outside_frozen_date_window":
-        dates["000001"] = date(2024, 5, 29)
-        return titles, dates, payloads, "outside_frozen_date_window"
     raise AssertionError(f"unknown admission scenario: {name}")
 
 
@@ -309,23 +306,30 @@ def _write_canonical_json(path: Path, payload: dict[str, object]) -> None:
     )
 
 
-def _historical_admission_inputs(tmp_path: Path) -> dict[str, Path]:
+def _historical_admission_inputs(
+    tmp_path: Path,
+    *,
+    lags: tuple[int, int] = (4, 13),
+) -> dict[str, Path]:
     code_root = tmp_path / "code"
     cache_root = tmp_path / "pdf-cache"
     cache_root.mkdir(parents=True)
+    new_ex_date = date(2021, 6, 1)
+    existing_ex_date = date(2021, 7, 1)
     pairs = [
         {
             "pair_id": "pair-new",
             "historical_candidate_id": "candidate-new",
             "symbol": "000001",
             "market": "sz",
-            "ex_date": date(2021, 6, 1),
-            "announcement_date": date(2021, 5, 28),
+            "ex_date": new_ex_date,
+            "announcement_date": new_ex_date - timedelta(days=lags[0]),
             "catalog_id": "catalog-new",
             "announcement_id": "1001",
             "announcement_title": "2020年度权益分派实施公告",
             "source_url": (
-                "https://static.cninfo.com.cn/finalpage/2021-05-28/1001.PDF"
+                "https://static.cninfo.com.cn/finalpage/"
+                f"{(new_ex_date - timedelta(days=lags[0])).isoformat()}/1001.PDF"
             ),
             "pdf_name": "000001_1001.pdf",
             "text": "2021-06-01",
@@ -336,13 +340,16 @@ def _historical_admission_inputs(tmp_path: Path) -> dict[str, Path]:
             "historical_candidate_id": "candidate-existing",
             "symbol": "600000",
             "market": "sh",
-            "ex_date": date(2021, 7, 1),
-            "announcement_date": date(2021, 6, 18),
+            "ex_date": existing_ex_date,
+            "announcement_date": (
+                existing_ex_date - timedelta(days=lags[1])
+            ),
             "catalog_id": "catalog-existing",
             "announcement_id": "1002",
             "announcement_title": "2020年度利润分派实施公告",
             "source_url": (
-                "https://static.cninfo.com.cn/finalpage/2021-06-18/1002.PDF"
+                "https://static.cninfo.com.cn/finalpage/"
+                f"{(existing_ex_date - timedelta(days=lags[1])).isoformat()}/1002.PDF"
             ),
             "pdf_name": "600000_1002.pdf",
             "text": "2021/7/1",
@@ -386,7 +393,9 @@ def _historical_admission_inputs(tmp_path: Path) -> dict[str, Path]:
                 "announcement_id": "1001",
                 "symbol": "000001",
                 "market": "sz",
-                "announcement_date": "2021-05-28",
+                "announcement_date": pairs[0][
+                    "announcement_date"
+                ].isoformat(),
                 "source_url": pairs[0]["source_url"],
                 "pdf_path": "cache/000001_1001.pdf",
                 "pdf_sha256": pdf_records["pair-new"]["sha256"],
@@ -411,7 +420,9 @@ def _historical_admission_inputs(tmp_path: Path) -> dict[str, Path]:
                 "announcement_id": "1002",
                 "symbol": "600000",
                 "market": "sh",
-                "announcement_date": "2021-06-18",
+                "announcement_date": pairs[1][
+                    "announcement_date"
+                ].isoformat(),
                 "source_url": pairs[1]["source_url"],
                 "path": "cache/600000_1002.pdf",
                 "sha256": pdf_records["pair-existing"]["sha256"],
@@ -504,7 +515,7 @@ def _historical_admission_inputs(tmp_path: Path) -> dict[str, Path]:
     derivation_manifest_path = tmp_path / "derivation-manifest.json"
     _write_canonical_json(derivation_manifest_path, derivation_manifest)
     date_rule = {
-        "schema": "stage9_candidate_review_admission_date_rule/v1",
+        "schema": "stage9_candidate_review_admission_date_rule/v2",
         "role": "candidate_review_admission_date_rule",
         "period": ["2017-01-01", "2021-12-31"],
         "final_test_candidate_gaps_read": False,
@@ -537,6 +548,13 @@ def _historical_admission_inputs(tmp_path: Path) -> dict[str, Path]:
             "interval_closed": True,
             "minimum_calendar_days": 4,
             "maximum_calendar_days": 13,
+        },
+        "temporal_policy": {
+            "predicate": "publication_date_lte_candidate_ex_date",
+            "publication_date_source": "cninfo_finalpage_path_date",
+            "same_day_allowed": True,
+            "historical_lag_interval_usage": "diagnostic_only",
+            "final_test_gap_distribution_used_to_select_predicate": False,
         },
     }
     date_rule_path = (
@@ -594,6 +612,29 @@ def test_historical_candidate_admission_recomputes_frozen_pairs(
         "historical_pdf_cache",
         "candidate_review_admission_date_rule",
     }
+
+
+def test_historical_candidate_admission_treats_lag_window_as_diagnostic(
+    tmp_path: Path,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        require_historical_candidate_review_admission,
+    )
+
+    inputs = _historical_admission_inputs(tmp_path, lags=(14, 13))
+    inputs["destination"].mkdir()
+
+    admission = require_historical_candidate_review_admission(**inputs)
+
+    assert admission.ready is True
+    assert admission.decisions_path is not None
+    decision = (
+        pl.read_parquet(admission.decisions_path)
+        .filter(pl.col("pair_id") == "pair-new")
+        .row(0, named=True)
+    )
+    assert decision["status"] == "admitted"
+    assert decision["historical_lag_interval_hit"] is False
 
 
 @pytest.mark.parametrize("mutation", ["discovery_bytes", "missing_pdf"])
@@ -660,7 +701,7 @@ def test_historical_candidate_admission_publishes_nonzero_unresolved_on_route_dr
     )
 
 
-def test_candidate_review_admission_accepts_both_closed_date_boundaries(
+def test_candidate_review_admission_accepts_exact_date_at_historical_diagnostic_boundaries(
     prepared_attempt: PreparedAttempt,
 ) -> None:
     from ashare_multifactor.final_test.official_candidate_review_admission import (
@@ -697,6 +738,13 @@ def test_candidate_review_admission_accepts_both_closed_date_boundaries(
     assert manifest["candidate_count"] == 2
     assert manifest["admitted_count"] == 2
     assert manifest["unresolved_count"] == 0
+    assert manifest["date_rule"]["temporal_policy"] == {
+        "predicate": "publication_date_lte_candidate_ex_date",
+        "publication_date_source": "cninfo_finalpage_path_date",
+        "same_day_allowed": True,
+        "historical_lag_interval_usage": "diagnostic_only",
+        "final_test_gap_distribution_used_to_select_predicate": False,
+    }
     assert pl.read_parquet(admission.unresolved_path).is_empty()
     manifest_bytes = admission.manifest_path.read_bytes()
     unresolved_bytes = admission.unresolved_path.read_bytes()
@@ -711,6 +759,93 @@ def test_candidate_review_admission_accepts_both_closed_date_boundaries(
     assert replay.manifest_sha256 == admission.manifest_sha256
     assert replay.manifest_path.read_bytes() == manifest_bytes
     assert replay.unresolved_path.read_bytes() == unresolved_bytes
+
+
+@pytest.mark.parametrize(
+    "announcement_date",
+    [
+        pytest.param(date(2024, 6, 1), id="lag-0"),
+        pytest.param(date(2024, 5, 18), id="lag-14"),
+        pytest.param(date(2024, 5, 14), id="lag-18"),
+    ],
+)
+def test_candidate_review_admission_accepts_causally_valid_exact_date(
+    prepared_attempt: PreparedAttempt,
+    announcement_date: date,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "2024年度权益分派实施公告",
+            "600000": "2024年第三季度报告",
+        },
+        announcement_dates={
+            "000001": announcement_date,
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": _pdf_bytes("2024-06-01"),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+    )
+
+    admission = require_candidate_review_admission(
+        workspace=workspace,
+        queue=queue,
+        candidates=candidates,
+        date_rule_path=_DATE_RULE_PATH,
+    )
+
+    assert admission.ready is True
+    assert admission.manifest["admitted_count"] == 1
+    assert admission.manifest["unresolved_count"] == 0
+
+
+def test_candidate_review_admission_rejects_post_event_announcement(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        CandidateReviewAdmissionError,
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "2024年度权益分派实施公告",
+            "600000": "2024年第三季度报告",
+        },
+        announcement_dates={
+            "000001": date(2024, 6, 2),
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": _pdf_bytes("2024-06-01"),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+    )
+
+    with pytest.raises(CandidateReviewAdmissionError) as blocked:
+        require_candidate_review_admission(
+            workspace=workspace,
+            queue=queue,
+            candidates=candidates,
+            date_rule_path=_DATE_RULE_PATH,
+        )
+
+    unresolved = pl.read_parquet(
+        blocked.value.manifest_path.with_name("unresolved_candidates.parquet")
+    )
+    assert unresolved.item(0, "failure_codes").to_list() == [
+        "announcement_after_candidate_ex_date",
+        "no_single_announcement_satisfies_all_requirements",
+    ]
 
 
 def test_candidate_review_admission_blocks_when_cached_pdf_bytes_drift(
@@ -834,8 +969,8 @@ def test_candidate_review_admission_does_not_join_partial_requirements_across_an
         titles=titles,
         announcement_dates=dates,
         document_payloads={
-            "000001-strong": _pdf_bytes("2024-06-01"),
-            "000001-weak": _pdf_bytes("2024-06-01"),
+            "000001-prior": _pdf_bytes("implementation announcement"),
+            "000001-post": _pdf_bytes("2024-06-01"),
             "600000": _pdf_bytes("2024-07-01"),
         },
         candidate_symbols={"000001"},
@@ -857,11 +992,11 @@ def test_candidate_review_admission_does_not_join_partial_requirements_across_an
         next(workspace.root.parent.rglob("unresolved_candidates.parquet"))
     )
     assert unresolved.item(0, "failure_codes").to_list() == [
-        "outside_frozen_date_window",
+        "announcement_after_candidate_ex_date",
         "no_single_announcement_satisfies_all_requirements",
     ]
     assert unresolved.item(0, "same_symbol_announcement_count") == 2
-    assert unresolved.item(0, "strong_implementation_announcement_count") == 1
+    assert unresolved.item(0, "strong_implementation_announcement_count") == 2
 
 
 def test_candidate_review_admission_reports_only_the_unresolved_candidate(
@@ -915,7 +1050,6 @@ def test_candidate_review_admission_reports_only_the_unresolved_candidate(
         "cross_symbol_pdf",
         "invalid_or_missing_pdf",
         "candidate_date_not_in_pdf",
-        "outside_frozen_date_window",
     ],
 )
 def test_candidate_review_admission_publishes_exact_blocked_reason_before_failing(

@@ -12,6 +12,7 @@ from ashare_multifactor.final_test.official_candidate_review_admission import (
     _STRONG_REASON_PREFIX,
     _date_in_text,
     _lag_interval,
+    _temporal_admission_decision,
 )
 from ashare_multifactor.final_test.official_candidate_review_admission_storage import (
     _UNRESOLVED_SCHEMA,
@@ -30,6 +31,7 @@ _DECISION_SCHEMA = {
     "routing_reason": pl.String,
     "pdf_sha256": pl.String,
     "lag_calendar_days": pl.Int64,
+    "historical_lag_interval_hit": pl.Boolean,
     "failure_codes": pl.List(pl.String),
 }
 
@@ -41,7 +43,7 @@ def evaluate_historical_candidate_pairs(
     pdfs: dict[str, dict[str, object]],
     date_rule: dict[str, Any],
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Recompute routing, text-date, and lag-window admission per pair."""
+    """Recompute routing, text-date, causal admission, and lag diagnostics."""
     discovery_by_id = {
         str(row["catalog_id"]): row
         for row in discovery.iter_rows(named=True)
@@ -76,12 +78,17 @@ def evaluate_historical_candidate_pairs(
         announcement_date = pair["announcement_date"]
         lag = (ex_date - announcement_date).days
         date_match = _date_in_text(ex_date, str(pdf["normalized_text"]))
-        window_hit = minimum_lag <= lag <= maximum_lag
-        admitted = strong and date_match and window_hit
+        temporal = _temporal_admission_decision(
+            candidate_ex_date=ex_date,
+            announcement_publication_date=announcement_date,
+            minimum_lag=minimum_lag,
+            maximum_lag=maximum_lag,
+        )
+        admitted = strong and date_match and temporal.eligible
         failure_codes = _failure_codes(
             strong=strong,
             date_match=date_match,
-            window_hit=window_hit,
+            causal=temporal.eligible,
         )
         decisions.append(
             {
@@ -98,6 +105,9 @@ def evaluate_historical_candidate_pairs(
                 "routing_reason": routed["reason"],
                 "pdf_sha256": str(pdf["pdf_sha256"]),
                 "lag_calendar_days": lag,
+                "historical_lag_interval_hit": (
+                    temporal.historical_lag_interval_hit
+                ),
                 "failure_codes": failure_codes,
             }
         )
@@ -112,7 +122,9 @@ def evaluate_historical_candidate_pairs(
                     "same_symbol_announcement_count": 1,
                     "strong_implementation_announcement_count": int(strong),
                     "valid_cached_official_pdf_count": 1,
-                    "frozen_date_window_hit_count": int(window_hit),
+                    "frozen_date_window_hit_count": int(
+                        temporal.historical_lag_interval_hit
+                    ),
                     "related_catalog_ids": [catalog_id],
                 }
             )
@@ -151,14 +163,14 @@ def _failure_codes(
     *,
     strong: bool,
     date_match: bool,
-    window_hit: bool,
+    causal: bool,
 ) -> list[str]:
     if not strong:
         primary = "no_strong_implementation_route"
     elif not date_match:
         primary = "candidate_date_not_found_in_pdf"
-    elif not window_hit:
-        primary = "outside_frozen_date_window"
+    elif not causal:
+        primary = "announcement_after_candidate_ex_date"
     else:
         return []
     return [primary, "no_single_announcement_satisfies_all_requirements"]

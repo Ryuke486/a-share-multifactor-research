@@ -69,6 +69,7 @@ def _ready_candidate_admission(root: Path) -> SimpleNamespace:
             ],
             "pdf_sha256": ["a" * 64, "b" * 64],
             "lag_calendar_days": [4, 13],
+            "historical_lag_interval_hit": [True, True],
             "failure_codes": [[], []],
         }
     ).write_parquet(decisions_path)
@@ -121,6 +122,13 @@ def _ready_candidate_admission(root: Path) -> SimpleNamespace:
             "minimum_calendar_days": 4,
             "maximum_calendar_days": 13,
             "interval_closed": True,
+            "temporal_policy": {
+                "predicate": "publication_date_lte_candidate_ex_date",
+                "publication_date_source": "cninfo_finalpage_path_date",
+                "same_day_allowed": True,
+                "historical_lag_interval_usage": "diagnostic_only",
+                "final_test_gap_distribution_used_to_select_predicate": False,
+            },
         },
         "inputs": [
             {
@@ -676,6 +684,9 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
                 admission.manifest["review_session_id"]
             ),
             "admission_date_rule_sha256": "6" * 64,
+            "candidate_admission_temporal_policy": admission.manifest[
+                "date_rule"
+            ]["temporal_policy"],
         },
     }
     for name, payload in reports.items():
@@ -733,6 +744,58 @@ def test_evidence_readiness_requires_the_full_pre_resume_workflow(
             evidence_workflow_identity=identity,
         )
     historical["announcement_publication_timezone"] = "Asia/Shanghai"
+    historical_path.write_text(json.dumps(historical), encoding="utf-8")
+
+    admission_path = source / "candidate_review_admission.json"
+    admission_payload = json.loads(admission_path.read_text(encoding="utf-8"))
+    admission_payload["date_rule"]["temporal_policy"][
+        "publication_date_source"
+    ] = "unbound_catalog_metadata"
+    admission_path.write_text(
+        json.dumps(
+            admission_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    historical["candidate_admission_manifest_sha256"] = sha256_file(
+        admission_path
+    )
+    historical["candidate_admission_temporal_policy"] = admission_payload[
+        "date_rule"
+    ]["temporal_policy"]
+    historical_path.write_text(json.dumps(historical), encoding="utf-8")
+    with pytest.raises(
+        ValueError,
+        match="complete evidence workflow rehearsal is not ready",
+    ):
+        write_evidence_workflow_readiness_audit(
+            source,
+            tmp_path / "rejected-temporal-policy",
+            evidence_workflow_identity=identity,
+        )
+    admission_payload["date_rule"]["temporal_policy"][
+        "publication_date_source"
+    ] = "cninfo_finalpage_path_date"
+    admission_path.write_text(
+        json.dumps(
+            admission_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    historical["candidate_admission_manifest_sha256"] = sha256_file(
+        admission_path
+    )
+    historical["candidate_admission_temporal_policy"] = admission_payload[
+        "date_rule"
+    ]["temporal_policy"]
     historical_path.write_text(json.dumps(historical), encoding="utf-8")
 
     pl.DataFrame(

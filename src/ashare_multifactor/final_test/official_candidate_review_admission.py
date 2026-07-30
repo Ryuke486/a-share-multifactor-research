@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
 import hashlib
 from io import BytesIO
@@ -71,6 +72,19 @@ _RULE_VERSION = "stage9-shared-routing-v5"
 _STRONG_REASON_PREFIX = "corporate_action_strong_implementation:"
 _SOURCE_DATE = re.compile(r"/finalpage/(\d{4}-\d{2}-\d{2})/")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_TEMPORAL_POLICY = {
+    "predicate": "publication_date_lte_candidate_ex_date",
+    "publication_date_source": "cninfo_finalpage_path_date",
+    "same_day_allowed": True,
+    "historical_lag_interval_usage": "diagnostic_only",
+    "final_test_gap_distribution_used_to_select_predicate": False,
+}
+
+
+@dataclass(frozen=True)
+class _TemporalAdmissionDecision:
+    eligible: bool
+    historical_lag_interval_hit: bool
 
 
 def require_candidate_review_admission(
@@ -144,6 +158,7 @@ def require_candidate_review_admission(
             "minimum_calendar_days": minimum_lag,
             "maximum_calendar_days": maximum_lag,
             "interval_closed": True,
+            "temporal_policy": date_rule["temporal_policy"],
         },
         "candidate_count": verified_candidates.candidates.height,
         "admitted_count": verified_candidates.candidates.height - unresolved.height,
@@ -235,11 +250,12 @@ def _load_date_rule(
         not isinstance(payload, dict)
         or raw != canonical_json_bytes(payload)
         or payload.get("schema")
-        != "stage9_candidate_review_admission_date_rule/v1"
+        != "stage9_candidate_review_admission_date_rule/v2"
         or payload.get("role") != "candidate_review_admission_date_rule"
         or payload.get("period") != ["2017-01-01", "2021-12-31"]
         or payload.get("final_test_strategy_outputs_read") is not False
         or payload.get("final_test_candidate_gaps_read") is not False
+        or payload.get("temporal_policy") != _TEMPORAL_POLICY
         or not isinstance(derivation, dict)
         or _SHA256.fullmatch(str(derivation.get("manifest_sha256", ""))) is None
         or _SHA256.fullmatch(str(derivation.get("parquet_sha256", ""))) is None
@@ -267,6 +283,20 @@ def _lag_interval(date_rule: dict[str, Any]) -> tuple[int, int]:
     ):
         raise ValueError("candidate review admission date interval is invalid")
     return minimum, maximum
+
+
+def _temporal_admission_decision(
+    *,
+    candidate_ex_date: date,
+    announcement_publication_date: date,
+    minimum_lag: int,
+    maximum_lag: int,
+) -> _TemporalAdmissionDecision:
+    lag = (candidate_ex_date - announcement_publication_date).days
+    return _TemporalAdmissionDecision(
+        eligible=announcement_publication_date <= candidate_ex_date,
+        historical_lag_interval_hit=minimum_lag <= lag <= maximum_lag,
+    )
 
 
 def _evaluate_announcements(
@@ -408,18 +438,24 @@ def _unresolved_candidates(
         window_hits = [
             row
             for row in valid
-            if minimum_lag
-            <= (ex_date - row["announcement_date"]).days
-            <= maximum_lag
+            if _temporal_admission_decision(
+                candidate_ex_date=ex_date,
+                announcement_publication_date=row["announcement_date"],
+                minimum_lag=minimum_lag,
+                maximum_lag=maximum_lag,
+            ).historical_lag_interval_hit
         ]
-        admitted = [
+        causal_matches = [
             row
             for row in date_matches
-            if minimum_lag
-            <= (ex_date - row["announcement_date"]).days
-            <= maximum_lag
+            if _temporal_admission_decision(
+                candidate_ex_date=ex_date,
+                announcement_publication_date=row["announcement_date"],
+                minimum_lag=minimum_lag,
+                maximum_lag=maximum_lag,
+            ).eligible
         ]
-        if admitted:
+        if causal_matches:
             continue
         if not same_symbol:
             primary = "no_same_symbol_announcement"
@@ -429,15 +465,12 @@ def _unresolved_candidates(
             primary = "no_valid_cached_official_pdf"
         elif not date_matches:
             primary = "candidate_date_not_found_in_pdf"
-        elif not window_hits:
-            primary = "outside_frozen_date_window"
         else:
-            primary = None
-        failure_codes = (
-            [primary, "no_single_announcement_satisfies_all_requirements"]
-            if primary is not None
-            else ["no_single_announcement_satisfies_all_requirements"]
-        )
+            primary = "announcement_after_candidate_ex_date"
+        failure_codes = [
+            primary,
+            "no_single_announcement_satisfies_all_requirements",
+        ]
         rows.append(
             {
                 "candidate_id": str(candidate["candidate_id"]),
