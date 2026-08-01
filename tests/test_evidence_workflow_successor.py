@@ -271,6 +271,23 @@ def test_evidence_workflow_identity_binds_candidate_admission_seam() -> None:
         "configs/evidence/stage9_candidate_review_admission_date_rule.json",
         "configs/evidence/stage9_known_routing_cases.csv",
         "src/ashare_multifactor/final_test/official_candidate_review_admission.py",
+        "src/ashare_multifactor/final_test/official_candidate_pdf_evidence.py",
+        "src/ashare_multifactor/final_test/"
+        "official_announcement_catalog_schema.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_query_authorization.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_query_supplement_basis.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_query_supplements.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_query_topology.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_review_rendition_authorization.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_review_renditions.py",
+        "src/ashare_multifactor/final_test/"
+        "official_candidate_review_rendition_validation.py",
         "src/ashare_multifactor/final_test/"
         "official_candidate_review_admission_historical.py",
         "src/ashare_multifactor/final_test/"
@@ -281,6 +298,8 @@ def test_evidence_workflow_identity_binds_candidate_admission_seam() -> None:
         "official_candidate_review_admission_storage.py",
         "src/ashare_multifactor/final_test/routing_audit.py",
         "tests/test_final_test_official_candidate_review_admission.py",
+        "tests/test_final_test_official_candidate_query_supplements.py",
+        "tests/test_final_test_official_candidate_review_rendition_authorization.py",
         "tests/test_final_test_routing_audit.py",
     }
 

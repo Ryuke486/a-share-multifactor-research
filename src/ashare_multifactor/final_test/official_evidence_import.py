@@ -22,6 +22,9 @@ from ashare_multifactor.final_test.official_announcement_catalog import (
     build_announcement_catalog,
     load_verified_announcement_catalog,
 )
+from ashare_multifactor.final_test.official_announcement_catalog_schema import (
+    VerifiedCandidateQueryCatalogSupplement,
+)
 from ashare_multifactor.final_test.official_announcement_routing import (
     build_announcement_routing,
 )
@@ -55,6 +58,7 @@ from ashare_multifactor.final_test.official_query_collection_root import (
 from ashare_multifactor.final_test.official_query_coverage import canonical_json_bytes
 from ashare_multifactor.final_test.official_query_index import (
     copy_validated_official_query_coverage,
+    validate_official_query_coverage_index,
 )
 from ashare_multifactor.final_test.official_query_collector import (
     expected_scopes,
@@ -62,6 +66,7 @@ from ashare_multifactor.final_test.official_query_collector import (
 )
 from ashare_multifactor.final_test.official_security_identity import (
     import_verified_cninfo_security_identities,
+    load_verified_cninfo_security_identities,
 )
 from ashare_multifactor.final_test.preparation import (
     FinalTestPreparation,
@@ -88,6 +93,21 @@ class OfficialEvidenceImport:
     reused_document_count: int
     rejected_documents: tuple[RejectedImportedDocument, ...]
     missing_urls: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OfficialEvidenceImportInputs:
+    """Verified inputs-only import state before any catalog is published."""
+
+    source_preparation: FinalTestPreparation
+    source_authorization: FinalTestAuthorization
+    destination_preparation: FinalTestPreparation
+    destination_authorization: FinalTestAuthorization
+    contract: FinalActionSourceContract
+    source_root: Path
+    destination_root: Path
+    query_index_path: Path
+    identity_index_path: Path
 
 
 def load_evidence_import_source_authorization(
@@ -131,7 +151,30 @@ def import_compatible_official_evidence(
     source_root: Path,
     destination_root: Path,
 ) -> OfficialEvidenceImport:
-    """Rebind query identities and revalidate each reusable PDF."""
+    """Preserve the original one-shot import behavior over two strict phases."""
+    inputs = import_compatible_official_evidence_inputs(
+        source_preparation=source_preparation,
+        source_authorization=source_authorization,
+        destination_preparation=destination_preparation,
+        destination_authorization=destination_authorization,
+        contract=contract,
+        source_root=source_root,
+        destination_root=destination_root,
+    )
+    return complete_compatible_official_evidence_import(inputs)
+
+
+def import_compatible_official_evidence_inputs(
+    *,
+    source_preparation: FinalTestPreparation,
+    source_authorization: FinalTestAuthorization,
+    destination_preparation: FinalTestPreparation,
+    destination_authorization: FinalTestAuthorization,
+    contract: FinalActionSourceContract,
+    source_root: Path,
+    destination_root: Path,
+) -> OfficialEvidenceImportInputs:
+    """Rebind only identities and coverage, leaving the catalog unpublished."""
     if source_authorization.attempt_id == destination_authorization.attempt_id:
         raise ValueError("evidence import requires a new attempt")
     source_final = _final_root_from_preparation(source_preparation)
@@ -223,12 +266,43 @@ def import_compatible_official_evidence(
                     attempt_id=destination_authorization.attempt_id,
                 )
     query_index = destination_root / COVERAGE_DIRECTORY / "official_query_coverage.json"
+    identity_index = (
+        destination_root
+        / IDENTITIES_DIRECTORY
+        / "official_security_identities.json"
+    )
+    return OfficialEvidenceImportInputs(
+        source_preparation=source_verified,
+        source_authorization=source_authorization,
+        destination_preparation=destination_verified,
+        destination_authorization=destination_authorization,
+        contract=contract,
+        source_root=source_root,
+        destination_root=destination_root,
+        query_index_path=query_index,
+        identity_index_path=identity_index,
+    )
+
+
+def complete_compatible_official_evidence_import(
+    inputs: OfficialEvidenceImportInputs,
+    *,
+    supplement: VerifiedCandidateQueryCatalogSupplement | None = None,
+) -> OfficialEvidenceImport:
+    """Publish catalog/routing/workspace only after the caller's interphase work."""
+    source_verified, destination_verified = _revalidate_import_inputs(inputs)
+    destination_authorization = inputs.destination_authorization
+    contract = inputs.contract
+    source_root = inputs.source_root
+    destination_root = inputs.destination_root
+    query_index = inputs.query_index_path
     catalog_path = build_announcement_catalog(
         query_index,
         preparation=destination_verified,
         authorization=destination_authorization,
         contract=contract,
         destination=destination_root,
+        supplement=supplement,
     )
     catalog = load_verified_announcement_catalog(catalog_path)
     routing = build_announcement_routing(catalog_path, destination=destination_root)
@@ -292,17 +366,122 @@ def import_compatible_official_evidence(
     return OfficialEvidenceImport(
         output_root=destination_root,
         query_index_path=query_index,
-        identity_index_path=(
-            destination_root
-            / IDENTITIES_DIRECTORY
-            / "official_security_identities.json"
-        ),
+        identity_index_path=inputs.identity_index_path,
         catalog_path=catalog_path,
         workspace=workspace,
         reused_document_count=len(cached_documents),
         rejected_documents=tuple(rejected),
         missing_urls=tuple(missing),
     )
+
+
+def _revalidate_import_inputs(
+    inputs: OfficialEvidenceImportInputs,
+) -> tuple[FinalTestPreparation, FinalTestPreparation]:
+    if not isinstance(inputs, OfficialEvidenceImportInputs):
+        raise TypeError("evidence import inputs are invalid")
+    source_preparation = inputs.source_preparation
+    source_authorization = inputs.source_authorization
+    destination_preparation = inputs.destination_preparation
+    destination_authorization = inputs.destination_authorization
+    if source_authorization.attempt_id == destination_authorization.attempt_id:
+        raise ValueError("evidence import requires a new attempt")
+    if (
+        source_preparation.attempt_id != source_authorization.attempt_id
+        or destination_preparation.attempt_id != destination_authorization.attempt_id
+    ):
+        raise ValueError("evidence import preparation differs from authorization")
+    source_final = _final_root_from_preparation(source_preparation)
+    destination_final = _final_root_from_preparation(destination_preparation)
+    if source_final.absolute() != destination_final.absolute():
+        raise ValueError("evidence import final roots differ")
+    if inputs.source_root.absolute() != expected_output_root(
+        source_final, source_authorization.attempt_id
+    ).absolute():
+        raise ValueError("evidence import source root differs from attempt binding")
+    if inputs.destination_root.absolute() != expected_output_root(
+        destination_final, destination_authorization.attempt_id
+    ).absolute():
+        raise ValueError("evidence import destination root differs from attempt binding")
+    expected_query_index = (
+        inputs.destination_root
+        / COVERAGE_DIRECTORY
+        / "official_query_coverage.json"
+    )
+    expected_identity_index = (
+        inputs.destination_root
+        / IDENTITIES_DIRECTORY
+        / "official_security_identities.json"
+    )
+    if (
+        inputs.query_index_path.absolute() != expected_query_index.absolute()
+        or inputs.identity_index_path.absolute() != expected_identity_index.absolute()
+    ):
+        raise ValueError("evidence import phase identity differs")
+
+    with FinalRootBinding.open(destination_final) as binding:
+        source_verified = verify_historical_evidence_source_preparation(
+            destination_final,
+            attempt_id=source_authorization.attempt_id,
+            authorization=source_authorization,
+            root_binding=binding,
+        )
+        destination_verified = verify_preparation(
+            destination_final,
+            attempt_id=destination_authorization.attempt_id,
+            authorization=destination_authorization,
+            root_binding=binding,
+        )
+    if (
+        source_verified != source_preparation
+        or destination_verified != destination_preparation
+    ):
+        raise ValueError("evidence import preparation identity changed")
+    source_symbols = _load_symbols(source_verified)
+    destination_symbols = _load_symbols(destination_verified)
+    if (
+        source_symbols != destination_symbols
+        or source_verified.symbols_sha256 != destination_verified.symbols_sha256
+    ):
+        raise ValueError("evidence import symbol scope differs")
+
+    verify_official_query_collection_binding(
+        inputs.source_root,
+        preparation=source_verified,
+        authorization=source_authorization,
+        contract=inputs.contract,
+    )
+    verify_official_query_collection_binding(
+        inputs.destination_root,
+        preparation=destination_verified,
+        authorization=destination_authorization,
+        contract=inputs.contract,
+    )
+    with opened_safe_directory(
+        inputs.destination_root,
+        label="destination official evidence root",
+    ) as destination_fd:
+        identities_fd = open_directory_at(
+            destination_fd,
+            IDENTITIES_DIRECTORY,
+            label="destination CNInfo security identities",
+        )
+        try:
+            identities = load_verified_cninfo_security_identities(
+                identities_fd=identities_fd,
+                identity_root=inputs.destination_root / IDENTITIES_DIRECTORY,
+                symbols=destination_symbols,
+                preparation=destination_verified,
+                authorization=destination_authorization,
+            )
+        finally:
+            os.close(identities_fd)
+    scopes = expected_scopes(destination_verified, inputs.contract, identities=identities)
+    validate_official_query_coverage_index(
+        inputs.query_index_path,
+        expected_scopes=scopes,
+    )
+    return source_verified, destination_verified
 
 
 def _load_reusable_document(

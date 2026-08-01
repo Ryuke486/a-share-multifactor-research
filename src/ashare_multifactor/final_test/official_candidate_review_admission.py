@@ -22,6 +22,10 @@ from ashare_multifactor.final_test.official_announcement_catalog import (
 from ashare_multifactor.final_test.official_announcement_routing import (
     load_verified_announcement_routing,
 )
+from ashare_multifactor.final_test.official_candidate_pdf_evidence import (
+    date_in_text,
+    inspect_candidate_pdf,
+)
 from ashare_multifactor.final_test.official_document_validation import (
     validate_official_document,
 )
@@ -56,6 +60,8 @@ __all__ = [
     "DECISIONS_NAME",
     "UNRESOLVED_NAME",
     "CandidateReviewAdmissionError",
+    "CandidateReviewTopology",
+    "recompute_candidate_review_topology",
     "VerifiedCandidateReviewAdmission",
     "require_candidate_review_admission",
     "require_historical_candidate_review_admission",
@@ -79,12 +85,167 @@ _TEMPORAL_POLICY = {
     "historical_lag_interval_usage": "diagnostic_only",
     "final_test_gap_distribution_used_to_select_predicate": False,
 }
+_DECISION_SCHEMA = {
+    "candidate_id": pl.String,
+    "symbol": pl.String,
+    "ex_date": pl.Date,
+    "effective_date": pl.Date,
+    "status": pl.String,
+    "evidence_kind": pl.String,
+    "catalog_id": pl.String,
+    "source_url": pl.String,
+    "document_sha256": pl.String,
+    "evidence_manifest_sha256": pl.String,
+    "announcement_publication_date": pl.Date,
+    "strong_reason": pl.String,
+    "date_match": pl.String,
+    "historical_lag_interval_hit": pl.Boolean,
+}
 
 
 @dataclass(frozen=True)
 class _TemporalAdmissionDecision:
     eligible: bool
     historical_lag_interval_hit: bool
+
+
+@dataclass(frozen=True)
+class CandidateReviewTopology:
+    """Current causal result for an exact subset of frozen candidates."""
+
+    unresolved: pl.DataFrame
+    decisions: pl.DataFrame
+    query_required_candidate_ids: tuple[str, ...]
+    rendition_required_candidate_ids: tuple[str, ...]
+    unclassified_candidate_ids: tuple[str, ...]
+    binding: dict[str, object]
+
+
+def recompute_candidate_review_topology(
+    *,
+    workspace: EvidenceWorkspace,
+    queue: VerifiedReviewQueue,
+    candidates: VerifiedCandidateSnapshot,
+    candidate_ids: tuple[str, ...],
+    date_rule_path: Path = DEFAULT_ADMISSION_DATE_RULE_PATH,
+) -> CandidateReviewTopology:
+    """Re-evaluate an exact frozen subset under the current admission rules."""
+    verified_queue = load_verified_review_queue(workspace)
+    verified_candidates = load_verified_candidate_snapshot(
+        candidates.manifest_path,
+        workspace=workspace,
+    )
+    if (
+        queue.manifest_sha256 != verified_queue.manifest_sha256
+        or not queue.frame.equals(verified_queue.frame)
+        or candidates.manifest_sha256 != verified_candidates.manifest_sha256
+        or not candidates.candidates.equals(verified_candidates.candidates)
+        or not candidate_ids
+        or candidate_ids != tuple(sorted(set(candidate_ids)))
+    ):
+        raise ValueError("candidate review topology inputs are not verified")
+    subset = verified_candidates.candidates.filter(
+        pl.col("candidate_id").is_in(candidate_ids)
+    )
+    if (
+        subset.height != len(candidate_ids)
+        or tuple(subset.sort("candidate_id").get_column("candidate_id"))
+        != candidate_ids
+    ):
+        raise ValueError("candidate review topology candidate set differs")
+    date_rule, _ = _load_date_rule(date_rule_path)
+    _load_routing(workspace)
+    symbols = frozenset(subset.get_column("symbol").to_list())
+    evaluated = _evaluate_announcements(
+        workspace,
+        verified_queue,
+        symbols=symbols,
+    )
+    _extend_with_verified_renditions(
+        workspace,
+        verified_queue,
+        evaluated=evaluated,
+    )
+    minimum_lag, maximum_lag = _lag_interval(date_rule)
+    unresolved, decisions = _candidate_results(
+        subset,
+        evaluated=evaluated,
+        minimum_lag=minimum_lag,
+        maximum_lag=maximum_lag,
+    )
+    query_ids = _failure_candidate_ids(
+        unresolved,
+        primary="no_same_symbol_announcement",
+    )
+    rendition_ids = tuple(
+        sorted(
+            str(row["candidate_id"])
+            for row in unresolved.iter_rows(named=True)
+            if (
+                list(row["failure_codes"])[0]
+                == "candidate_date_not_found_in_pdf"
+                and int(row["strong_implementation_announcement_count"]) > 0
+                and int(row["valid_cached_official_pdf_count"]) > 0
+            )
+        )
+    )
+    unresolved_ids = set(
+        unresolved.get_column("candidate_id").to_list()
+    )
+    classified_ids = set(query_ids) | set(rendition_ids)
+    unclassified_ids = tuple(sorted(unresolved_ids - classified_ids))
+    if (
+        set(query_ids).intersection(rendition_ids)
+        or classified_ids.intersection(unclassified_ids)
+        or unresolved_ids
+        != classified_ids | set(unclassified_ids)
+    ):
+        raise ValueError("candidate review topology partition differs")
+    unresolved_bytes = _parquet_bytes(unresolved)
+    decisions_bytes = _parquet_bytes(decisions)
+    core: dict[str, object] = {
+        "schema": "stage9_candidate_review_causal_topology/v1",
+        "role": "candidate_review_causal_topology",
+        "rule_version": _RULE_VERSION,
+        "candidate_ids": list(candidate_ids),
+        "candidate_count": len(candidate_ids),
+        "admitted_count": decisions.height,
+        "unresolved_count": unresolved.height,
+        "decisions_sha256": hashlib.sha256(decisions_bytes).hexdigest(),
+        "unresolved_sha256": hashlib.sha256(unresolved_bytes).hexdigest(),
+        "query_required_candidate_ids": list(query_ids),
+        "rendition_required_candidate_ids": list(rendition_ids),
+        "unclassified_candidate_ids": list(unclassified_ids),
+        "final_test_strategy_outputs_read": False,
+    }
+    binding = {
+        **core,
+        "identity_sha256": hashlib.sha256(
+            canonical_json_bytes(core)
+        ).hexdigest(),
+    }
+    return CandidateReviewTopology(
+        unresolved=unresolved,
+        decisions=decisions,
+        query_required_candidate_ids=query_ids,
+        rendition_required_candidate_ids=rendition_ids,
+        unclassified_candidate_ids=unclassified_ids,
+        binding=binding,
+    )
+
+
+def _failure_candidate_ids(
+    unresolved: pl.DataFrame,
+    *,
+    primary: str,
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            str(row["candidate_id"])
+            for row in unresolved.iter_rows(named=True)
+            if list(row["failure_codes"])[0] == primary
+        )
+    )
 
 
 def require_candidate_review_admission(
@@ -110,14 +271,20 @@ def require_candidate_review_admission(
     date_rule, date_rule_bytes = _load_date_rule(date_rule_path)
     routing = _load_routing(workspace)
     evaluated = _evaluate_announcements(workspace, verified_queue)
+    rendition_identity = _extend_with_verified_renditions(
+        workspace,
+        verified_queue,
+        evaluated=evaluated,
+    )
     minimum_lag, maximum_lag = _lag_interval(date_rule)
-    unresolved = _unresolved_candidates(
+    unresolved, decisions = _candidate_results(
         verified_candidates.candidates,
         evaluated=evaluated,
         minimum_lag=minimum_lag,
         maximum_lag=maximum_lag,
     )
     unresolved_bytes = _parquet_bytes(unresolved)
+    decisions_bytes = _parquet_bytes(decisions)
     routing_identity = {
         "routing_sha256": routing.routing_sha256,
         "rule_version": routing.manifest["rule_version"],
@@ -163,6 +330,12 @@ def require_candidate_review_admission(
         "candidate_count": verified_candidates.candidates.height,
         "admitted_count": verified_candidates.candidates.height - unresolved.height,
         "unresolved_count": unresolved.height,
+        "candidate_decisions": {
+            "path": DECISIONS_NAME,
+            "sha256": hashlib.sha256(decisions_bytes).hexdigest(),
+            "size_bytes": len(decisions_bytes),
+            "row_count": decisions.height,
+        },
         "unresolved_candidates": {
             "path": UNRESOLVED_NAME,
             "sha256": hashlib.sha256(unresolved_bytes).hexdigest(),
@@ -175,10 +348,13 @@ def require_candidate_review_admission(
         },
         "final_test_strategy_outputs_read": False,
     }
+    if rendition_identity is not None:
+        manifest["evidence_renditions"] = rendition_identity
     admission = _publish_admission(
         workspace.root.parent,
         manifest=manifest,
         unresolved_bytes=unresolved_bytes,
+        decisions_bytes=decisions_bytes,
     )
     if not admission.ready:
         raise CandidateReviewAdmissionError(admission)
@@ -302,6 +478,8 @@ def _temporal_admission_decision(
 def _evaluate_announcements(
     workspace: EvidenceWorkspace,
     queue: VerifiedReviewQueue,
+    *,
+    symbols: frozenset[str] | None = None,
 ) -> dict[str, list[dict[str, object]]]:
     by_symbol: dict[str, list[dict[str, object]]] = {}
     documents_root = workspace.root / DOCUMENTS_DIRECTORY
@@ -311,14 +489,23 @@ def _evaluate_announcements(
     )
     try:
         for row in queue.frame.sort("catalog_id").iter_rows(named=True):
-            strong = (
+            if symbols is not None and str(row["symbol"]) not in symbols:
+                continue
+            corporate_action_candidate = (
                 row["route"] == "candidate"
                 and row["candidate_type"] == "corporate_action"
+            )
+            strong = (
+                corporate_action_candidate
                 and str(row["routing_reason"]).startswith(_STRONG_REASON_PREFIX)
             )
             valid_pdf = False
             normalized_text = ""
-            if strong and row["document_status"] == "cached":
+            document_sha256 = ""
+            strong_reason = (
+                str(row["routing_reason"]) if strong else ""
+            )
+            if corporate_action_candidate and row["document_status"] == "cached":
                 try:
                     cached = load_cached_document(
                         descriptor,
@@ -337,7 +524,16 @@ def _evaluate_announcements(
                             and validated.media_type == cached.media_type
                         ):
                             valid_pdf = True
-                            normalized_text = _normalized_pdf_text(payload)
+                            document_sha256 = validated.sha256
+                            evidence = inspect_candidate_pdf(payload)
+                            normalized_text = evidence.text
+                            if not strong:
+                                strong = (
+                                    evidence.strong_reason is not None
+                                    and evidence.contains_symbol(str(row["symbol"]))
+                                )
+                                if strong:
+                                    strong_reason = str(evidence.strong_reason)
                 except (FileNotFoundError, OSError, ValueError):
                     valid_pdf = False
             by_symbol.setdefault(str(row["symbol"]), []).append(
@@ -349,11 +545,122 @@ def _evaluate_announcements(
                     "announcement_date": _announcement_date(
                         str(row["source_url"])
                     ),
+                    "source_url": str(row["source_url"]),
+                    "document_sha256": document_sha256,
+                    "evidence_kind": "canonical_cninfo",
+                    "evidence_manifest_sha256": "",
+                    "strong_reason": strong_reason,
+                    "labelled_dates": (),
                 }
             )
     finally:
         os.close(descriptor)
     return by_symbol
+
+
+def derive_unique_candidate_rendition_anchor(
+    workspace: EvidenceWorkspace,
+    queue: VerifiedReviewQueue,
+    *,
+    symbol: str,
+    related_catalog_ids: tuple[str, ...],
+) -> dict[str, object]:
+    """Return the sole related canonical PDF that passes admission semantics."""
+    if (
+        not related_catalog_ids
+        or len(set(related_catalog_ids)) != len(related_catalog_ids)
+    ):
+        raise ValueError("candidate rendition related catalog IDs differ")
+    related = queue.frame.filter(
+        pl.col("catalog_id").is_in(related_catalog_ids)
+    )
+    if (
+        related.height != len(related_catalog_ids)
+        or set(related.get_column("catalog_id")) != set(related_catalog_ids)
+        or set(related.get_column("symbol")) != {symbol}
+    ):
+        raise ValueError("candidate rendition related catalog IDs differ")
+    evaluated = _evaluate_announcements(
+        workspace,
+        queue,
+        symbols=frozenset({symbol}),
+    ).get(symbol, [])
+    eligible_ids = {
+        str(row["catalog_id"])
+        for row in evaluated
+        if row["catalog_id"] in related_catalog_ids
+        and row["evidence_kind"] == "canonical_cninfo"
+        and row["strong"]
+        and row["valid_pdf"]
+    }
+    anchors = related.filter(pl.col("catalog_id").is_in(eligible_ids)).to_dicts()
+    if len(anchors) != 1:
+        raise ValueError("candidate rendition authorization anchor differs")
+    return anchors[0]
+
+
+def _extend_with_verified_renditions(
+    workspace: EvidenceWorkspace,
+    queue: VerifiedReviewQueue,
+    *,
+    evaluated: dict[str, list[dict[str, object]]],
+) -> dict[str, object] | None:
+    binding = queue.manifest.get("candidate_review_renditions")
+    if binding is None:
+        return None
+    if not isinstance(binding, dict):
+        raise ValueError("candidate review rendition binding is invalid")
+    from ashare_multifactor.final_test.official_candidate_review_renditions import (
+        load_verified_candidate_review_renditions,
+    )
+
+    relative = str(binding.get("relative_path", ""))
+    manifest_path = workspace.root.parent / relative
+    renditions = load_verified_candidate_review_renditions(
+        manifest_path,
+        workspace=workspace,
+        queue=queue,
+    )
+    if (
+        binding.get("manifest_sha256") != renditions.manifest_sha256
+        or binding.get("record_count") != len(renditions.records)
+    ):
+        raise ValueError("candidate review rendition binding differs")
+    for record in renditions.records:
+        canonical = record["canonical_announcement"]
+        document = record["document"]
+        symbol = str(canonical["symbol"])
+        strong_reason = record.get("strong_reason")
+        evaluated.setdefault(symbol, []).append(
+            {
+                "catalog_id": str(canonical["catalog_id"]),
+                "strong": (
+                    isinstance(strong_reason, str)
+                    and bool(strong_reason)
+                ),
+                "valid_pdf": True,
+                "normalized_text": "",
+                "announcement_date": date.fromisoformat(
+                    str(record["publication_date"])
+                ),
+                "source_url": str(record["source_url"]),
+                "document_sha256": str(document["sha256"]),
+                "evidence_kind": "publisher_rendition",
+                "evidence_manifest_sha256": renditions.manifest_sha256,
+                "strong_reason": (
+                    strong_reason if isinstance(strong_reason, str) else ""
+                ),
+                "labelled_dates": tuple(
+                    date.fromisoformat(str(value))
+                    for value in record["labelled_dates"]
+                ),
+            }
+        )
+    return {
+        "relative_path": relative,
+        "manifest_sha256": renditions.manifest_sha256,
+        "record_count": len(renditions.records),
+    }
 
 
 def _cache_metadata_matches(row: dict[str, object], cached: object) -> bool:
@@ -402,27 +709,18 @@ def _normalized_pdf_text(payload: bytes) -> str:
 
 
 def _date_in_text(value: date, text: str) -> bool:
-    year, month, day = value.year, value.month, value.day
-    variants = {
-        value.isoformat(),
-        f"{year}/{month}/{day}",
-        f"{year}/{month:02d}/{day:02d}",
-        f"{year}.{month}.{day}",
-        f"{year}.{month:02d}.{day:02d}",
-        f"{year}年{month}月{day}日",
-        f"{year}年{month:02d}月{day:02d}日",
-    }
-    return any(variant in text for variant in variants)
+    return date_in_text(value, text)
 
 
-def _unresolved_candidates(
+def _candidate_results(
     candidates: pl.DataFrame,
     *,
     evaluated: dict[str, list[dict[str, object]]],
     minimum_lag: int,
     maximum_lag: int,
-) -> pl.DataFrame:
-    rows: list[dict[str, object]] = []
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    unresolved_rows: list[dict[str, object]] = []
+    decision_rows: list[dict[str, object]] = []
     for candidate in candidates.sort("candidate_id").iter_rows(named=True):
         ex_date = candidate["ex_date"]
         if not isinstance(ex_date, date):
@@ -433,7 +731,11 @@ def _unresolved_candidates(
         date_matches = [
             row
             for row in valid
-            if _date_in_text(ex_date, str(row["normalized_text"]))
+            if (
+                ex_date in row["labelled_dates"]
+                if row["evidence_kind"] == "publisher_rendition"
+                else _date_in_text(ex_date, str(row["normalized_text"]))
+            )
         ]
         window_hits = [
             row
@@ -456,6 +758,48 @@ def _unresolved_candidates(
             ).eligible
         ]
         if causal_matches:
+            selected = sorted(
+                causal_matches,
+                key=lambda row: (
+                    str(row["evidence_kind"]),
+                    str(row["catalog_id"]),
+                    str(row["source_url"]),
+                ),
+            )[0]
+            temporal = _temporal_admission_decision(
+                candidate_ex_date=ex_date,
+                announcement_publication_date=selected["announcement_date"],
+                minimum_lag=minimum_lag,
+                maximum_lag=maximum_lag,
+            )
+            decision_rows.append(
+                {
+                    "candidate_id": str(candidate["candidate_id"]),
+                    "symbol": str(candidate["symbol"]),
+                    "ex_date": ex_date,
+                    "effective_date": candidate["effective_date"],
+                    "status": "admitted",
+                    "evidence_kind": str(selected["evidence_kind"]),
+                    "catalog_id": str(selected["catalog_id"]),
+                    "source_url": str(selected["source_url"]),
+                    "document_sha256": str(selected["document_sha256"]),
+                    "evidence_manifest_sha256": str(
+                        selected["evidence_manifest_sha256"]
+                    ),
+                    "announcement_publication_date": selected[
+                        "announcement_date"
+                    ],
+                    "strong_reason": str(selected["strong_reason"]),
+                    "date_match": (
+                        "labelled_exact_date_in_bounded_block"
+                        if selected["evidence_kind"] == "publisher_rendition"
+                        else "exact_date_in_pdf"
+                    ),
+                    "historical_lag_interval_hit": (
+                        temporal.historical_lag_interval_hit
+                    ),
+                }
+            )
             continue
         if not same_symbol:
             primary = "no_same_symbol_announcement"
@@ -471,7 +815,7 @@ def _unresolved_candidates(
             primary,
             "no_single_announcement_satisfies_all_requirements",
         ]
-        rows.append(
+        unresolved_rows.append(
             {
                 "candidate_id": str(candidate["candidate_id"]),
                 "symbol": str(candidate["symbol"]),
@@ -483,10 +827,37 @@ def _unresolved_candidates(
                 "valid_cached_official_pdf_count": len(valid),
                 "frozen_date_window_hit_count": len(window_hits),
                 "related_catalog_ids": sorted(
-                    str(row["catalog_id"]) for row in same_symbol
+                    {
+                        str(row["catalog_id"])
+                        for row in same_symbol
+                    }
                 ),
             }
         )
-    return pl.DataFrame(rows, schema=_UNRESOLVED_SCHEMA, strict=True).sort(
-        "candidate_id"
-    )
+    unresolved = pl.DataFrame(
+        unresolved_rows,
+        schema=_UNRESOLVED_SCHEMA,
+        strict=True,
+    ).sort("candidate_id")
+    decisions = pl.DataFrame(
+        decision_rows,
+        schema=_DECISION_SCHEMA,
+        strict=True,
+    ).sort("candidate_id")
+    return unresolved, decisions
+
+
+def _unresolved_candidates(
+    candidates: pl.DataFrame,
+    *,
+    evaluated: dict[str, list[dict[str, object]]],
+    minimum_lag: int,
+    maximum_lag: int,
+) -> pl.DataFrame:
+    """Compatibility seam retained for focused admission tests."""
+    return _candidate_results(
+        candidates,
+        evaluated=evaluated,
+        minimum_lag=minimum_lag,
+        maximum_lag=maximum_lag,
+    )[0]

@@ -10,6 +10,7 @@ import pytest
 
 from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.final_test import preparation as preparation_module
+from ashare_multifactor.final_test import official_evidence_import as import_module
 from ashare_multifactor.final_test.final_root_binding import FinalRootBinding
 from ashare_multifactor.final_test.official_announcement_catalog import (
     build_announcement_catalog,
@@ -19,7 +20,10 @@ from ashare_multifactor.final_test.official_document_fetcher import (
     fetch_official_documents,
 )
 from ashare_multifactor.final_test.official_evidence_import import (
+    OfficialEvidenceImportInputs,
+    complete_compatible_official_evidence_import,
     import_compatible_official_evidence,
+    import_compatible_official_evidence_inputs,
     load_evidence_import_source_authorization,
 )
 from ashare_multifactor.final_test.official_query_coverage import canonical_json_bytes
@@ -131,7 +135,7 @@ def test_evidence_import_reuses_complete_queries_and_only_valid_legacy_documents
         / destination_authorization.attempt_id
     )
 
-    imported = import_compatible_official_evidence(
+    imported_inputs = import_compatible_official_evidence_inputs(
         source_preparation=source.preparation,
         source_authorization=source.authorization,
         destination_preparation=destination_preparation,
@@ -140,6 +144,13 @@ def test_evidence_import_reuses_complete_queries_and_only_valid_legacy_documents
         source_root=source.output_root,
         destination_root=destination_root,
     )
+    assert imported_inputs.query_index_path.is_file()
+    assert imported_inputs.identity_index_path.is_file()
+    assert not (destination_root / "official_announcement_catalog").exists()
+    assert not (destination_root / "official_announcement_routing").exists()
+    assert not (destination_root / "official_document_workspace").exists()
+
+    imported = complete_compatible_official_evidence_import(imported_inputs)
 
     assert imported.query_index_path.is_file()
     assert imported.identity_index_path.is_file()
@@ -184,6 +195,166 @@ def test_evidence_import_reuses_complete_queries_and_only_valid_legacy_documents
     )
     assert recovered.query_index_path == imported.query_index_path
     assert recovered.missing_urls == imported.missing_urls
+
+
+def test_phase_two_rejects_replaced_source_root_before_pdf_access(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    source = _complete_query_coverage(prepared_attempt)
+    destination_authorization, destination_preparation = _destination_attempt(
+        prepared_attempt,
+        source.authorization,
+    )
+    _allow_fixture_destination_preparation(
+        monkeypatch,
+        destination_attempt_id=destination_authorization.attempt_id,
+    )
+    destination_root = (
+        prepared_attempt.data_root
+        / "processed/final_test_evidence"
+        / destination_authorization.attempt_id
+    )
+    inputs = import_compatible_official_evidence_inputs(
+        source_preparation=source.preparation,
+        source_authorization=source.authorization,
+        destination_preparation=destination_preparation,
+        destination_authorization=destination_authorization,
+        contract=source.contract,
+        source_root=source.output_root,
+        destination_root=destination_root,
+    )
+
+    def forbidden_pdf_access(*args: object, **kwargs: object) -> None:
+        raise AssertionError("phase-two validation must precede PDF access")
+
+    monkeypatch.setattr(import_module, "_load_reusable_document", forbidden_pdf_access)
+    with pytest.raises(ValueError, match="source root differs"):
+        complete_compatible_official_evidence_import(
+            replace(inputs, source_root=tmp_path / "foreign-source")
+        )
+
+    assert not (destination_root / "official_announcement_catalog").exists()
+    assert not (destination_root / "official_announcement_routing").exists()
+    assert not (destination_root / "official_document_workspace").exists()
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "destination_root",
+        "same_attempt_manual_inputs",
+        "source_preparation_attempt_and_root",
+        "source_authorization",
+        "query_index",
+        "identity_index",
+        "symbol_scope",
+        "contract",
+    ),
+)
+def test_phase_two_revalidates_complete_phase_one_provenance_before_publication(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    drift: str,
+) -> None:
+    source, destination_root, inputs = _phase_one_inputs(
+        prepared_attempt,
+        monkeypatch,
+    )
+    if drift == "destination_root":
+        candidate = replace(inputs, destination_root=tmp_path / "foreign-destination")
+    elif drift == "same_attempt_manual_inputs":
+        candidate = OfficialEvidenceImportInputs(
+            source_preparation=source.preparation,
+            source_authorization=source.authorization,
+            destination_preparation=source.preparation,
+            destination_authorization=source.authorization,
+            contract=source.contract,
+            source_root=source.output_root,
+            destination_root=source.output_root,
+            query_index_path=(
+                source.output_root
+                / "official_query_coverage/official_query_coverage.json"
+            ),
+            identity_index_path=(
+                source.output_root
+                / "official_security_identities/official_security_identities.json"
+            ),
+        )
+    elif drift == "source_preparation_attempt_and_root":
+        candidate = replace(
+            inputs,
+            source_preparation=replace(
+                inputs.source_preparation,
+                attempt_id=inputs.destination_preparation.attempt_id,
+                root=inputs.destination_preparation.root,
+                manifest_path=inputs.destination_preparation.manifest_path,
+                symbol_scope_path=inputs.destination_preparation.symbol_scope_path,
+            ),
+        )
+    elif drift == "source_authorization":
+        candidate = replace(
+            inputs,
+            source_authorization=replace(
+                inputs.source_authorization,
+                approval_id="drifted-approval",
+            ),
+        )
+    elif drift == "query_index":
+        candidate = OfficialEvidenceImportInputs(
+            **{
+                **inputs.__dict__,
+                "query_index_path": (
+                    source.output_root
+                    / "official_query_coverage/official_query_coverage.json"
+                ),
+            }
+        )
+    elif drift == "identity_index":
+        candidate = replace(
+            inputs,
+            identity_index_path=(
+                source.output_root
+                / "official_security_identities/official_security_identities.json"
+            ),
+        )
+    elif drift == "symbol_scope":
+        candidate = replace(
+            inputs,
+            source_preparation=replace(
+                inputs.source_preparation,
+                symbol_scope_path=inputs.destination_preparation.symbol_scope_path,
+            ),
+        )
+    elif drift == "contract":
+        candidate = replace(
+            inputs,
+            contract=replace(inputs.contract, supported_markets=("sh",)),
+        )
+    else:  # pragma: no cover - parametrization is closed above
+        raise AssertionError(drift)
+
+    def forbidden_publication(*args: object, **kwargs: object) -> None:
+        raise AssertionError("phase-two validation must precede publication")
+
+    monkeypatch.setattr(
+        import_module,
+        "build_announcement_catalog",
+        forbidden_publication,
+    )
+    monkeypatch.setattr(
+        import_module,
+        "_load_reusable_document",
+        forbidden_publication,
+    )
+    with pytest.raises(ValueError):
+        complete_compatible_official_evidence_import(candidate)
+
+    assert not (destination_root / "official_announcement_catalog").exists()
+    assert not (destination_root / "official_announcement_routing").exists()
+    assert not (destination_root / "official_document_workspace").exists()
 
 
 def _destination_attempt(
@@ -256,3 +427,53 @@ def _destination_attempt(
         identities={"prepare_manifest_sha256": preparation.manifest_sha256},
     )
     return destination_authorization, preparation
+
+
+def _allow_fixture_destination_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    destination_attempt_id: str,
+) -> None:
+    original_verify_binding = preparation_module.verify_preparation_data_binding
+
+    def verify_fixture_binding(*args: object, **kwargs: object) -> None:
+        authorization = args[1]
+        if authorization.attempt_id == destination_attempt_id:
+            return
+        original_verify_binding(*args, **kwargs)
+
+    monkeypatch.setattr(
+        preparation_module,
+        "verify_preparation_data_binding",
+        verify_fixture_binding,
+    )
+
+
+def _phase_one_inputs(
+    prepared_attempt: PreparedAttempt,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = _complete_query_coverage(prepared_attempt)
+    destination_authorization, destination_preparation = _destination_attempt(
+        prepared_attempt,
+        source.authorization,
+    )
+    _allow_fixture_destination_preparation(
+        monkeypatch,
+        destination_attempt_id=destination_authorization.attempt_id,
+    )
+    destination_root = (
+        prepared_attempt.data_root
+        / "processed/final_test_evidence"
+        / destination_authorization.attempt_id
+    )
+    inputs = import_compatible_official_evidence_inputs(
+        source_preparation=source.preparation,
+        source_authorization=source.authorization,
+        destination_preparation=destination_preparation,
+        destination_authorization=destination_authorization,
+        contract=source.contract,
+        source_root=source.output_root,
+        destination_root=destination_root,
+    )
+    return source, destination_root, inputs

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -35,6 +34,20 @@ from ashare_multifactor.final_test.official_query_collector import (
 from ashare_multifactor.final_test.official_announcement_pages import (
     catalog_rows_from_packages,
 )
+from ashare_multifactor.final_test.official_announcement_catalog_schema import (
+    CATALOG_COLUMNS as _CATALOG_COLUMNS,
+    SUPPLEMENT_CATALOG_NAME,
+    SUPPLEMENT_MANIFEST_NAME,
+    SUPPLEMENTS_DIRECTORY,
+    VerifiedCandidateQueryCatalogSupplement,
+    announcement_catalog_frame,
+    catalog_parquet_bytes,
+    merge_candidate_query_supplement_rows,
+    read_catalog_frame,
+)
+from ashare_multifactor.final_test.official_candidate_query_supplement_snapshot import (
+    load_verified_candidate_query_supplement_snapshot,
+)
 from ashare_multifactor.final_test.official_query_coverage import canonical_json_bytes
 from ashare_multifactor.final_test.official_query_index import (
     validate_official_query_coverage_index,
@@ -53,42 +66,7 @@ CATALOG_NAME = "catalog.parquet"
 CATALOG_MANIFEST_NAME = "catalog_manifest.json"
 
 _SCHEMA_VERSION = "1"
-_CATALOG_COLUMNS = (
-    "catalog_id",
-    "announcement_id",
-    "announcement_title",
-    "announcement_time_raw",
-    "source_url",
-    "source",
-    "symbol",
-    "market",
-    "category",
-    "query_category",
-    "source_response",
-    "source_response_sha256",
-    "source_response_size_bytes",
-    "package_request_sha256",
-    "package_pages_sha256",
-    "package_manifest_sha256",
-)
-_CATALOG_SCHEMA = {
-    "catalog_id": pl.String,
-    "announcement_id": pl.String,
-    "announcement_title": pl.String,
-    "announcement_time_raw": pl.String,
-    "source_url": pl.String,
-    "source": pl.String,
-    "symbol": pl.String,
-    "market": pl.String,
-    "category": pl.String,
-    "query_category": pl.String,
-    "source_response": pl.String,
-    "source_response_sha256": pl.String,
-    "source_response_size_bytes": pl.Int64,
-    "package_request_sha256": pl.String,
-    "package_pages_sha256": pl.String,
-    "package_manifest_sha256": pl.String,
-}
+_SUPPLEMENTED_SCHEMA_VERSION = "2"
 
 
 @dataclass(frozen=True)
@@ -109,6 +87,7 @@ def build_announcement_catalog(
     authorization: FinalTestAuthorization,
     contract: FinalActionSourceContract,
     destination: Path,
+    supplement: VerifiedCandidateQueryCatalogSupplement | None = None,
 ) -> Path:
     """Publish a deterministic, fact-free catalog from complete query packages."""
     coverage_root = verify_official_query_collection_binding(
@@ -147,7 +126,62 @@ def build_announcement_catalog(
         contract=contract,
     )
     frame = announcement_catalog_frame(rows)
-    catalog_bytes = _parquet_bytes(frame)
+    supplement_record = None
+    supplement_root = destination / SUPPLEMENTS_DIRECTORY
+    if supplement is None:
+        if supplement_root.exists():
+            raise ValueError(
+                "official announcement catalog requires an explicit supplement"
+            )
+    else:
+        supplement_manifest, supplement_catalog, inventory_identity = (
+            _load_candidate_query_supplement_catalog_binding(
+                destination,
+                relative_path=(
+                    Path(SUPPLEMENTS_DIRECTORY)
+                    / supplement.manifest_sha256
+                    / SUPPLEMENT_MANIFEST_NAME
+                ),
+                expected_sha256=supplement.manifest_sha256,
+            )
+        )
+        if (
+            supplement.manifest_path.absolute()
+            != (
+                destination
+                / SUPPLEMENTS_DIRECTORY
+                / supplement.manifest_sha256
+                / SUPPLEMENT_MANIFEST_NAME
+            ).absolute()
+            or supplement.manifest != supplement_manifest
+            or not supplement.catalog.equals(supplement_catalog)
+            or len(supplement.packages)
+            != supplement_manifest.get("package_count")
+            or inventory_identity
+            != {
+                "inventory_sha256": supplement.inventory_sha256,
+                "inventory_file_count": supplement.inventory_file_count,
+                "inventory_size_bytes": supplement.inventory_size_bytes,
+            }
+        ):
+            raise ValueError(
+                "official announcement catalog supplement value differs"
+            )
+        frame, added_count = merge_candidate_query_supplement_rows(
+            frame,
+            supplement,
+        )
+        supplement_record = {
+            "relative_path": supplement.manifest_path.relative_to(
+                destination
+            ).as_posix(),
+            "manifest_sha256": supplement.manifest_sha256,
+            "package_count": len(supplement.packages),
+            "derived_row_count": supplement.catalog.height,
+            "added_row_count": added_count,
+            **inventory_identity,
+        }
+    catalog_bytes = catalog_parquet_bytes(frame)
     collection_path = destination / "official_query_collection.json"
     collection_sha256 = sha256_file(collection_path)
     manifest = _catalog_manifest(
@@ -157,6 +191,7 @@ def build_announcement_catalog(
         collection_sha256=collection_sha256,
         identity_index_sha256=identities.index_sha256,
         contract=contract,
+        supplement_record=supplement_record,
     )
     with opened_safe_directory(destination, label="official evidence destination") as root_fd:
         write_frozen_tree_at(
@@ -174,16 +209,6 @@ def build_announcement_catalog(
     if loaded.catalog_sha256 != hashlib.sha256(catalog_bytes).hexdigest():
         raise ValueError("official announcement catalog changed during publication")
     return catalog_path
-
-
-def announcement_catalog_frame(
-    rows: list[dict[str, object]],
-) -> pl.DataFrame:
-    """Normalize provenance rows through the single catalog schema."""
-    frame = pl.DataFrame(rows, schema=_CATALOG_SCHEMA).sort("catalog_id")
-    if frame.select(pl.col("catalog_id").is_duplicated().any()).item():
-        raise ValueError("official announcement catalog contains duplicate provenance")
-    return frame
 
 
 def load_verified_announcement_catalog(path: Path) -> VerifiedAnnouncementCatalog:
@@ -218,9 +243,14 @@ def _catalog_manifest(
     collection_sha256: str,
     identity_index_sha256: str,
     contract: FinalActionSourceContract,
+    supplement_record: dict[str, object] | None,
 ) -> dict[str, object]:
-    return {
-        "schema_version": _SCHEMA_VERSION,
+    manifest = {
+        "schema_version": (
+            _SUPPLEMENTED_SCHEMA_VERSION
+            if supplement_record is not None
+            else _SCHEMA_VERSION
+        ),
         "role": "official_announcement_catalog",
         "catalog": {
             "path": CATALOG_NAME,
@@ -238,6 +268,9 @@ def _catalog_manifest(
         ],
         "contains_execution_event_facts": False,
     }
+    if supplement_record is not None:
+        manifest["candidate_query_supplement"] = supplement_record
+    return manifest
 
 
 def _catalog_root(path: Path) -> Path:
@@ -278,12 +311,6 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return payload
 
 
-def _parquet_bytes(frame: pl.DataFrame) -> bytes:
-    stream = BytesIO()
-    frame.write_parquet(stream, compression="zstd")
-    return stream.getvalue()
-
-
 def _validate_manifest(manifest: dict[str, object], *, catalog_bytes: bytes) -> None:
     required = {
         "schema_version",
@@ -298,9 +325,16 @@ def _validate_manifest(manifest: dict[str, object], *, catalog_bytes: bytes) -> 
         "contains_execution_event_facts",
     }
     catalog = manifest.get("catalog")
+    schema_version = manifest.get("schema_version")
+    expected = (
+        required | {"candidate_query_supplement"}
+        if schema_version == _SUPPLEMENTED_SCHEMA_VERSION
+        else required
+    )
+    supplement = manifest.get("candidate_query_supplement")
     if (
-        set(manifest) != required
-        or manifest.get("schema_version") != _SCHEMA_VERSION
+        set(manifest) != expected
+        or schema_version not in {_SCHEMA_VERSION, _SUPPLEMENTED_SCHEMA_VERSION}
         or manifest.get("role") != "official_announcement_catalog"
         or not isinstance(catalog, dict)
         or catalog.get("path") != CATALOG_NAME
@@ -314,6 +348,27 @@ def _validate_manifest(manifest: dict[str, object], *, catalog_bytes: bytes) -> 
         or not isinstance(manifest.get("allowed_url_prefixes"), list)
         or not isinstance(manifest.get("market_sources"), list)
         or manifest.get("contains_execution_event_facts") is not False
+        or (
+            schema_version == _SUPPLEMENTED_SCHEMA_VERSION
+            and (
+                not isinstance(supplement, dict)
+                or not isinstance(supplement.get("relative_path"), str)
+                or not _sha256(supplement.get("manifest_sha256"))
+                or not isinstance(supplement.get("package_count"), int)
+                or supplement["package_count"] <= 0
+                or not isinstance(supplement.get("derived_row_count"), int)
+                or supplement["derived_row_count"] < 0
+                or not isinstance(supplement.get("added_row_count"), int)
+                or not 0
+                <= supplement["added_row_count"]
+                <= supplement["derived_row_count"]
+                or not _sha256(supplement.get("inventory_sha256"))
+                or not isinstance(supplement.get("inventory_file_count"), int)
+                or supplement["inventory_file_count"] <= 1
+                or not isinstance(supplement.get("inventory_size_bytes"), int)
+                or supplement["inventory_size_bytes"] <= 0
+            )
+        )
     ):
         raise ValueError("official announcement catalog manifest is invalid")
 
@@ -342,19 +397,115 @@ def _validate_source_bindings(destination: Path, manifest: dict[str, object]) ->
         _assert_safe_regular_file(path, label=label)
         if sha256_file(path) != expected:
             raise ValueError(f"{label} identity differs from announcement catalog")
+    supplement_record = manifest.get("candidate_query_supplement")
+    if isinstance(supplement_record, dict):
+        relative = Path(str(supplement_record["relative_path"]))
+        supplement_manifest, supplement_catalog, inventory_identity = (
+            _load_candidate_query_supplement_catalog_binding(
+                destination,
+                relative_path=relative,
+                expected_sha256=str(
+                    supplement_record["manifest_sha256"]
+                ),
+            )
+        )
+        if (
+            supplement_manifest.get("package_count")
+            != supplement_record["package_count"]
+            or supplement_catalog.height
+            != supplement_record["derived_row_count"]
+            or inventory_identity
+            != {
+                "inventory_sha256": supplement_record["inventory_sha256"],
+                "inventory_file_count": supplement_record["inventory_file_count"],
+                "inventory_size_bytes": supplement_record["inventory_size_bytes"],
+            }
+        ):
+            raise ValueError(
+                "candidate query supplement tree identity differs from catalog"
+            )
+
+
+def _load_candidate_query_supplement_catalog_binding(
+    destination: Path,
+    *,
+    relative_path: Path,
+    expected_sha256: str,
+) -> tuple[dict[str, object], pl.DataFrame, dict[str, object]]:
+    expected_relative = (
+        Path(SUPPLEMENTS_DIRECTORY)
+        / expected_sha256
+        / SUPPLEMENT_MANIFEST_NAME
+    )
+    if (
+        relative_path.is_absolute()
+        or relative_path != expected_relative
+        or not _sha256(expected_sha256)
+    ):
+        raise ValueError(
+            "candidate query supplement path is not canonical"
+        )
+    manifest_path = destination / relative_path
+    root = manifest_path.parent
+    catalog_path = root / SUPPLEMENT_CATALOG_NAME
+    _assert_safe_regular_file(
+        manifest_path,
+        label="candidate query supplement manifest",
+    )
+    _assert_safe_regular_file(
+        catalog_path,
+        label="candidate query supplement catalog",
+    )
+    snapshot = load_verified_candidate_query_supplement_snapshot(
+        destination,
+        manifest_sha256=expected_sha256,
+    )
+    manifest_bytes = snapshot.manifest_path.read_bytes()
+    catalog_bytes = snapshot.files.get(SUPPLEMENT_CATALOG_NAME, b"")
+    manifest = _canonical_object(
+        manifest_bytes,
+        label="candidate query supplement manifest",
+    )
+    catalog_record = manifest.get("catalog")
+    if (
+        hashlib.sha256(manifest_bytes).hexdigest() != expected_sha256
+        or manifest.get("schema_version") != "1"
+        or manifest.get("role") != "official_candidate_query_supplement"
+        or manifest.get("attempt_id") != destination.name
+        or not isinstance(manifest.get("package_count"), int)
+        or manifest["package_count"] <= 0
+        or not isinstance(manifest.get("derived_row_count"), int)
+        or manifest["derived_row_count"] < 0
+        or not isinstance(catalog_record, dict)
+        or catalog_record.get("path") != SUPPLEMENT_CATALOG_NAME
+        or catalog_record.get("sha256")
+        != hashlib.sha256(catalog_bytes).hexdigest()
+        or catalog_record.get("size_bytes") != len(catalog_bytes)
+    ):
+        raise ValueError(
+            "candidate query supplement catalog binding is invalid"
+        )
+    frame = _read_catalog_frame(catalog_bytes)
+    if (
+        catalog_record.get("row_count") != frame.height
+        or manifest["derived_row_count"] != frame.height
+        or catalog_parquet_bytes(frame) != catalog_bytes
+    ):
+        raise ValueError(
+            "candidate query supplement catalog binding differs"
+        )
+    return manifest, frame, {
+        "inventory_sha256": snapshot.inventory_sha256,
+        "inventory_file_count": snapshot.inventory_file_count,
+        "inventory_size_bytes": snapshot.inventory_size_bytes,
+    }
 
 
 def _read_catalog_frame(catalog_bytes: bytes) -> pl.DataFrame:
-    try:
-        frame = pl.read_parquet(BytesIO(catalog_bytes))
-    except pl.exceptions.PolarsError as error:
-        raise ValueError("official announcement catalog data is invalid") from error
+    frame = read_catalog_frame(catalog_bytes)
     if tuple(frame.columns) != _CATALOG_COLUMNS:
         raise ValueError("official announcement catalog schema contains event facts")
-    try:
-        return frame.cast(_CATALOG_SCHEMA, strict=True)
-    except pl.exceptions.PolarsError as error:
-        raise ValueError("official announcement catalog schema is invalid") from error
+    return frame
 
 
 def _validate_catalog_rows(frame: pl.DataFrame, manifest: dict[str, object]) -> None:
@@ -399,6 +550,17 @@ def _validate_catalog_rows(frame: pl.DataFrame, manifest: dict[str, object]) -> 
             or row["source_response_size_bytes"] < 0
         ):
             raise ValueError("official announcement catalog provenance is invalid")
+    supplement = manifest.get("candidate_query_supplement")
+    if isinstance(supplement, dict):
+        added = frame.filter(
+            pl.col("source_response").str.starts_with(
+                "candidate_query_supplement/packages/"
+            )
+        ).height
+        if added != supplement["added_row_count"]:
+            raise ValueError(
+                "candidate query supplement added row count differs"
+            )
 
 
 def _safe_catalog_url(url: str) -> bool:

@@ -143,7 +143,7 @@ def publish_package(
                 parent_root / "query-package",
                 expected_scope=scope,
             )
-        request = _request_payload(scope)
+        request = official_query_request_payload(scope)
         staging_name = _staging_name(request)
         staging_root = parent_root / staging_name
         if entry_exists(parent_fd, staging_name):
@@ -612,7 +612,10 @@ def _stable_package_files(
     }
 
 
-def _request_payload(scope: OfficialQueryScope) -> dict[str, object]:
+def official_query_request_payload(
+    scope: OfficialQueryScope,
+) -> dict[str, object]:
+    """Build the canonical request before any transport is allowed to run."""
     return {
         "schema_version": _SCHEMA_VERSION,
         "endpoint": OFFICIAL_QUERY_ENDPOINT,
@@ -638,6 +641,13 @@ def _request_payload(scope: OfficialQueryScope) -> dict[str, object]:
             "trade": "",
         },
     }
+
+
+def official_query_request_sha256(scope: OfficialQueryScope) -> str:
+    """Return the immutable identity of one canonical base request."""
+    return hashlib.sha256(
+        canonical_json_bytes(official_query_request_payload(scope))
+    ).hexdigest()
 
 
 def _required_org_id(scope: OfficialQueryScope) -> str:

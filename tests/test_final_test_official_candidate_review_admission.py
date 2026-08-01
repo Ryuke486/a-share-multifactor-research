@@ -6,8 +6,11 @@ from io import BytesIO
 import json
 from pathlib import Path
 from urllib.parse import urlparse
+import warnings
 from zoneinfo import ZoneInfo
 
+from matplotlib.backends.backend_pdf import FigureCanvasPdf
+from matplotlib.figure import Figure
 import polars as pl
 import pytest
 from pypdf import PdfWriter
@@ -16,11 +19,23 @@ from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from ashare_multifactor.final_test.corporate_action_candidates import (
     collect_corporate_action_candidates,
 )
+from ashare_multifactor.final_test.action_source_contract import (
+    load_action_source_contract,
+)
 from ashare_multifactor.final_test.official_announcement_catalog import (
     build_announcement_catalog,
 )
 from ashare_multifactor.final_test.official_document_fetcher import (
     fetch_official_documents,
+)
+from ashare_multifactor.final_test.official_candidate_review_rendition_authorization import (
+    RENDITION_CACHE_DIRECTORY,
+    AuthorizedRenditionRequest,
+    build_candidate_review_rendition_authorization,
+    load_candidate_review_rendition_authorization,
+)
+from ashare_multifactor.final_test.official_candidate_query_topology import (
+    publish_candidate_query_topology,
 )
 from ashare_multifactor.final_test.official_evidence_workspace import (
     load_verified_review_queue,
@@ -38,6 +53,7 @@ _DATE_RULE_PATH = (
     Path(__file__).parents[1]
     / "configs/evidence/stage9_candidate_review_admission_date_rule.json"
 )
+_CONTRACT_PATH = Path(__file__).parents[1] / "configs/final_execution_sources.yaml"
 _FIELDS = [
     "code",
     "dividOperateDate",
@@ -75,6 +91,17 @@ def _pdf_bytes(text: str = "") -> bytes:
         )
         page[NameObject("/Contents")] = writer._add_object(contents)
     writer.write(stream)
+    return stream.getvalue()
+
+
+def _unicode_pdf_bytes(lines: list[str]) -> bytes:
+    stream = BytesIO()
+    figure = Figure(figsize=(8.5, 11))
+    FigureCanvasPdf(figure)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        figure.text(0.1, 0.9, "\n".join(lines))
+        figure.savefig(stream, format="pdf")
     return stream.getvalue()
 
 
@@ -304,6 +331,104 @@ def _write_canonical_json(path: Path, payload: dict[str, object]) -> None:
             + "\n"
         ).encode()
     )
+
+
+def _write_rendition_receipt(
+    path: Path,
+    *,
+    source_url: str,
+    payload: bytes,
+    authorization_sha256: str,
+    request: AuthorizedRenditionRequest,
+    attempt_count: int = 1,
+    final_url: str | None = None,
+) -> None:
+    from ashare_multifactor.final_test.official_document_validation import (
+        validate_official_document,
+    )
+
+    document = validate_official_document(payload, source_url=source_url)
+    _write_canonical_json(
+        path,
+        {
+            "schema": "stage9_candidate_evidence_get_receipt/v2",
+            "role": "candidate_evidence_http_get_receipt",
+            "network_authorization_sha256": authorization_sha256,
+            "request": {
+                "purpose": request.purpose,
+                "method": "GET",
+                "source_url": source_url,
+                "request_sha256": request.request_sha256,
+                "attempt_count": attempt_count,
+                "http_status": 200,
+                "final_url": source_url if final_url is None else final_url,
+                "redirect_followed_count": 0,
+            },
+            "document": {
+                "sha256": document.sha256,
+                "size_bytes": document.size_bytes,
+                "page_count": document.page_count,
+                "media_type": document.media_type,
+            },
+            "final_test_strategy_outputs_read": False,
+        },
+    )
+
+
+def _rendition_authorization(
+    prepared_attempt: PreparedAttempt,
+    *,
+    workspace,
+    queue,
+    candidates,
+    tmp_path: Path,
+    rendition_source_url: str,
+    authority_source_url: str,
+    candidate_id: str | None = None,
+):
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        CandidateReviewAdmissionError,
+        require_candidate_review_admission,
+    )
+
+    with pytest.raises(CandidateReviewAdmissionError) as blocked:
+        require_candidate_review_admission(
+            workspace=workspace,
+            queue=queue,
+            candidates=candidates,
+            date_rule_path=_DATE_RULE_PATH,
+        )
+    topology = publish_candidate_query_topology(
+        destination=workspace.root.parent,
+        candidate_manifest_path=candidates.manifest_path,
+        blocked_admission_path=blocked.value.manifest_path,
+        contract=load_action_source_contract(_CONTRACT_PATH),
+    )
+    cache_root = workspace.root.parent / RENDITION_CACHE_DIRECTORY
+    cache_root.mkdir()
+    payload = build_candidate_review_rendition_authorization(
+        code_root=prepared_attempt.code_root,
+        workspace=workspace,
+        queue=queue,
+        blocked_admission_path=blocked.value.manifest_path,
+        topology_manifest_path=topology.manifest_path,
+        candidate_id=(
+            candidate_id
+            if candidate_id is not None
+            else str(candidates.candidates.item(0, "candidate_id"))
+        ),
+        rendition_source_url=rendition_source_url,
+        authority_source_url=authority_source_url,
+        cache_root=cache_root,
+    )
+    path = tmp_path / "rendition_authorization.json"
+    _write_canonical_json(path, payload)
+    verified = load_candidate_review_rendition_authorization(
+        path,
+        workspace=workspace,
+        queue=queue,
+    )
+    return path, verified
 
 
 def _historical_admission_inputs(
@@ -804,6 +929,362 @@ def test_candidate_review_admission_accepts_causally_valid_exact_date(
     assert admission.ready is True
     assert admission.manifest["admitted_count"] == 1
     assert admission.manifest["unresolved_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "leading_lines",
+    [
+        pytest.param(
+            [
+                "董事会公告",
+                "1",
+                "证券代码：000001",
+                "证券简称：测试股份",
+                "公告编号：2024-001",
+                "测试股份有限公司2024年度权益分派",
+                "实施公告",
+                "除权除息日：2024-06-01",
+            ],
+            id="weak-generic-heading-before-strong-heading",
+        ),
+        pytest.param(
+            [
+                "证券代码：000001200001",
+                "证券简称：测试A 测试B",
+                "公告编号：2024-001",
+                "2024年度权益分派实施公告",
+                "除权除息日：2024-06-01",
+            ],
+            id="complete-six-digit-code-groups",
+        ),
+        pytest.param(
+            [
+                (
+                    "证券代码：000001证券简称：测试股份"
+                    "公告编号：2024-001测试股份有限公司"
+                    "2024年度权益分派实施公告"
+                ),
+                "除权除息日：2024-06-01",
+            ],
+            id="boilerplate-fields-with-trailing-strong-heading",
+        ),
+        pytest.param(
+            [
+                "证券代码：000001",
+                "本公司及董事会全体成员保证信息披露真实、准确、完整。",
+                "2024年度权益分派实施公告",
+                "除权除息日：2024-06-01",
+            ],
+            id="assurance-statement-before-strong-heading",
+        ),
+    ],
+)
+def test_candidate_review_admission_upgrades_a_strong_pdf_leading_heading(
+    prepared_attempt: PreparedAttempt,
+    leading_lines: list[str],
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "关于2024年度权益分派的公告",
+            "600000": "2024年第三季度报告",
+        },
+        announcement_dates={
+            "000001": date(2024, 5, 28),
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": _unicode_pdf_bytes(leading_lines),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+    )
+
+    admission = require_candidate_review_admission(
+        workspace=workspace,
+        queue=queue,
+        candidates=candidates,
+        date_rule_path=_DATE_RULE_PATH,
+    )
+
+    assert admission.ready is True
+    assert admission.manifest["unresolved_count"] == 0
+
+
+@pytest.mark.parametrize(
+    "date_token",
+    [
+        pytest.param(
+            f"2024{separator}{month}{separator}{day}",
+            id=f"{separator}-{month}-{day}",
+        )
+        for separator in ("-", "/", ".")
+        for month in ("6", "06")
+        for day in ("1", "01")
+    ]
+    + [
+        pytest.param("2024 - 6 - 1", id="whitespace-normalized"),
+        pytest.param(
+            "2024/5/31-2024/6/12024/6/1",
+            id="adjacent-table-dates",
+        ),
+    ],
+)
+def test_candidate_review_admission_accepts_exact_numeric_date_variants(
+    prepared_attempt: PreparedAttempt,
+    date_token: str,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "2024年度权益分派实施公告",
+            "600000": "2024年第三季度报告",
+        },
+        announcement_dates={
+            "000001": date(2024, 5, 28),
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": _pdf_bytes(date_token),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+    )
+
+    admission = require_candidate_review_admission(
+        workspace=workspace,
+        queue=queue,
+        candidates=candidates,
+        date_rule_path=_DATE_RULE_PATH,
+    )
+
+    assert admission.ready is True
+
+
+@pytest.mark.parametrize("date_token", ["12024-6-1", "2024-6-10"])
+def test_candidate_review_admission_rejects_numeric_date_substrings(
+    prepared_attempt: PreparedAttempt,
+    date_token: str,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        CandidateReviewAdmissionError,
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "2024年度权益分派实施公告",
+            "600000": "2024年第三季度报告",
+        },
+        announcement_dates={
+            "000001": date(2024, 5, 28),
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": _pdf_bytes(date_token),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+    )
+
+    with pytest.raises(CandidateReviewAdmissionError):
+        require_candidate_review_admission(
+            workspace=workspace,
+            queue=queue,
+            candidates=candidates,
+            date_rule_path=_DATE_RULE_PATH,
+        )
+
+
+@pytest.mark.parametrize(
+    "leading_lines",
+    [
+        pytest.param(
+            [
+                "证券代码：000001",
+                "2022年度分红派息公告",
+                "自分配方案披露至实施期间，公司股本总额未发生变化。",
+                "本次实施的分配方案与股东大会审议通过的方案一致。",
+                "除权除息日：2024-06-01",
+            ],
+            id="explicit-current-implementation-preamble",
+        ),
+        pytest.param(
+            [
+                "证券代码：000001",
+                "2024年半年度利润分配方案公告",
+                "本公司及董事会全体成员保证信息披露真实。",
+                "特别提示：",
+                "1、公司本次利润分配方案以实",
+                "施权益分派方案时股权登记日为基数。",
+                "除权除息日：2024-06-01",
+            ],
+            id="numbered-special-notice-implementation-preamble",
+        ),
+        pytest.param(
+            [
+                "证券代码：000001",
+                "2022年度分红派息公告",
+                "本公司及董事会全体成员保证信息披露真实。",
+                "一、股东大会审议通过利润分配方案情况",
+                "1、方案已经股东大会审议通过。",
+                "本次实施的分配方案与审议通过的方案一致。",
+                "除权除息日：2024-06-01",
+            ],
+            id="implementation-preamble-in-first-formal-section",
+        ),
+    ],
+)
+def test_candidate_review_admission_upgrades_an_explicit_bounded_preamble(
+    prepared_attempt: PreparedAttempt,
+    leading_lines: list[str],
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "关于2024年度权益分派的公告",
+            "600000": "2024年第三季度报告",
+        },
+        announcement_dates={
+            "000001": date(2024, 5, 28),
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": _unicode_pdf_bytes(leading_lines),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+    )
+
+    admission = require_candidate_review_admission(
+        workspace=workspace,
+        queue=queue,
+        candidates=candidates,
+        date_rule_path=_DATE_RULE_PATH,
+    )
+
+    assert admission.ready is True
+
+
+@pytest.mark.parametrize(
+    "title,leading_lines",
+    [
+        pytest.param(
+            "关于2024年度权益分派的公告",
+            [
+                "证券代码：000001",
+                "关于2024年度权益分派的公告",
+                "本次工作将实施严格的内部控制。",
+                "除权除息日：2024-06-01",
+            ],
+            id="isolated-implementation-word",
+        ),
+        pytest.param(
+            "关于2024年度权益分派的公告",
+            [
+                "证券代码：000001",
+                "关于2024年度权益分派的公告",
+                "若未来实施权益分派方案，公司将另行公告。",
+                "除权除息日：2024-06-01",
+            ],
+            id="conditional-implementation-preamble",
+        ),
+        pytest.param(
+            "关于2024年度权益分派的公告",
+            [
+                "证券代码：000001",
+                "关于2024年度权益分派的公告",
+                "公司拟于股东大会审议通过后实施权益分派方案。",
+                "除权除息日：2024-06-01",
+            ],
+            id="future-implementation-preamble",
+        ),
+        pytest.param(
+            "关于2024年度权益分派的公告",
+            [
+                "证券代码：000001",
+                "关于2024年度权益分派的公告",
+                *[f"首部说明{i}" for i in range(1, 19)],
+                "本次实施的分配方案与审议通过的方案一致。",
+                "除权除息日：2024-06-01",
+            ],
+            id="implementation-after-twenty-line-boundary",
+        ),
+        pytest.param(
+            "吸收合并实施公告",
+            [
+                "证券代码：000001",
+                "2024年度权益分派实施公告",
+                "除权除息日：2024-06-01",
+            ],
+            id="other-candidate-type",
+        ),
+        pytest.param(
+            "关于2024年度权益分派的公告",
+            [
+                "证券代码：1000001",
+                "2024年度权益分派实施公告",
+                "除权除息日：2024-06-01",
+            ],
+            id="arbitrary-security-digit-substring",
+        ),
+        pytest.param(
+            "关于2024年度权益分派的公告",
+            [
+                (
+                    "证券代码：000001证券简称：测试股份"
+                    "公告编号：2024-001实施"
+                ),
+                "除权除息日：2024-06-01",
+            ],
+            id="boilerplate-with-isolated-implementation-tail",
+        ),
+    ],
+)
+def test_candidate_review_admission_does_not_overpromote_pdf_text(
+    prepared_attempt: PreparedAttempt,
+    title: str,
+    leading_lines: list[str],
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        CandidateReviewAdmissionError,
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={"000001": title, "600000": "2024年第三季度报告"},
+        announcement_dates={
+            "000001": date(2024, 5, 28),
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": _unicode_pdf_bytes(leading_lines),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+    )
+
+    with pytest.raises(CandidateReviewAdmissionError):
+        require_candidate_review_admission(
+            workspace=workspace,
+            queue=queue,
+            candidates=candidates,
+            date_rule_path=_DATE_RULE_PATH,
+        )
 
 
 def test_candidate_review_admission_rejects_post_event_announcement(
