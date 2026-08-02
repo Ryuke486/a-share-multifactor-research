@@ -41,7 +41,17 @@ _NUMERIC_LABELLED_DATE = re.compile(
 _CHINESE_LABELLED_DATE = re.compile(
     rf"{_DATE_LABEL.pattern}(\d{{4}})年(\d{{1,2}})月(\d{{1,2}})日"
 )
-_ADJACENT_DATE_CELL = r"\d{4}(?:[-/.]|年)"
+_NUMERIC_DATE_CELL = re.compile(
+    r"(?P<year>\d{4})(?P<separator>[-/.])"
+    r"(?P<month>\d{1,2})(?P=separator)(?P<day>\d{1,2})"
+)
+_CHINESE_DATE_CELL = re.compile(
+    r"(?P<year>\d{4})年(?P<month>\d{1,2})月(?P<day>\d{1,2})日"
+)
+_TRAILING_DATE_CHARACTER_RUN = re.compile(r"[0-9年月日./-]+$")
+_YEAR_LIKE_DATE_MARKER = re.compile(r"\d{4,}(?:[-/.]|年)")
+_MAX_DATE_CELL_SCAN = 12
+_MIN_DATE_CELL_LENGTH = 8
 _REPORT_PERIOD = re.compile(
     r"(?<!\d)(20\d{2})年?(年度|半年度|第一季度|第三季度)"
 )
@@ -121,21 +131,23 @@ def inspect_candidate_pdf(payload: bytes) -> CandidatePdfEvidence:
 def date_in_text(value: date, text: str) -> bool:
     """Match exact numeric date variants with digit boundaries."""
     return any(
-        re.search(_bounded_date_pattern(token), text) is not None
+        _token_in_text(token, text)
         for token in _date_tokens(value)
     )
 
 
 def labelled_date_in_text(value: date, text: str) -> bool:
     """Require one exact date immediately after an ex-date label."""
-    return any(
-        re.search(
-            rf"{_DATE_LABEL.pattern}{_bounded_date_pattern(token)}",
-            text,
-        )
-        is not None
-        for token in _date_tokens(value)
-    )
+    for token in _date_tokens(value):
+        pattern = rf"{_DATE_LABEL.pattern}(?P<value>{re.escape(token)})"
+        for match in re.finditer(pattern, text):
+            if _token_span_is_bounded(
+                match.start("value"),
+                match.end("value"),
+                text,
+            ):
+                return True
+    return False
 
 
 def _bounded_lines(first_page: str) -> list[str]:
@@ -234,11 +246,109 @@ def _strip_boilerplate_fields(line: str) -> str:
     return _ANNOUNCEMENT_NUMBER_BOILERPLATE.sub("", value)
 
 
-def _bounded_date_pattern(token: str) -> str:
-    return (
-        rf"(?<!\d){re.escape(token)}"
-        rf"(?:(?!\d)|(?={_ADJACENT_DATE_CELL}))"
+def _token_in_text(token: str, text: str) -> bool:
+    for match in re.finditer(re.escape(token), text):
+        if _token_span_is_bounded(match.start(), match.end(), text):
+            return True
+    return False
+
+
+def _token_span_is_bounded(start: int, end: int, text: str) -> bool:
+    return _date_cell_chain_is_bounded(start, text, direction=-1) and (
+        _date_cell_chain_is_bounded(end, text, direction=1)
     )
+
+
+def _date_cell_chain_is_bounded(
+    boundary: int,
+    text: str,
+    *,
+    direction: int,
+) -> bool:
+    pending = [boundary]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if current in visited:
+            continue
+        visited.add(current)
+        if current == 0 or current == len(text):
+            return True
+        adjacent = text[current - 1] if direction < 0 else text[current]
+        segment = (
+            text[max(0, current - _MAX_DATE_CELL_SCAN) : current]
+            if direction < 0
+            else text[current : current + _MAX_DATE_CELL_SCAN]
+        )
+        lengths, date_shape_found = _adjacent_date_cell_lengths(
+            segment,
+            preceding=direction < 0,
+        )
+        if lengths:
+            pending.extend(current + direction * length for length in lengths)
+            continue
+        if (
+            adjacent.isdigit()
+            or date_shape_found
+            or (
+                direction < 0
+                and _has_trailing_incomplete_date_cell(segment)
+            )
+        ):
+            continue
+        return True
+    return False
+
+
+def _adjacent_date_cell_lengths(
+    segment: str,
+    *,
+    preceding: bool,
+) -> tuple[tuple[int, ...], bool]:
+    lengths: list[int] = []
+    date_shape_found = False
+    maximum = min(len(segment), _MAX_DATE_CELL_SCAN)
+    for length in range(_MIN_DATE_CELL_LENGTH, maximum + 1):
+        candidate = segment[-length:] if preceding else segment[:length]
+        date_candidates = (candidate,)
+        if preceding and candidate[-1:] in {"-", "/"}:
+            date_candidates = (*date_candidates, candidate[:-1])
+        valid_date_found = False
+        for date_candidate in date_candidates:
+            for pattern in (_NUMERIC_DATE_CELL, _CHINESE_DATE_CELL):
+                match = pattern.fullmatch(date_candidate)
+                if match is None:
+                    continue
+                date_shape_found = True
+                if _is_calendar_valid_date_cell(match):
+                    lengths.append(length)
+                    valid_date_found = True
+                break
+            if valid_date_found:
+                break
+    return tuple(lengths), date_shape_found
+
+
+def _has_trailing_incomplete_date_cell(segment: str) -> bool:
+    match = _TRAILING_DATE_CHARACTER_RUN.search(segment)
+    if match is None:
+        return False
+    trailing = match.group()
+    if _YEAR_LIKE_DATE_MARKER.search(trailing) is None:
+        return False
+    return True
+
+
+def _is_calendar_valid_date_cell(match: re.Match[str]) -> bool:
+    try:
+        date(
+            int(match.group("year")),
+            int(match.group("month")),
+            int(match.group("day")),
+        )
+    except ValueError:
+        return False
+    return True
 
 
 def _labelled_dates(text: str) -> tuple[date, ...]:

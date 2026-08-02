@@ -232,6 +232,7 @@ def _admission_inputs(
     document_payloads: dict[str, bytes],
     candidate_symbols: set[str],
     announcement_transport: object | None = None,
+    candidate_ex_dates: dict[str, date] | None = None,
 ):
     inputs = _complete_query_coverage(
         attempt,
@@ -261,9 +262,18 @@ def _admission_inputs(
     ) -> tuple[list[str], list[list[str]]]:
         del year_type
         symbol = code.split(".", maxsplit=1)[1]
-        if year != 2024 or symbol not in candidate_symbols:
+        candidate_ex_date = (
+            candidate_ex_dates.get(symbol)
+            if candidate_ex_dates is not None
+            else None
+        )
+        if candidate_ex_date is None:
+            candidate_ex_date = (
+                date(2024, 6, 1) if symbol == "000001" else date(2024, 7, 1)
+            )
+        if year != candidate_ex_date.year or symbol not in candidate_symbols:
             return _FIELDS, []
-        ex_date = "2024-06-01" if symbol == "000001" else "2024-07-01"
+        ex_date = candidate_ex_date.isoformat()
         return _FIELDS, [
             [code, ex_date, ex_date, "", "0.10", "0", "0"]
         ]
@@ -1032,6 +1042,50 @@ def test_candidate_review_admission_upgrades_a_strong_pdf_leading_heading(
             "2024/5/31-2024/6/12024/6/1",
             id="adjacent-table-dates",
         ),
+        pytest.param(
+            "2024/5/312024/6/12024/6/2",
+            id="date-cell-between-adjacent-table-dates",
+        ),
+        pytest.param(
+            "2024年5月31日2024年6月1日2024年6月2日",
+            id="date-cell-between-adjacent-chinese-table-dates",
+        ),
+        pytest.param(
+            "2024/6/12024/6/22024/6/3",
+            id="date-cell-first-in-three-numeric-table-dates",
+        ),
+        pytest.param(
+            "2024/5/302024/5/312024/6/1",
+            id="date-cell-last-in-three-numeric-table-dates",
+        ),
+        pytest.param(
+            "2024年6月1日2024年6月2日2024年6月3日",
+            id="date-cell-first-in-three-chinese-table-dates",
+        ),
+        pytest.param(
+            "2024年5月30日2024年5月31日2024年6月1日",
+            id="date-cell-last-in-three-chinese-table-dates",
+        ),
+        pytest.param(
+            "2024/5/31-报告2024/6/1",
+            id="unrelated-date-prefix-before-natural-text-boundary",
+        ),
+        pytest.param(
+            "2024年度报告2024/6/1",
+            id="yearly-report-before-natural-text-boundary",
+        ),
+        pytest.param(
+            "2024/报告2024/6/1",
+            id="slash-prefixed-narrative-before-natural-text-boundary",
+        ),
+        pytest.param(
+            "2024/abc2024/6/1",
+            id="ascii-narrative-before-natural-text-boundary",
+        ),
+        pytest.param(
+            "2024年abc2024年6月1日",
+            id="chinese-date-marker-narrative-before-natural-text-boundary",
+        ),
     ],
 )
 def test_candidate_review_admission_accepts_exact_numeric_date_variants(
@@ -1053,7 +1107,11 @@ def test_candidate_review_admission_accepts_exact_numeric_date_variants(
             "600000": date(2024, 6, 18),
         },
         document_payloads={
-            "000001": _pdf_bytes(date_token),
+            "000001": (
+                _pdf_bytes(date_token)
+                if date_token.isascii()
+                else _unicode_pdf_bytes([date_token])
+            ),
             "600000": _pdf_bytes("2024-07-01"),
         },
         candidate_symbols={"000001"},
@@ -1069,7 +1127,152 @@ def test_candidate_review_admission_accepts_exact_numeric_date_variants(
     assert admission.ready is True
 
 
-@pytest.mark.parametrize("date_token", ["12024-6-1", "2024-6-10"])
+@pytest.mark.parametrize(
+    "candidate_ex_date,date_token",
+    [
+        pytest.param(
+            date(2025, 6, 3),
+            "A股2025/5/30/2025/6/32025/6/3",
+            id="sse-empty-last-trading-date-before-single-digit-day",
+        ),
+        pytest.param(
+            date(2025, 9, 10),
+            "A股2025/9/9/2025/9/102025/9/10",
+            id="sse-empty-last-trading-date-before-double-digit-day",
+        ),
+        pytest.param(
+            date(2025, 6, 3),
+            "A股2025年05月30日/2025/6/32025/6/3",
+            id="complete-chinese-date-before-slash-delimiter",
+        ),
+        pytest.param(
+            date(2025, 6, 3),
+            "A股2025年05月30日-2025/6/32025/6/3",
+            id="complete-chinese-date-before-hyphen-delimiter",
+        ),
+    ],
+)
+def test_candidate_review_admission_accepts_sse_empty_last_trading_date_cell(
+    prepared_attempt: PreparedAttempt,
+    candidate_ex_date: date,
+    date_token: str,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "2025年度权益分派实施公告",
+            "600000": "2025年第三季度报告",
+        },
+        announcement_dates={
+            "000001": candidate_ex_date,
+            "600000": date(2025, 10, 18),
+        },
+        document_payloads={
+            "000001": _unicode_pdf_bytes([date_token]),
+            "600000": _pdf_bytes("2025-10-20"),
+        },
+        candidate_symbols={"000001"},
+        candidate_ex_dates={"000001": candidate_ex_date},
+    )
+
+    admission = require_candidate_review_admission(
+        workspace=workspace,
+        queue=queue,
+        candidates=candidates,
+        date_rule_path=_DATE_RULE_PATH,
+    )
+
+    assert admission.ready is True
+
+
+@pytest.mark.parametrize(
+    "date_token",
+    [
+        pytest.param(
+            "12025年12月31日/2025/6/32025/6/3",
+            id="five-digit-chinese-year-max-length-before-slash",
+        ),
+        pytest.param(
+            "12025年06月03日/2025/6/32025/6/3",
+            id="five-digit-chinese-target-date-before-slash",
+        ),
+        pytest.param(
+            "12025年12月31日-2025/6/32025/6/3",
+            id="five-digit-chinese-year-max-length-before-hyphen",
+        ),
+        pytest.param(
+            "12025年06月03日-2025/6/32025/6/3",
+            id="five-digit-chinese-target-date-before-hyphen",
+        ),
+    ],
+)
+def test_candidate_review_admission_rejects_five_digit_chinese_date_cell_chain(
+    prepared_attempt: PreparedAttempt,
+    date_token: str,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        CandidateReviewAdmissionError,
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "2025年度权益分派实施公告",
+            "600000": "2025年第三季度报告",
+        },
+        announcement_dates={
+            "000001": date(2025, 6, 3),
+            "600000": date(2025, 10, 18),
+        },
+        document_payloads={
+            "000001": _unicode_pdf_bytes([date_token]),
+            "600000": _pdf_bytes("2025-10-20"),
+        },
+        candidate_symbols={"000001"},
+        candidate_ex_dates={"000001": date(2025, 6, 3)},
+    )
+
+    with pytest.raises(CandidateReviewAdmissionError):
+        require_candidate_review_admission(
+            workspace=workspace,
+            queue=queue,
+            candidates=candidates,
+            date_rule_path=_DATE_RULE_PATH,
+        )
+
+
+@pytest.mark.parametrize(
+    "date_token",
+    [
+        "12024-6-1",
+        "2024-6-10",
+        "12024-6-11",
+        "12024/5/312024/6/1",
+        "9999/99/992024/6/1",
+        "2023/2/292024/6/1",
+        "9999年99月99日2024年6月1日",
+        "2023年2月29日2024年6月1日",
+        "2024/6/12024/abc",
+        "2024/6/12024/999",
+        "2024/6/12024年abc",
+        "9999/99/992024/5/312024/6/1",
+        "2024/6/12024/6/22024/abc",
+        "9999年99月99日2024年5月31日2024年6月1日",
+        "2024年6月1日2024年6月2日2024年abc",
+        "2024/6/2024/6/1",
+        "2024/6-2024/6/1",
+        "2024-6/2024/6/1",
+        "2024//2024/6/1",
+        "2024年6月1年2024年6月1日",
+        "12024/6/2024/6/1",
+        "12024年6月1年2024年6月1日",
+    ],
+)
 def test_candidate_review_admission_rejects_numeric_date_substrings(
     prepared_attempt: PreparedAttempt,
     date_token: str,
@@ -1090,7 +1293,11 @@ def test_candidate_review_admission_rejects_numeric_date_substrings(
             "600000": date(2024, 6, 18),
         },
         document_payloads={
-            "000001": _pdf_bytes(date_token),
+            "000001": (
+                _pdf_bytes(date_token)
+                if date_token.isascii()
+                else _unicode_pdf_bytes([date_token])
+            ),
             "600000": _pdf_bytes("2024-07-01"),
         },
         candidate_symbols={"000001"},
@@ -1103,6 +1310,39 @@ def test_candidate_review_admission_rejects_numeric_date_substrings(
             candidates=candidates,
             date_rule_path=_DATE_RULE_PATH,
         )
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("除权除息日：2024/6/12024/6/2", True),
+        ("除权除息日：2024年6月1日2024年6月2日", True),
+        ("除权除息日：2024/6/12024/6/22024/6/3", True),
+        (
+            "除权除息日：2024年6月1日2024年6月2日2024年6月3日",
+            True,
+        ),
+        ("除权除息日：2024/6/12024/abc", False),
+        ("除权除息日：2024年6月1日2024年abc", False),
+        ("除权除息日：2024/6/12024/6/22024/abc", False),
+        (
+            "除权除息日：2024年6月1日2024年6月2日2024年abc",
+            False,
+        ),
+    ],
+)
+def test_candidate_pdf_labelled_date_requires_a_complete_adjacent_date_cell(
+    text: str,
+    expected: bool,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_pdf_evidence import (
+        inspect_candidate_pdf,
+    )
+
+    payload = _pdf_bytes(text) if text.isascii() else _unicode_pdf_bytes([text])
+    evidence = inspect_candidate_pdf(payload)
+
+    assert evidence.has_labelled_leading_date(date(2024, 6, 1)) is expected
 
 
 @pytest.mark.parametrize(
