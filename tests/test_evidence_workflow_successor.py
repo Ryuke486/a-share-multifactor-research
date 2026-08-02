@@ -289,6 +289,12 @@ def test_evidence_workflow_identity_binds_candidate_admission_seam() -> None:
         "src/ashare_multifactor/final_test/"
         "official_candidate_review_rendition_validation.py",
         "src/ashare_multifactor/final_test/"
+        "official_exchange_monthly_statistics.py",
+        "src/ashare_multifactor/final_test/"
+        "official_exchange_monthly_statistics_authorization.py",
+        "src/ashare_multifactor/final_test/"
+        "official_exchange_monthly_statistics_validation.py",
+        "src/ashare_multifactor/final_test/"
         "official_candidate_review_admission_historical.py",
         "src/ashare_multifactor/final_test/"
         "official_candidate_review_admission_historical_evaluation.py",

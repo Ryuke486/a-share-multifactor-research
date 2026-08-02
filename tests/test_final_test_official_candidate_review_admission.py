@@ -37,6 +37,20 @@ from ashare_multifactor.final_test.official_candidate_review_rendition_authoriza
 from ashare_multifactor.final_test.official_candidate_query_topology import (
     publish_candidate_query_topology,
 )
+from ashare_multifactor.final_test.official_exchange_monthly_statistics import (
+    ExchangeMonthlyStatisticsInput,
+    bind_exchange_monthly_statistics,
+    publish_exchange_monthly_statistics,
+)
+from ashare_multifactor.final_test.official_exchange_monthly_statistics_authorization import (
+    STATISTICS_CACHE_DIRECTORY,
+    build_exchange_monthly_statistics_authorization,
+    load_exchange_monthly_statistics_authorization,
+)
+from ashare_multifactor.final_test.official_exchange_monthly_statistics_validation import (
+    build_verified_statistics_record,
+    parse_unique_statistics_row,
+)
 from ashare_multifactor.final_test.official_evidence_workspace import (
     load_verified_review_queue,
 )
@@ -63,6 +77,204 @@ _FIELDS = [
     "dividStocksPs",
     "dividReserveToStockPs",
 ]
+_STATISTICS_HEADERS = (
+    "代码Code",
+    "证券简称Securities",
+    "红股数量Bonus(Shs)",
+    "送股率BPS",
+    "现金息(元)Cash Div.",
+    "每股派息DPS",
+    "配股数Rts Issues",
+    "配股率RPS",
+    "配股价Pla. Pri.",
+    "集资金额Funds Raised",
+    "除净日期Ex-Date",
+    "股权日Reg. Date",
+    "除权报价Ex-Price",
+    "前收市Pre-Closing",
+)
+_VALID_STATISTICS_ROW = (
+    "000001",
+    "平安银行",
+    "0",
+    "0.000",
+    "1000000.00",
+    "0.100",
+    "0",
+    "0.000",
+    "0.000",
+    "0",
+    "2024/05/24",
+    "2024/05/23",
+    "10.20",
+    "10.30",
+)
+
+
+def _statistics_html(
+    rows: tuple[tuple[str, ...], ...],
+    *,
+    headers: tuple[str, ...] = _STATISTICS_HEADERS,
+    caption: str = "DIVIDEND,BONUS AND RIGHTS ISSUES - （2024.05）",
+) -> bytes:
+    return (
+        "<style type=\"text/css\">table{border-collapse:collapse}</style>"
+        f"<table><caption>{caption}</caption><tr>"
+        + "".join(f"<th>{value}</th>" for value in headers)
+        + "</tr>"
+        + "".join(
+            "<tr>"
+            + "".join(f"<td>{value}</td>" for value in row)
+            + "</tr>"
+            for row in rows
+        )
+        + "</table>"
+    ).encode("gbk")
+
+
+def _exchange_statistics_authorization_inputs(
+    prepared_attempt: PreparedAttempt,
+    *,
+    canonical_lines: list[str] | None = None,
+    canonical_title: str = "2023年度权益分派实施公告",
+    canonical_date: date = date(2024, 5, 17),
+    canonical_payload: bytes | None = None,
+):
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        CandidateReviewAdmissionError,
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": canonical_title,
+            "600000": "2024年第三季度报告",
+        },
+        announcement_dates={
+            "000001": canonical_date,
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": canonical_payload
+            or _unicode_pdf_bytes(
+                canonical_lines
+                or [
+                    "证券代码：000001",
+                    "2023年度权益分派实施公告",
+                    "每10股派发现金红利1元（含税），不送红股，不转增股本。",
+                    "三、股权登记日与除权除息日",
+                    "股权登记日：2024年5月23日；除权除息日：2023年5月24日。",
+                    "四、权益分派方法",
+                ]
+            ),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+        candidate_ex_dates={"000001": date(2024, 5, 24)},
+    )
+    with pytest.raises(CandidateReviewAdmissionError) as blocked:
+        require_candidate_review_admission(
+            workspace=workspace,
+            queue=queue,
+            candidates=candidates,
+            date_rule_path=_DATE_RULE_PATH,
+        )
+    topology = publish_candidate_query_topology(
+        destination=workspace.root.parent,
+        candidate_manifest_path=candidates.manifest_path,
+        blocked_admission_path=blocked.value.manifest_path,
+        contract=load_action_source_contract(_CONTRACT_PATH),
+    )
+    cache_root = workspace.root.parent / STATISTICS_CACHE_DIRECTORY
+    cache_root.mkdir()
+    return workspace, queue, candidates, blocked.value, topology, cache_root
+
+
+def _publish_exchange_statistics_fixture(
+    prepared_attempt: PreparedAttempt,
+    *,
+    html: bytes,
+    media_type: str = "text/html; charset=GBK",
+    final_url: str | None = None,
+    document_sha256: str | None = None,
+    canonical_lines: list[str] | None = None,
+    canonical_title: str = "2023年度权益分派实施公告",
+    canonical_date: date = date(2024, 5, 17),
+    canonical_payload: bytes | None = None,
+):
+    workspace, queue, candidates, blocked, topology, cache_root = (
+        _exchange_statistics_authorization_inputs(
+            prepared_attempt,
+            canonical_lines=canonical_lines,
+            canonical_title=canonical_title,
+            canonical_date=canonical_date,
+            canonical_payload=canonical_payload,
+        )
+    )
+    source_url = (
+        "https://docs.static.szse.cn/www/market/periodical/month/"
+        "W020240607344713255806.html"
+    )
+    authorization_payload = build_exchange_monthly_statistics_authorization(
+        code_root=prepared_attempt.code_root,
+        workspace=workspace,
+        queue=queue,
+        blocked_admission_path=blocked.manifest_path,
+        topology_manifest_path=topology.manifest_path,
+        candidate_id=str(candidates.candidates.item(0, "candidate_id")),
+        source_url=source_url,
+        cache_root=cache_root,
+    )
+    authorization_path = cache_root / "statistics_authorization.json"
+    _write_canonical_json(authorization_path, authorization_payload)
+    authorization = load_exchange_monthly_statistics_authorization(
+        authorization_path,
+        workspace=workspace,
+        queue=queue,
+    )
+    request = authorization.request
+    request.document_path.parent.mkdir(parents=True)
+    request.document_path.write_bytes(html)
+    _write_canonical_json(
+        request.receipt_path,
+        {
+            "schema": "stage9_exchange_monthly_statistics_get_receipt/v1",
+            "role": "exchange_monthly_statistics_http_get_receipt",
+            "network_authorization_sha256": authorization.sha256,
+            "request": {
+                "purpose": "exchange_monthly_statistics",
+                "method": "GET",
+                "source_url": source_url,
+                "request_sha256": request.request_sha256,
+                "attempt_count": 1,
+                "http_status": 200,
+                "final_url": source_url if final_url is None else final_url,
+                "redirect_followed_count": 0,
+            },
+            "document": {
+                "sha256": (
+                    hashlib.sha256(html).hexdigest()
+                    if document_sha256 is None
+                    else document_sha256
+                ),
+                "size_bytes": len(html),
+                "media_type": media_type,
+            },
+            "final_test_strategy_outputs_read": False,
+        },
+    )
+    statistics = publish_exchange_monthly_statistics(
+        workspace=workspace,
+        queue=queue,
+        network_authorization_path=authorization_path,
+        statistics=ExchangeMonthlyStatisticsInput(
+            source_url=source_url,
+            document_path=request.document_path,
+            receipt_path=request.receipt_path,
+        ),
+    )
+    return workspace, queue, candidates, statistics
 
 
 def _pdf_bytes(text: str = "") -> bytes:
@@ -383,6 +595,611 @@ def _write_rendition_receipt(
             "final_test_strategy_outputs_read": False,
         },
     )
+
+
+def test_exchange_monthly_statistics_unique_row_closes_admission(
+    prepared_attempt: PreparedAttempt,
+    tmp_path: Path,
+) -> None:
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        require_candidate_review_admission,
+    )
+
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles={
+            "000001": "2023年度权益分派实施公告",
+            "600000": "2024年第三季度报告",
+        },
+        announcement_dates={
+            "000001": date(2024, 5, 17),
+            "600000": date(2024, 6, 18),
+        },
+        document_payloads={
+            "000001": _unicode_pdf_bytes(
+                [
+                    "证券代码：000001",
+                    "2023年度权益分派实施公告",
+                    "每10股派发现金红利1元（含税），不送红股，不转增股本。",
+                    "三、股权登记日与除权除息日",
+                    "股权登记日：2024年5月23日；除权除息日：2023年5月24日。",
+                    "四、权益分派方法",
+                ]
+            ),
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+        candidate_ex_dates={"000001": date(2024, 5, 24)},
+    )
+    candidate = candidates.candidates.row(0, named=True)
+    source_url = (
+        "https://docs.static.szse.cn/www/market/periodical/month/"
+        "W020240607344713255806.html"
+    )
+    html = _statistics_html(
+        (
+            (
+                "000001",
+                "平安银行",
+                "0",
+                "0.000",
+                "1000000.00",
+                "0.100",
+                "0",
+                "0.000",
+                "0.000",
+                "",
+                "2024/05/24",
+                "2024/05/23",
+                "10.20",
+                "10.30",
+            ),
+        )
+    )
+    from ashare_multifactor.final_test.official_candidate_review_admission import (
+        CandidateReviewAdmissionError,
+    )
+
+    with pytest.raises(CandidateReviewAdmissionError) as blocked:
+        require_candidate_review_admission(
+            workspace=workspace,
+            queue=queue,
+            candidates=candidates,
+            date_rule_path=_DATE_RULE_PATH,
+        )
+    topology = publish_candidate_query_topology(
+        destination=workspace.root.parent,
+        candidate_manifest_path=candidates.manifest_path,
+        blocked_admission_path=blocked.value.manifest_path,
+        contract=load_action_source_contract(_CONTRACT_PATH),
+    )
+    cache_root = workspace.root.parent / STATISTICS_CACHE_DIRECTORY
+    cache_root.mkdir()
+    authorization_payload = build_exchange_monthly_statistics_authorization(
+        code_root=prepared_attempt.code_root,
+        workspace=workspace,
+        queue=queue,
+        blocked_admission_path=blocked.value.manifest_path,
+        topology_manifest_path=topology.manifest_path,
+        candidate_id=str(candidate["candidate_id"]),
+        source_url=source_url,
+        cache_root=cache_root,
+    )
+    authorization_path = tmp_path / "statistics_authorization.json"
+    _write_canonical_json(authorization_path, authorization_payload)
+    authorization = load_exchange_monthly_statistics_authorization(
+        authorization_path,
+        workspace=workspace,
+        queue=queue,
+    )
+    request = authorization.request
+    request.document_path.parent.mkdir(parents=True)
+    request.document_path.write_bytes(html)
+    _write_canonical_json(
+        request.receipt_path,
+        {
+            "schema": "stage9_exchange_monthly_statistics_get_receipt/v1",
+            "role": "exchange_monthly_statistics_http_get_receipt",
+            "network_authorization_sha256": authorization.sha256,
+            "request": {
+                "purpose": "exchange_monthly_statistics",
+                "method": "GET",
+                "source_url": source_url,
+                "request_sha256": request.request_sha256,
+                "attempt_count": 1,
+                "http_status": 200,
+                "final_url": source_url,
+                "redirect_followed_count": 0,
+            },
+            "document": {
+                "sha256": hashlib.sha256(html).hexdigest(),
+                "size_bytes": len(html),
+                "media_type": "text/html; charset=GBK",
+            },
+            "final_test_strategy_outputs_read": False,
+        },
+    )
+    statistics = publish_exchange_monthly_statistics(
+        workspace=workspace,
+        queue=queue,
+        network_authorization_path=authorization_path,
+        statistics=ExchangeMonthlyStatisticsInput(
+            source_url=source_url,
+            document_path=request.document_path,
+            receipt_path=request.receipt_path,
+        ),
+    )
+    bound_workspace = bind_exchange_monthly_statistics(
+        workspace=workspace,
+        queue=queue,
+        statistics=statistics,
+    )
+
+    admission = require_candidate_review_admission(
+        workspace=bound_workspace,
+        queue=load_verified_review_queue(bound_workspace),
+        candidates=load_verified_candidate_snapshot(
+            candidates.manifest_path,
+            workspace=bound_workspace,
+        ),
+        date_rule_path=_DATE_RULE_PATH,
+    )
+
+    assert admission.ready is True
+    assert admission.decisions_path is not None
+    decision = pl.read_parquet(admission.decisions_path).row(0, named=True)
+    assert decision["evidence_kind"] == "exchange_monthly_statistics"
+    statistics_binding = admission.manifest["exchange_monthly_statistics"]
+    assert statistics_binding["post_event"] is True
+    assert statistics_binding["source_period_end"] == "2024-05-31"
+    assert statistics_binding["asset_path_date"] == "2024-06-07"
+    assert statistics_binding["canonical_announcement"]["catalog_id"] == (
+        decision["catalog_id"]
+    )
+    assert statistics_binding["canonical_announcement"]["document_sha256"]
+    assert decision["source_url"] == source_url
+    assert decision["announcement_publication_date"] == date(2024, 5, 17)
+    assert decision["date_match"] == "exact_symbol_row_in_exchange_statistics"
+
+
+def test_exchange_monthly_statistics_parser_uses_official_14_column_layout() -> None:
+    values = (
+        "300917",
+        "特发服务",
+        "0",
+        "0.000",
+        "37,180,000",
+        "0.220",
+        "0",
+        "0.000",
+        "0.000",
+        "0",
+        "2024/05/24",
+        "2024/05/23",
+        "37.20",
+        "37.42",
+    )
+    payload = _statistics_html((values,))
+
+    row = parse_unique_statistics_row(payload, symbol="300917")
+
+    assert row.symbol == "300917"
+    assert row.ex_date == date(2024, 5, 24)
+    assert row.record_date == date(2024, 5, 23)
+    assert str(row.cash_per_share) == "0.220"
+    assert str(row.share_ratio) == "0.000"
+    assert row.source_period_end == date(2024, 5, 31)
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"\xff", "not GBK"),
+        (
+            _statistics_html(
+                (("600000", "浦发银行", *("0",) * 12),)
+            ),
+            "target row is not unique",
+        ),
+        (
+            _statistics_html(
+                (
+                    (
+                        "300917", "特发服务", "0", "0.000", "1", "0.220",
+                        "0", "0", "0", "0", "2024/05/24", "2024/05/23",
+                        "1", "1",
+                    ),
+                    (
+                        "300917", "特发服务", "0", "0.000", "1", "0.220",
+                        "0", "0", "0", "0", "2024/05/24", "2024/05/23",
+                        "1", "1",
+                    ),
+                )
+            ),
+            "target row is not unique",
+        ),
+        (
+            _statistics_html(
+                (("300917", "特发服务", *("0",) * 11),),
+                headers=_STATISTICS_HEADERS[:-1],
+            ),
+            "table schema differs",
+        ),
+        (
+            _statistics_html(
+                (
+                    (
+                        "300917", "特发服务", "0", "0", "1", "0.220",
+                        "0", "0", "0", "0", "2024/05/24", "2024/05/23",
+                        "1", "1",
+                    ),
+                ),
+                caption="MONTHLY MARKET STATISTICS （2024.05）",
+            ),
+            "table title differs",
+        ),
+        (
+            "<style></style><table><caption>DIVIDEND,BONUS AND RIGHTS "
+            "ISSUES - （2024.05）</caption>".encode("gbk"),
+            "table title differs",
+        ),
+    ],
+)
+def test_exchange_monthly_statistics_parser_fails_closed(
+    payload: bytes,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_unique_statistics_row(payload, symbol="300917")
+
+
+def test_exchange_monthly_statistics_parser_does_not_borrow_adjacent_row() -> None:
+    target = (
+        "300917", "特发服务", "0", "0.000", "1", "0.220", "0", "0", "0",
+        "0", "2023/05/24", "2023/05/23", "1", "1",
+    )
+    adjacent = (
+        "300918", "南山智尚", "0", "0.000", "1", "0.220", "0", "0", "0",
+        "0", "2024/05/24", "2024/05/23", "1", "1",
+    )
+
+    row = parse_unique_statistics_row(
+        _statistics_html((target, adjacent)),
+        symbol="300917",
+    )
+
+    assert row.ex_date == date(2023, 5, 24)
+    assert row.record_date == date(2023, 5, 23)
+
+
+def test_exchange_monthly_statistics_authorization_rejects_asset_date_window(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    workspace, queue, candidates, blocked, topology, cache_root = (
+        _exchange_statistics_authorization_inputs(prepared_attempt)
+    )
+
+    with pytest.raises(ValueError, match="not post-event"):
+        build_exchange_monthly_statistics_authorization(
+            code_root=prepared_attempt.code_root,
+            workspace=workspace,
+            queue=queue,
+            blocked_admission_path=blocked.manifest_path,
+            topology_manifest_path=topology.manifest_path,
+            candidate_id=str(candidates.candidates.item(0, "candidate_id")),
+            source_url=(
+                "https://docs.static.szse.cn/www/market/periodical/month/"
+                "W020240801344713255806.html"
+            ),
+            cache_root=cache_root,
+        )
+
+
+def test_exchange_monthly_statistics_authorization_rejects_non_policy_url(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    workspace, queue, candidates, blocked, topology, cache_root = (
+        _exchange_statistics_authorization_inputs(prepared_attempt)
+    )
+
+    with pytest.raises(ValueError, match="source URL"):
+        build_exchange_monthly_statistics_authorization(
+            code_root=prepared_attempt.code_root,
+            workspace=workspace,
+            queue=queue,
+            blocked_admission_path=blocked.manifest_path,
+            topology_manifest_path=topology.manifest_path,
+            candidate_id=str(candidates.candidates.item(0, "candidate_id")),
+            source_url=(
+                "https://docs.static.szse.cn/www/market/periodical/year/"
+                "W020240607344713255806.html"
+            ),
+            cache_root=cache_root,
+        )
+
+
+def test_exchange_monthly_statistics_uses_bounded_canonical_date_section(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    lines = [
+        "证券代码：000001",
+        "2023年度权益分派实施公告",
+        "每10股派发现金红利1元（含税），不送红股，不转增股本。",
+        *[f"前置说明{index}{'内容' * 30}" for index in range(17)],
+        "三、股权登记日与除权除息日",
+        "本次权益分派股权登记日为：2024年5月23日，除权除息日为：2023年5月24日。",
+        "四、权益分派方法",
+    ]
+
+    _, _, _, statistics = _publish_exchange_statistics_fixture(
+        prepared_attempt,
+        html=_statistics_html((_VALID_STATISTICS_ROW,)),
+        canonical_lines=lines,
+    )
+
+    canonical = statistics.record["canonical_announcement"]
+    assert canonical["record_date"] == "2024-05-23"
+
+
+@pytest.mark.parametrize(
+    "section_lines",
+    [
+        (
+            "股权登记日为：2024年5月23日。",
+            "四、权益分派方法",
+        ),
+        (
+            "三、股权登记日与除权除息日",
+            "股权登记日为：2024年5月23日。",
+            "三、股权登记日与除权除息日",
+            "四、权益分派方法",
+        ),
+        (
+            "三、股权登记日与除权除息日",
+            "本节未列出登记日。",
+            "四、权益分派方法",
+        ),
+        (
+            "三、股权登记日与除权除息日",
+            "股权登记日为：2024年5月23日。",
+            "股权登记日为：2024年5月23日。",
+            "四、权益分派方法",
+        ),
+    ],
+)
+def test_exchange_monthly_statistics_rejects_unbounded_canonical_date(
+    prepared_attempt: PreparedAttempt,
+    section_lines: tuple[str, ...],
+) -> None:
+    canonical_lines = [
+        "证券代码：000001",
+        "2023年度权益分派实施公告",
+        "每10股派发现金红利1元（含税），不送红股，不转增股本。",
+        *section_lines,
+    ]
+
+    with pytest.raises(ValueError, match="canonical announcement is not unique"):
+        _publish_exchange_statistics_fixture(
+            prepared_attempt,
+            html=_statistics_html((_VALID_STATISTICS_ROW,)),
+            canonical_lines=canonical_lines,
+        )
+
+
+@pytest.mark.parametrize(
+    ("title", "payload"),
+    [
+        (
+            "2023年度权益分派公告",
+            _unicode_pdf_bytes(
+                [
+                    "证券代码：000001",
+                    "关于2023年度权益分派的公告",
+                    "三、股权登记日与除权除息日",
+                    "股权登记日为：2024年5月23日。",
+                    "四、其他事项",
+                ]
+            ),
+        ),
+        ("2023年度权益分派实施公告", b"<html>invalid PDF</html>"),
+    ],
+)
+def test_exchange_monthly_statistics_authorization_rejects_noncanonical_pdf(
+    prepared_attempt: PreparedAttempt,
+    title: str,
+    payload: bytes | None,
+) -> None:
+    workspace, queue, candidates, blocked, topology, cache_root = (
+        _exchange_statistics_authorization_inputs(
+            prepared_attempt,
+            canonical_title=title,
+            canonical_payload=payload,
+        )
+    )
+
+    with pytest.raises(ValueError, match="topology differs"):
+        build_exchange_monthly_statistics_authorization(
+            code_root=prepared_attempt.code_root,
+            workspace=workspace,
+            queue=queue,
+            blocked_admission_path=blocked.manifest_path,
+            topology_manifest_path=topology.manifest_path,
+            candidate_id=str(candidates.candidates.item(0, "candidate_id")),
+            source_url=(
+                "https://docs.static.szse.cn/www/market/periodical/month/"
+                "W020240607344713255806.html"
+            ),
+            cache_root=cache_root,
+        )
+
+
+def test_exchange_monthly_statistics_keeps_pdf_semantic_route_upgrade(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    workspace, queue, candidates, blocked, topology, cache_root = (
+        _exchange_statistics_authorization_inputs(
+            prepared_attempt,
+            canonical_title="2023年度权益分派公告",
+        )
+    )
+
+    authorization = build_exchange_monthly_statistics_authorization(
+        code_root=prepared_attempt.code_root,
+        workspace=workspace,
+        queue=queue,
+        blocked_admission_path=blocked.manifest_path,
+        topology_manifest_path=topology.manifest_path,
+        candidate_id=str(candidates.candidates.item(0, "candidate_id")),
+        source_url=(
+            "https://docs.static.szse.cn/www/market/periodical/month/"
+            "W020240607344713255806.html"
+        ),
+        cache_root=cache_root,
+    )
+
+    assert authorization["candidate"]["candidate_id"] == (
+        candidates.candidates.item(0, "candidate_id")
+    )
+
+
+def test_exchange_monthly_statistics_rejects_post_candidate_canonical_pdf(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    with pytest.raises(ValueError, match="canonical announcement is not unique"):
+        _publish_exchange_statistics_fixture(
+            prepared_attempt,
+            html=_statistics_html((_VALID_STATISTICS_ROW,)),
+            canonical_date=date(2024, 5, 25),
+        )
+
+
+@pytest.mark.parametrize(
+    ("index", "value", "message"),
+    [
+        (0, "300917", "target row is not unique"),
+        (10, "2024/05/25", "row differs from candidate"),
+        (11, "2024/05/22", "canonical announcement is not unique"),
+        (5, "0.200", "row differs from candidate"),
+        (3, "0.100", "row differs from candidate"),
+    ],
+)
+def test_exchange_monthly_statistics_rejects_field_mismatch(
+    prepared_attempt: PreparedAttempt,
+    index: int,
+    value: str,
+    message: str,
+) -> None:
+    row = list(_VALID_STATISTICS_ROW)
+    row[index] = value
+
+    with pytest.raises(ValueError, match=message):
+        _publish_exchange_statistics_fixture(
+            prepared_attempt,
+            html=_statistics_html((tuple(row),)),
+        )
+
+
+def test_exchange_monthly_statistics_rejects_report_month_mismatch(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    html = _statistics_html(
+        (_VALID_STATISTICS_ROW,),
+        caption="DIVIDEND,BONUS AND RIGHTS ISSUES - （2024.04）",
+    )
+
+    with pytest.raises(ValueError, match="row differs from candidate"):
+        _publish_exchange_statistics_fixture(prepared_attempt, html=html)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            {"media_type": "text/html; charset=UTF-8"},
+            "receipt differs",
+        ),
+        (
+            {
+                "final_url": (
+                    "https://docs.static.szse.cn/www/market/periodical/month/"
+                    "redirected.html"
+                )
+            },
+            "receipt differs",
+        ),
+        ({"document_sha256": "0" * 64}, "receipt differs"),
+    ],
+)
+def test_exchange_monthly_statistics_rejects_receipt_drift(
+    prepared_attempt: PreparedAttempt,
+    overrides: dict[str, str],
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _publish_exchange_statistics_fixture(
+            prepared_attempt,
+            html=_statistics_html((_VALID_STATISTICS_ROW,)),
+            **overrides,
+        )
+
+
+def test_exchange_monthly_statistics_rejects_canonical_pdf_symlink(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    workspace, queue, _, statistics = _publish_exchange_statistics_fixture(
+        prepared_attempt,
+        html=_statistics_html((_VALID_STATISTICS_ROW,)),
+    )
+    authorization = load_exchange_monthly_statistics_authorization(
+        Path(str(statistics.manifest["network_authorization"]["path"])),
+        workspace=workspace,
+        queue=queue,
+    )
+    html_bytes = (statistics.root / "statistics.html").read_bytes()
+    receipt_bytes = (statistics.root / "statistics.receipt.json").read_bytes()
+    relative = str(
+        queue.frame.filter(queue.frame["symbol"] == "000001").item(
+            0,
+            "document_cache_path",
+        )
+    )
+    document_path = workspace.root / relative
+    backup_path = document_path.with_name("document.backup")
+    document_path.rename(backup_path)
+    document_path.symlink_to(backup_path)
+
+    with pytest.raises(ValueError, match="symlink|canonical path is invalid"):
+        build_verified_statistics_record(
+            workspace=workspace,
+            queue=queue,
+            authorization_payload=authorization.payload,
+            authorization_sha256=authorization.sha256,
+            request=authorization.request,
+            html_bytes=html_bytes,
+            receipt_bytes=receipt_bytes,
+        )
+
+
+def test_exchange_monthly_statistics_rejects_cross_review_session_binding(
+    prepared_attempt: PreparedAttempt,
+) -> None:
+    workspace, queue, _, statistics = _publish_exchange_statistics_fixture(
+        prepared_attempt,
+        html=_statistics_html((_VALID_STATISTICS_ROW,)),
+    )
+    bound_workspace = bind_exchange_monthly_statistics(
+        workspace=workspace,
+        queue=queue,
+        statistics=statistics,
+    )
+    bound_queue = load_verified_review_queue(bound_workspace)
+
+    with pytest.raises(ValueError, match="binding inputs differ"):
+        bind_exchange_monthly_statistics(
+            workspace=bound_workspace,
+            queue=bound_queue,
+            statistics=statistics,
+        )
 
 
 def _rendition_authorization(

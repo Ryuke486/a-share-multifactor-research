@@ -49,6 +49,7 @@ QUARANTINE_MANIFEST_NAME = "quarantine_manifest.json"
 
 _SCHEMA_VERSION = "2"
 _RENDITION_SCHEMA_VERSION = "3"
+_STATISTICS_SCHEMA_VERSION = "4"
 _QUARANTINE_SCHEMA_VERSION = "1"
 _IMMUTABLE_ENTRY = re.compile(r"[0-9a-f]{64}")
 _QUEUE_COLUMNS = (
@@ -661,7 +662,12 @@ def _verify_review_session(
     routing_record = manifest.get("routing")
     schema_version = manifest.get("schema_version")
     if (
-        schema_version not in {_SCHEMA_VERSION, _RENDITION_SCHEMA_VERSION}
+        schema_version
+        not in {
+            _SCHEMA_VERSION,
+            _RENDITION_SCHEMA_VERSION,
+            _STATISTICS_SCHEMA_VERSION,
+        }
         or manifest.get("role") != "official_evidence_review_workspace"
         or manifest.get("ready") is not False
         or manifest.get("execution_coverage_published") is not False
@@ -680,6 +686,14 @@ def _verify_review_session(
         raise ValueError("official evidence review session identity differs")
     if schema_version == _RENDITION_SCHEMA_VERSION:
         _verify_review_rendition_binding(
+            root,
+            manifest,
+            queue_bytes=queue_bytes,
+            catalog=catalog,
+            routing=routing,
+        )
+    elif schema_version == _STATISTICS_SCHEMA_VERSION:
+        _verify_review_statistics_binding(
             root,
             manifest,
             queue_bytes=queue_bytes,
@@ -793,6 +807,99 @@ def _verify_review_rendition_binding(
         raise ValueError("candidate rendition base review manifest fields differ")
 
 
+def _verify_review_statistics_binding(
+    session_root: Path,
+    manifest: dict[str, object],
+    *,
+    queue_bytes: bytes,
+    catalog: VerifiedAnnouncementCatalog,
+    routing: VerifiedAnnouncementRouting,
+) -> None:
+    base = manifest.get("base_review_manifest")
+    statistics = manifest.get("exchange_monthly_statistics")
+    if (
+        not isinstance(base, dict)
+        or not isinstance(statistics, dict)
+        or not isinstance(base.get("relative_path"), str)
+        or not isinstance(base.get("sha256"), str)
+        or not isinstance(statistics.get("relative_path"), str)
+        or not isinstance(statistics.get("manifest_sha256"), str)
+        or statistics.get("record_count") != 1
+    ):
+        raise ValueError("official evidence review statistics binding is invalid")
+    destination = session_root.parents[2]
+    base_relative = Path(str(base["relative_path"]))
+    statistics_relative = Path(str(statistics["relative_path"]))
+    if (
+        base_relative.is_absolute()
+        or len(base_relative.parts) != 4
+        or base_relative.parts[:2]
+        != ("official_document_workspace", REVIEW_SESSIONS_DIRECTORY)
+        or _IMMUTABLE_ENTRY.fullmatch(base_relative.parts[2]) is None
+        or base_relative.parts[3] != REVIEW_MANIFEST_NAME
+        or statistics_relative.is_absolute()
+        or statistics_relative.parts
+        != (
+            "official_exchange_monthly_statistics",
+            str(statistics["manifest_sha256"]),
+            "statistics_manifest.json",
+        )
+    ):
+        raise ValueError(
+            "official evidence review statistics path is not canonical"
+        )
+    base_path = destination / base_relative
+    statistics_path = destination / statistics_relative
+    _assert_safe_regular_file(
+        base_path,
+        label="base official evidence review manifest",
+    )
+    _assert_safe_regular_file(
+        statistics_path,
+        label="exchange statistics evidence manifest",
+    )
+    base_bytes = base_path.read_bytes()
+    base_manifest = _canonical_object(
+        base_bytes,
+        label="base official evidence review manifest",
+    )
+    base_queue_record = base_manifest.get("review_queue")
+    if (
+        base_manifest.get("schema_version") != _SCHEMA_VERSION
+        or _expected_review_session_id(base_manifest) != base_relative.parts[2]
+        or hashlib.sha256(base_bytes).hexdigest() != base["sha256"]
+        or not isinstance(base_queue_record, dict)
+        or base.get("queue_sha256") != base_queue_record.get("sha256")
+        or hashlib.sha256(statistics_path.read_bytes()).hexdigest()
+        != statistics["manifest_sha256"]
+    ):
+        raise ValueError("official evidence review statistics binding changed")
+    try:
+        _verify_review_session(
+            base_path.parent,
+            catalog=catalog,
+            routing=routing,
+        )
+    except ValueError as error:
+        raise ValueError(
+            "base official evidence review session is invalid"
+        ) from error
+    if queue_bytes != base_path.with_name(REVIEW_QUEUE_NAME).read_bytes():
+        raise ValueError("exchange statistics base review queue bytes differ")
+    inherited_fields = (
+        "role",
+        "catalog",
+        "routing",
+        "documents",
+        "quarantined_documents",
+        "review_queue",
+        "ready",
+        "execution_coverage_published",
+    )
+    if any(manifest.get(key) != base_manifest.get(key) for key in inherited_fields):
+        raise ValueError("exchange statistics base review manifest fields differ")
+
+
 def _expected_review_session_id(manifest: dict[str, object]) -> str:
     schema_version = manifest.get("schema_version")
     if schema_version == _SCHEMA_VERSION:
@@ -819,6 +926,18 @@ def _expected_review_session_id(manifest: dict[str, object]) -> str:
             "base_review_manifest_sha256": base.get("sha256"),
             "base_review_queue_sha256": base.get("queue_sha256"),
             "rendition_manifest_sha256": renditions.get(
+                "manifest_sha256"
+            ),
+        }
+    elif schema_version == _STATISTICS_SCHEMA_VERSION:
+        base = manifest.get("base_review_manifest")
+        statistics = manifest.get("exchange_monthly_statistics")
+        if not isinstance(base, dict) or not isinstance(statistics, dict):
+            raise ValueError("official evidence review session identity differs")
+        identity = {
+            "base_review_manifest_sha256": base.get("sha256"),
+            "base_review_queue_sha256": base.get("queue_sha256"),
+            "exchange_monthly_statistics_manifest_sha256": statistics.get(
                 "manifest_sha256"
             ),
         }

@@ -39,6 +39,11 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "src/ashare_multifactor/final_test/data_reuse.py",
     "src/ashare_multifactor/final_test/data_reuse_contract.py",
     "src/ashare_multifactor/final_test/execution_sources.py",
+    "src/ashare_multifactor/final_test/official_exchange_monthly_statistics.py",
+    "src/ashare_multifactor/final_test/"
+    "official_exchange_monthly_statistics_authorization.py",
+    "src/ashare_multifactor/final_test/"
+    "official_exchange_monthly_statistics_validation.py",
     "src/ashare_multifactor/final_test/gate.py",
     "src/ashare_multifactor/final_test/historical_attempt.py",
     "src/ashare_multifactor/final_test/preparation.py",

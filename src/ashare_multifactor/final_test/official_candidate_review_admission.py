@@ -166,6 +166,11 @@ def recompute_candidate_review_topology(
         verified_queue,
         evaluated=evaluated,
     )
+    _extend_with_verified_exchange_statistics(
+        workspace,
+        verified_queue,
+        evaluated=evaluated,
+    )
     minimum_lag, maximum_lag = _lag_interval(date_rule)
     unresolved, decisions = _candidate_results(
         subset,
@@ -276,6 +281,11 @@ def require_candidate_review_admission(
         verified_queue,
         evaluated=evaluated,
     )
+    statistics_identity = _extend_with_verified_exchange_statistics(
+        workspace,
+        verified_queue,
+        evaluated=evaluated,
+    )
     minimum_lag, maximum_lag = _lag_interval(date_rule)
     unresolved, decisions = _candidate_results(
         verified_candidates.candidates,
@@ -350,6 +360,8 @@ def require_candidate_review_admission(
     }
     if rendition_identity is not None:
         manifest["evidence_renditions"] = rendition_identity
+    if statistics_identity is not None:
+        manifest["exchange_monthly_statistics"] = statistics_identity
     admission = _publish_admission(
         workspace.root.parent,
         manifest=manifest,
@@ -666,6 +678,70 @@ def _extend_with_verified_renditions(
     }
 
 
+def _extend_with_verified_exchange_statistics(
+    workspace: EvidenceWorkspace,
+    queue: VerifiedReviewQueue,
+    *,
+    evaluated: dict[str, list[dict[str, object]]],
+) -> dict[str, object] | None:
+    binding = queue.manifest.get("exchange_monthly_statistics")
+    if binding is None:
+        return None
+    if not isinstance(binding, dict):
+        raise ValueError("exchange statistics review binding is invalid")
+    from ashare_multifactor.final_test.official_exchange_monthly_statistics import (
+        load_verified_exchange_monthly_statistics,
+    )
+
+    relative = str(binding.get("relative_path", ""))
+    statistics = load_verified_exchange_monthly_statistics(
+        workspace.root.parent / relative,
+        workspace=workspace,
+        queue=queue,
+    )
+    if (
+        binding.get("manifest_sha256") != statistics.manifest_sha256
+        or binding.get("record_count") != 1
+    ):
+        raise ValueError("exchange statistics review binding differs")
+    record = statistics.record
+    canonical = record["canonical_announcement"]
+    row = record["row"]
+    symbol = str(row["symbol"])
+    evaluated.setdefault(symbol, []).append(
+        {
+            "catalog_id": str(canonical["catalog_id"]),
+            "strong": True,
+            "valid_pdf": True,
+            "normalized_text": "",
+            "announcement_date": date.fromisoformat(
+                str(canonical["publication_date"])
+            ),
+            "source_url": str(record["source_url"]),
+            "document_sha256": str(record["document"]["sha256"]),
+            "evidence_kind": "exchange_monthly_statistics",
+            "evidence_manifest_sha256": statistics.manifest_sha256,
+            "strong_reason": str(canonical["strong_reason"]),
+            "labelled_dates": (date.fromisoformat(str(row["ex_date"])),),
+        }
+    )
+    return {
+        "relative_path": relative,
+        "manifest_sha256": statistics.manifest_sha256,
+        "record_count": 1,
+        "source_url": str(record["source_url"]),
+        "source_period_end": str(record["source_period_end"]),
+        "asset_path_date": str(record["asset_path_date"]),
+        "post_event": True,
+        "canonical_announcement": {
+            "catalog_id": str(canonical["catalog_id"]),
+            "source_url": str(canonical["source_url"]),
+            "publication_date": str(canonical["publication_date"]),
+            "document_sha256": str(canonical["document_sha256"]),
+        },
+    }
+
+
 def _cache_metadata_matches(row: dict[str, object], cached: object) -> bool:
     return (
         row["document_cache_path"] == cached.cache_path
@@ -736,7 +812,8 @@ def _candidate_results(
             for row in valid
             if (
                 ex_date in row["labelled_dates"]
-                if row["evidence_kind"] == "publisher_rendition"
+                if row["evidence_kind"]
+                in {"publisher_rendition", "exchange_monthly_statistics"}
                 else _date_in_text(ex_date, str(row["normalized_text"]))
             )
         ]
@@ -796,6 +873,9 @@ def _candidate_results(
                     "date_match": (
                         "labelled_exact_date_in_bounded_block"
                         if selected["evidence_kind"] == "publisher_rendition"
+                        else "exact_symbol_row_in_exchange_statistics"
+                        if selected["evidence_kind"]
+                        == "exchange_monthly_statistics"
                         else "exact_date_in_pdf"
                     ),
                     "historical_lag_interval_hit": (
