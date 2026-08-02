@@ -156,17 +156,18 @@ def build_candidate_review_rendition_authorization(
         raise ValueError("candidate rendition authorization topology differs")
     candidate = candidate_rows[0]
     related_catalog_ids = tuple(topology_rows[0]["related_catalog_ids"])
+    rendition_date = _stcn_date(rendition_source_url)
     anchor = derive_unique_candidate_rendition_anchor(
         workspace,
         verified_queue,
         symbol=str(candidate["symbol"]),
         related_catalog_ids=related_catalog_ids,
+        required_publication_date=rendition_date,
     )
     canonical_catalog_id = str(anchor["catalog_id"])
     if _CATALOG_ID.fullmatch(canonical_catalog_id) is None:
         raise ValueError("candidate rendition authorization anchor differs")
     canonical_date = _cninfo_date(str(anchor["source_url"]))
-    rendition_date = _stcn_date(rendition_source_url)
     authority_date = _cninfo_date(authority_source_url)
     if (
         rendition_date != canonical_date

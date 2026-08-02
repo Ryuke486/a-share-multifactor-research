@@ -564,11 +564,13 @@ def derive_unique_candidate_rendition_anchor(
     *,
     symbol: str,
     related_catalog_ids: tuple[str, ...],
+    required_publication_date: date,
 ) -> dict[str, object]:
-    """Return the sole related canonical PDF that passes admission semantics."""
+    """Return the sole same-date canonical PDF that passes admission semantics."""
     if (
         not related_catalog_ids
         or len(set(related_catalog_ids)) != len(related_catalog_ids)
+        or not isinstance(required_publication_date, date)
     ):
         raise ValueError("candidate rendition related catalog IDs differ")
     related = queue.frame.filter(
@@ -592,6 +594,7 @@ def derive_unique_candidate_rendition_anchor(
         and row["evidence_kind"] == "canonical_cninfo"
         and row["strong"]
         and row["valid_pdf"]
+        and row["announcement_date"] == required_publication_date
     }
     anchors = related.filter(pl.col("catalog_id").is_in(eligible_ids)).to_dicts()
     if len(anchors) != 1:

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import ast
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 import hashlib
 from io import BytesIO
 import json
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import polars as pl
 import pytest
@@ -44,7 +45,7 @@ from ashare_multifactor.final_test.official_review_submission import (
     load_verified_candidate_snapshot,
 )
 from test_final_test_official_candidate_review_admission import (
-    _SplitRequirementAnnouncementTransport,
+    _AdmissionAnnouncementTransport,
     _admission_inputs,
     _pdf_bytes,
     _rendition_authorization,
@@ -56,6 +57,67 @@ from test_final_test_resume import PreparedAttempt
 
 
 pytest_plugins = ("test_final_test_resume",)
+
+
+class _RelatedAnnouncementTransport(_AdmissionAnnouncementTransport):
+    def __init__(
+        self,
+        *,
+        titles: dict[str, str],
+        announcement_dates: dict[str, date],
+        related_dates: tuple[date, ...],
+    ) -> None:
+        super().__init__(
+            titles=titles,
+            announcement_dates=announcement_dates,
+        )
+        self.related_dates = related_dates
+
+    def fetch(
+        self,
+        endpoint: str,
+        form: dict[str, str],
+        *,
+        timeout_seconds: float,
+    ) -> bytes:
+        if endpoint.endswith("/information/topSearch/query"):
+            return super().fetch(
+                endpoint,
+                form,
+                timeout_seconds=timeout_seconds,
+            )
+        del timeout_seconds
+        symbol = form["stock"].split(",", maxsplit=1)[0]
+        if symbol != "000001":
+            return super().fetch(endpoint, form, timeout_seconds=0)
+        announcements = [
+            {
+                "announcementId": f"{symbol}-related-{index}",
+                "announcementTitle": self.titles[symbol],
+                "announcementTime": int(
+                    datetime(
+                        value.year,
+                        value.month,
+                        value.day,
+                        tzinfo=ZoneInfo("Asia/Shanghai"),
+                    ).timestamp()
+                    * 1000
+                ),
+                "adjunctUrl": (
+                    f"finalpage/{value.isoformat()}/"
+                    f"{symbol}-related-{index}.PDF"
+                ),
+            }
+            for index, value in enumerate(self.related_dates, start=1)
+        ]
+        return json.dumps(
+            {
+                "totalpages": 1,
+                "totalAnnouncement": len(announcements),
+                "announcements": announcements,
+            },
+            separators=(",", ":"),
+        ).encode()
 
 
 def _valid_rendition(
@@ -589,7 +651,67 @@ def test_candidate_rendition_authorization_allows_other_query_partition(
     assert authorization.candidate_id == candidate_id
 
 
-def test_candidate_rendition_authorization_rejects_two_eligible_anchors(
+def test_candidate_rendition_authorization_selects_matching_year_anchor(
+    prepared_attempt: PreparedAttempt,
+    tmp_path: Path,
+) -> None:
+    titles = {
+        "000001": "年度权益分派实施公告",
+        "600000": "2024年第三季度报告",
+    }
+    dates = {
+        "000001": date(2024, 5, 28),
+        "600000": date(2024, 6, 18),
+    }
+    related_dates = tuple(date(year, 5, 28) for year in range(2022, 2026))
+    wrong_date_pdf = _unicode_pdf_bytes(
+        [
+            "证券代码：000001",
+            "年度权益分派实施公告",
+            "除权除息日：2020-06-01",
+        ]
+    )
+    workspace, queue, candidates = _admission_inputs(
+        prepared_attempt,
+        titles=titles,
+        announcement_dates=dates,
+        document_payloads={
+            **{
+                f"000001-related-{index}": wrong_date_pdf
+                for index in range(1, 5)
+            },
+            "600000": _pdf_bytes("2024-07-01"),
+        },
+        candidate_symbols={"000001"},
+        announcement_transport=_RelatedAnnouncementTransport(
+            titles=titles,
+            announcement_dates=dates,
+            related_dates=related_dates,
+        ),
+    )
+
+    _, authorization = _rendition_authorization(
+        prepared_attempt,
+        workspace=workspace,
+        queue=queue,
+        candidates=candidates,
+        tmp_path=tmp_path,
+        rendition_source_url=(
+            "https://epaper.stcn.com/att/202405/28/"
+            "ZQ28B001-XH_eBook.pdf"
+        ),
+        authority_source_url=(
+            "https://static.cninfo.com.cn/finalpage/2024-04-22/"
+            "1219703216.PDF"
+        ),
+    )
+
+    canonical = authorization.payload["canonical_announcement"]
+    assert canonical["publication_date"] == "2024-05-28"
+    assert canonical["source_url"].endswith("/000001-related-3.PDF")
+
+
+def test_candidate_rendition_authorization_rejects_two_same_day_anchors(
     prepared_attempt: PreparedAttempt,
     tmp_path: Path,
 ) -> None:
@@ -613,14 +735,15 @@ def test_candidate_rendition_authorization_rejects_two_eligible_anchors(
         titles=titles,
         announcement_dates=dates,
         document_payloads={
-            "000001-prior": wrong_date_pdf,
-            "000001-post": wrong_date_pdf,
+            "000001-related-1": wrong_date_pdf,
+            "000001-related-2": wrong_date_pdf,
             "600000": _pdf_bytes("2024-07-01"),
         },
         candidate_symbols={"000001"},
-        announcement_transport=_SplitRequirementAnnouncementTransport(
+        announcement_transport=_RelatedAnnouncementTransport(
             titles=titles,
             announcement_dates=dates,
+            related_dates=(date(2024, 5, 28), date(2024, 5, 28)),
         ),
     )
 
