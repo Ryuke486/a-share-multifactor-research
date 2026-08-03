@@ -1,0 +1,145 @@
+{
+  "code_baseline": {
+    "commit": "a1076c277baa3c2a9503d7f87dbfdbad3acbfc6b",
+    "tree": "29258163e0aeb355c79ecfa2a2388f3a4e692025"
+  },
+  "completion_claim": "A股多因子研究与验证版 v1.0 已完成；最终样本外测试继续封存",
+  "created_on": "2026-08-03",
+  "delivery_files": [
+    {
+      "path": "AGENTS.md",
+      "sha256": "20515f732a482efe72ec87affe9b8b74947a8809342aed436ff25aec58a05008"
+    },
+    {
+      "path": "README.md",
+      "sha256": "87329fc2ff8f213ca5ee70bd9583cb7f7f0437c17bfa23e449e691806b17ec4b"
+    },
+    {
+      "path": "docs/assets/v1/execution_cost_sensitivity.png",
+      "sha256": "2583e1d1d85a4f13a778e479c58cf9e8dd0d9aa9cdfecb5f38c18f9efd7ff92d"
+    },
+    {
+      "path": "docs/assets/v1/research_composite_ic.png",
+      "sha256": "3f03a1393cb9f7b1c42f44fbb4dc2517dff24be24c6959da2a4e9b55a3fb2690"
+    },
+    {
+      "path": "docs/assets/v1/validation_candidate_comparison.png",
+      "sha256": "ae571a4616c12333f5d9ab488bf395e697068d5471cb41e8692870a545b8f02e"
+    },
+    {
+      "path": "docs/agents/domain.md",
+      "sha256": "93a47c891e5a30de6ab42823e41fd0ddf6f62ca8fc4acc5aae6248c667367987"
+    },
+    {
+      "path": "docs/agents/issue-tracker.md",
+      "sha256": "42942fc142ff954abfe677ef0b637bbc50ad96bc5f9a7ebf0810d0b16a32e323"
+    },
+    {
+      "path": "docs/agents/triage-labels.md",
+      "sha256": "9497fc2a488e7a9a532057bb1ee5db7d2c38a2ffc088cee190de5de0bb573e93"
+    },
+    {
+      "path": "docs/limitations.md",
+      "sha256": "0d00d52fb906e9b622e40302adb58e93575d904e80a3de239ccd28595c7c0eea"
+    },
+    {
+      "path": "docs/reproduction.md",
+      "sha256": "6737fe87b28cf64c6d5513f5c03061a48999c4b56c12dab317a7b54336f5e913"
+    },
+    {
+      "path": "docs/result_dictionary.md",
+      "sha256": "bfa04020def33834a949cbe0a6c92c7a6d6c65985f3061691a999bb5c5dff0ec"
+    },
+    {
+      "path": "docs/results/index.md",
+      "sha256": "7337bca60f795f5236d61449d4866d109cf8e3d575983b91d0aae8172aa58c29"
+    },
+    {
+      "path": "docs/stage9-10-archive.md",
+      "sha256": "e9d91adff6f4666fff40eaacff03b7f1f1332b292b5e13383abd3f648fef97ed"
+    },
+    {
+      "path": "reports/research_report.md",
+      "sha256": "abf58f1624711d82f75994a0912ea94264a433dcc220f566fe4b7126a9270998"
+    }
+  ],
+  "excluded_claims": [
+    "2022-2025最终样本外有效",
+    "Stage 9已通过",
+    "检查点C已通过",
+    "原总项目完成标准全部满足",
+    "策略保证盈利"
+  ],
+  "final_test": {
+    "current_pointer_exists": false,
+    "period": [
+      "2022-01-01",
+      "2025-12-31"
+    ],
+    "resume_executed_for_authoritative_release": false,
+    "status": "sealed_and_deferred_to_optional_v2"
+  },
+  "release_id": "v1.0.0-research-validation",
+  "schema_version": 1,
+  "scope": {
+    "completed": [
+      "research_protocol_and_data_foundation",
+      "factor_research_2005_2016",
+      "factor_combination_2005_2016",
+      "formal_execution_backtest_2005_2016",
+      "validation_evaluation_2017_2021",
+      "robustness_2005_2021",
+      "documentation_delivery"
+    ],
+    "deferred": [
+      "final_test_2022_2025",
+      "checkpoint_c",
+      "full_stage10_delivery_pipeline",
+      "defense_slides"
+    ]
+  },
+  "source_releases": [
+    {
+      "manifest_sha256": "d1987c69b46ae931cbc21cdf07b4c0661569c56c589d4f79a3fc17a420c92242",
+      "path_hint": "artifacts/factor_research/manifest.json",
+      "stage": 4
+    },
+    {
+      "manifest_sha256": "d846d866f1766c04f755774a6a750999aa16eef35612a350fbe1797447482fb2",
+      "path_hint": "processed/factor_combination/releases/667e0ee00d8941e9a1f5db9a963ae9c3/manifest.json",
+      "run_id": "667e0ee00d8941e9a1f5db9a963ae9c3",
+      "stage": 5
+    },
+    {
+      "manifest_sha256": "1a6f3cea593fa14cd7e687fae26b33e1da5f2df86c5616742aff0eb22697128e",
+      "path_hint": "processed/formal_backtest/releases/b995878_stage6_authoritative/manifest.json",
+      "run_id": "b995878_stage6_authoritative",
+      "stage": 6
+    },
+    {
+      "manifest_sha256": "6ee12a10b25a53d8a48c596faa76c1833d92c10c511e570d301a5f96c10836fd",
+      "path_hint": "processed/validation_evaluation/releases/65b19e1_stage7_validation_controlled_collector_successor/manifest.json",
+      "run_id": "65b19e1_stage7_validation_controlled_collector_successor",
+      "stage": 7
+    },
+    {
+      "manifest_sha256": "c75948b4c47007c6f5690451afbebdff02eb5d3c793e6285eb799af898ea1fba",
+      "path_hint": "processed/robustness/releases/a1076c2_stage8_robustness_szse_statistics_successor/manifest.json",
+      "run_id": "a1076c2_stage8_robustness_szse_statistics_successor",
+      "stage": 8
+    }
+  ],
+  "status": "research_and_validation_complete",
+  "verification": {
+    "documentation_links": "passed",
+    "full_pytest": {
+      "passed": 1515,
+      "skipped": 1,
+      "status": "passed",
+      "wall_time_seconds": 421.60
+    },
+    "git_diff_check": "passed",
+    "release_readback": "passed",
+    "ruff": "passed"
+  }
+}

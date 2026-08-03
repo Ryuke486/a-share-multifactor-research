@@ -1,145 +1,82 @@
-# A股横截面多因子研究
+# A股横截面多因子研究与验证版 v1.0
 
-本项目研究A股横截面因子的预测能力，并在严格控制前视偏差、幸存者偏差和交易时序的前提下，构建含交易成本的可审计组合。当前已完成阶段六2005–2016正式A股执行回测；验证期和最终测试期仍封存，结果不构成投资建议。
+本仓库实现一套可复现、可审计的 A 股横截面多因子研究流程：从只读原始日线数据出发，完成动态股票池、单因子检验、因子合成、含交易成本的正式执行回测、独立验证期评价和稳健性分析。
 
-## 阶段四结果边界
+> **版本边界：** v1.0 已完成研究期与验证期工作；2022–2025 最终样本外测试继续封存，Stage 9–10 延期为可选 v2.0。因此本版本不提供最终样本外有效性结论，也不构成投资建议。
 
-- 2003–2004只用于预热，2005–2016为唯一评价区间；2017年及以后数据未开启。
-- 统一 `factor_panel` 含2,015,188个唯一 `(date, symbol, factor_name)` 观测，日期为2005-01-31至2016-12-30，覆盖14个预注册因子。
-- 冻结规则下分类为6个candidate、5个watch、3个reject：candidate为 `amihud_20`、`reversal_20`、`reversal_5`、`turnover_20`、`volatility_20`、`volatility_60`；watch为 `bp`、`downside_volatility_60`、`ep_ttm`、`log_market_cap`、`sp_ttm`；reject为 `momentum_120`、`momentum_12_1`、`momentum_60`。
-- 价值字段的历史point-in-time口径、历史行业和ST来源仍未核验；本阶段不做行业中性化。candidate只表示通过预注册的研究期门槛，不代表样本外有效或未来收益承诺。
-- 产物包含14张独立因子卡片、56张标准图、36个 `processed` 文件和81个 `artifacts` 文件；重跑后合计117个产物文件哈希零变化。数据质量记录的哈希已绑定到清单和血缘，后续阶段不能在质量文件缺失或被替换时继续。
+## 主要结论
 
-## 当前MVP范围
+| 环节 | 冻结结果 | 应如何解释 |
+|---|---|---|
+| 单因子研究（2005–2016） | 14 个预注册因子中 6 个 candidate、5 个 watch、3 个 reject | candidate 只表示通过研究期门槛；价值因子因 point-in-time 口径未核验最多为 watch |
+| 因子合成（2005–2016） | `family_equal` 的 20 日平均 Rank IC 为 0.102201，ICIR 为 2.735685 | 简单等权未被表现相近的滚动 IC 方法替换 |
+| 正式执行回测（2005–2016） | 完整成本年化收益 17.6031%，最大回撤 -66.9638%，实现短缺率 0.3805% | 这是研究期、日线级保守执行模拟，不是样本外收益保证 |
+| 独立验证（2017–2021） | 冻结规则选择 `rolling_ic_family_size_stratified_buffered`；Rank IC 0.0889，但净年化收益 -6.71%、最大回撤 -53.78% | 截面排序信号仍存在，但没有转化为正的净组合收益；该不利结果被完整保留 |
+| 稳健性（2005–2021） | 25 个稳定实验、9 个敏感实验、2 个失败或未运行实验 | 成本和冲击假设对收益有实质影响，稳健性结果不用于重新挑选主方案 |
 
-- 逐日形成最多200只股票的动态股票池：至少252个历史观测、非ST、当日原始OHLC有效，并按过去20个观测的平均成交额筛选流动性。
-- 使用后复权收盘价计算60日动量；20日未来收益只作为Rank IC评价标签，不进入股票池、因子或权重。
-- 每个真实月末生成信号，按动量取前20只等权；信号在t日收盘后形成，最早在下一真实交易日开盘执行。
-- 同时保存毛收益与扣除统一单边10bp成本的净收益，以及目标、成交、持仓、拒单、净值、图表和机器生成报告。
+![验证期候选方案对比](docs/assets/v1/validation_candidate_comparison.png)
 
-## 数据准备
+验证期三个候选方案的净年化收益均为负。选择结果来自预先冻结的相对比较规则，不等于“策略已验证盈利”。
 
-原始数据应放在配置指定的只读目录：
+## 研究设计
+
+- **研究期：** 2005-01-01 至 2016-12-31。
+- **验证期：** 2017-01-01 至 2021-12-31。
+- **最终测试期：** 2022-01-01 至 2025-12-31，v1.0 中封存。
+- **因子族：** 价值、动量、短期反转、流动性、低波动和规模，共 14 个预注册因子。
+- **信号与成交：** 信号在月末收盘后形成，最早在下一真实交易日开盘执行。
+- **执行约束：** T+1、整手、停牌、涨跌停、容量、佣金、最低佣金、印花税、滑点、冲击成本、未成交订单、公司行动和三套独立账本。
+- **防泄漏：** 动态历史股票池；未来收益只作标签；滚动权重严格滞后；最终测试期不进入 v1.0 报告、图表或选择规则。
+
+数据流保持单向：
+
+```text
+原始 CSV（只读）
+  → 规范日面板与数据清单
+  → 动态股票池、标签与因子面板
+  → 单因子评价与因子卡片
+  → 复合分数与目标权重
+  → 订单、成交、持仓、现金与 NAV
+  → 验证期评价与稳健性 release
+  → v1.0 文档交付
+```
+
+## 快速验证
+
+需要 Python 3.12 或更高版本：
+
+```bash
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -m pytest -q
+.venv/bin/python -m ruff check src tests
+```
+
+这些命令只运行人工合成测试和静态检查，不需要本地 28GB 原始数据。完整重建、release 回读和路径要求见[复现说明](docs/reproduction.md)。
+
+## 数据边界
+
+本仓库不分发原始行情、`processed/`、`artifacts/` 或官方公告缓存。完整运行需在仓库根目录准备：
 
 ```text
 Data/每天一个文件/不复权/
 Data/每天一个文件/后复权/
 ```
 
-第一版只读取这两类每日文件，并按 `(date, symbol)` 严格一对一连接：不复权数据用于研究和成交状态，后复权数据用于跨期收益。原始CSV不随仓库发布，也不得提交Git，原因是数据量大，且来源、授权和部分字段口径仍待补全；仓库只允许提交极小的人工合成测试夹具。完整数据清单和限制见 [`docs/data/README.md`](docs/data/README.md)。`processed/` 和 `artifacts/` 均为可再生且默认忽略的目录。
+不复权数据用于研究和成交状态，后复权数据用于跨期收益与影子核验；二者按 `(date, symbol)` 严格一对一连接。原始数据来源、授权、历史行业、ST 口径和估值 point-in-time 证据仍有未解决限制，详见[数据说明](docs/data/README.md)与[已知限制](docs/limitations.md)。
 
-## 安装
+## 交付索引
 
-需要Python 3.12或更高版本。在仓库根目录执行：
+- [最终研究报告](reports/research_report.md)
+- [复现说明](docs/reproduction.md)
+- [结果字典](docs/result_dictionary.md)
+- [关键图表与机器结果索引](docs/results/index.md)
+- [已知限制](docs/limitations.md)
+- [Stage 9–10 延期归档](docs/stage9-10-archive.md)
+- [v1.0 机器可读 manifest](releases/v1.0.0-research-validation.json)
+- [研究协议](docs/research_protocol.md)
+- [字段与原始数据说明](docs/data/README.md)
 
-```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e ".[dev]"
-```
+## 版本声明
 
-## 运行
-
-从只读原始日文件生成阶段四全部结果：
-
-```bash
-.venv/bin/ashare-factors --config configs/research_protocol.yaml --stage build
-.venv/bin/ashare-factors --config configs/research_protocol.yaml --stage all
-```
-
-`build` 仅构建2003–2016隔离数据集；`all` 依次执行字段审计、因子、评价和报告。阶段四不做因子合成、组合优化或正式回测，也不读取2017年及以后数据。
-
-从阶段四产物生成阶段五复合分数、目标权重和事前诊断：
-
-```bash
-.venv/bin/python -m ashare_multifactor.cli.combinations --config configs/research_protocol.yaml
-```
-
-阶段五只消费 `processed/factor_research/`，不读取原始CSV；滚动IC权重严格滞后一期。每次完整运行写入不可变release，`CURRENT.json`只在全部校验通过后切换。输出是阶段六的事前目标，不是真实成交回测。
-
-阶段六先审计免费公开数据，再运行正式执行回测：
-
-```bash
-.venv/bin/python -m ashare_multifactor.cli.formal_backtest audit
-.venv/bin/python -m ashare_multifactor.cli.formal_backtest all --publish
-```
-
-隔离工作树没有独立虚拟环境时，使用主仓库环境并显式指定源码路径：
-
-```bash
-PYTHONPATH=src /Users/mikasa/本科时期/Projects/repository1/.venv/bin/python -m pytest -q
-```
-
-阶段六权威状态只能从 `processed/formal_backtest/CURRENT.json` 解析到不可变release；
-`artifacts/formal_backtest/` 下的便利报告属于单次诊断快照，不得用于判断当前发布状态。
-
-执行器包含T+1、整手、涨跌停、pending、滞后ADV容量、历史费用、滑点/冲击、除权日应收股利与派息日现金。完整成本、仅显性费用和零成本使用三套独立账本，并以后复权收益和长停牌证据作为发布门禁。
-
-阶段三MVP仍可独立复现：
-
-从原始日文件重建2012–2015数据底座并完成全部MVP步骤：
-
-```bash
-.venv/bin/ashare-mvp --config configs/research_protocol.yaml --stage all
-```
-
-也可按依赖顺序分阶段运行，便于审计或断点续跑：
-
-```bash
-.venv/bin/ashare-mvp --config configs/research_protocol.yaml --stage build
-.venv/bin/ashare-mvp --config configs/research_protocol.yaml --stage signals
-.venv/bin/ashare-mvp --config configs/research_protocol.yaml --stage targets
-.venv/bin/ashare-mvp --config configs/research_protocol.yaml --stage backtest
-.venv/bin/ashare-mvp --config configs/research_protocol.yaml --stage report
-```
-
-后续阶段会校验配置、源数据清单和上游文件指纹；若上游产物缺失、被替换或与当前配置不一致，流程会拒绝继续。不要跳过依赖阶段复用来源不明的中间结果。
-
-## 输出
-
-- `processed/daily_panel/`：2012–2015按年份分区的统一Parquet、数据清单和质量问题记录；清单保存每个分区的行数、日期范围、大小和SHA-256。
-- `processed/mvp/`：信号、月末截面、Rank IC、目标权重、净回测成交/持仓/拒单账本、毛/净NAV与汇总，以及血缘信息等中间产物。
-- `artifacts/mvp/`：便于审计的 `rank_ic.csv`、`target_weights.parquet`、`trades.csv`、`holdings.parquet`、`blocked_orders.csv`、`nav.csv`、`gross_nav.csv`、`summary.json`、图表、运行清单、数据质量摘要和 `report.md`。
-- `processed/factor_combination/CURRENT.json`：当前权威阶段五release身份及manifest哈希。
-- `processed/factor_combination/releases/<run_id>/datasets/`：四种复合分数、每月因子权重、两套目标权重和组合诊断。
-- `processed/factor_combination/releases/<run_id>/artifacts/`：复合IC、月度截面相关性、换手、暴露、容量代理、质量问题、图表和机器生成报告。
-
-`report.md`中的指标从机器可读产物生成，不手工抄写回测数字。报告只说明管道可以运行、复现和审计，不应解读为策略赚钱、稳健或具备未来收益能力。
-
-## 日期边界与防泄漏
-
-日期统一由 `configs/research_protocol.yaml` 管理：
-
-| 用途 | 日期 | 当前状态 |
-|---|---|---|
-| 研究期 | 2005-01-01至2016-12-31 | 研究协议固定 |
-| 验证期 | 2017-01-01至2021-12-31 | 与研究期隔离 |
-| 最终测试期 | 2022-01-01至2025-12-31 | 封存，不读取、不统计、不绘图 |
-| MVP预热数据 | 2012-01-01至2013-12-31 | 只形成历史窗口，不计入绩效 |
-| MVP分析期 | 2014-01-01至2015-12-31 | 当前管道验证范围 |
-| 阶段四预热 | 2003-01-01至2004-12-31 | 只形成历史窗口 |
-| 阶段四评价 | 2005-01-01至2016-12-31 | 完整单因子研究 |
-
-- 股票池、因子和目标权重在t日只使用t日及以前的信息；历史股票池逐日形成，不用当前存续股票列表或未来退市时间回看历史。
-- 20日未来收益只作标签；月末和t+1执行日均来自真实交易日序列，禁止用自然日简单加一。
-- 构建器只允许MVP预热与分析区间，数据清单和各阶段输出还会校验日期上限与血缘。
-- 阶段四已完成但不解封后续区间；阶段五仍只使用研究期，验证期和最终测试期继续封存。
-
-## 当前简化与缺价规则
-
-MVP允许分数持仓，使用统一单边10bp成本。真实行情缺价采用最小、可审计规则：
-
-1. 持仓缺少当日有效价格时，使用该证券最近已知收盘价估值。
-2. 调仓证券缺少执行日开盘价时不成交，并写入 `blocked_orders`，原因标记为 `missing_open_price`。
-3. 冻结缺价持仓后，为全部可交易目标使用同一个兼顾冻结市值与全部可执行交易成本的最大可行资金基数；再先卖后买，保持可交易目标间原权重比例。
-4. 拒单不追单，也不在月内补单；下一月重新生成目标组合。
-
-这些规则不是完整停牌或撮合系统。当前仍未实现涨跌停约束、整手交易、历史佣金与印花税变化、滑点和冲击成本，以及完整挂单/撤单/追单系统；这些属于后续正式A股回测阶段。
-
-## 验证
-
-以下命令只运行人工合成测试和静态检查，不需要读取真实 `Data/`：
-
-```bash
-.venv/bin/pytest -v
-.venv/bin/ruff check src tests
-```
+`v1.0.0-research-validation` 表示“A股多因子研究与验证版 v1.0 已完成”。它不表示原总项目中最终样本外测试、检查点 C 或全范围 Stage 10 已完成。仓库目前未附开放源代码许可证；公开发布或允许再分发前需另行选择许可证并确认数据与第三方材料授权。

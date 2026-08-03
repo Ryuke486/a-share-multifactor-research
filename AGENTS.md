@@ -251,6 +251,13 @@
 - 牛熊震荡、大小盘和行业子样本；
 - 研究报告、README、复现命令和8–10页答辩材料。
 
+实际状态（2026-08-03）：Stage 7 已完成2017–2021独立验证，冻结规则选择
+`rolling_ic_family_size_stratified_buffered`，但三个候选的验证期净年化收益均为负；
+该不利结果未触发因子翻转或参数回改。Stage 8 已完成2005–2021稳健性分析并发布
+权威release。用户随后将当前交付范围调整为“研究与验证完成版 v1.0”：2022–2025
+最终测试继续封存，Stage 9–10 归档为可选v2.0。本状态允许完成v1.0文档交付，但不得
+声称最终样本外有效、Stage 9通过、检查点C通过或本文件第12节的原总项目标准全部满足。
+
 ## 7. 稳定的数据流与模块边界
 
 预期数据流：
@@ -417,3 +424,17 @@
 - 用户能够在复试中解释研究问题、数据口径、偏差控制、因子逻辑、组合规则、成本影响和项目局限。
 
 项目的价值不是证明某个策略“保证赚钱”，而是证明研究者能够以严谨、透明、可复现的方式完成一项量化投资研究。
+
+## Agent skills
+
+### Issue tracker
+
+本仓库的 issues 和 PRD 使用 GitHub Issues 管理。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用五个默认 triage 标签：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+使用 single-context 领域文档结构。详见 `docs/agents/domain.md`。
