@@ -417,3 +417,17 @@
 - 用户能够在复试中解释研究问题、数据口径、偏差控制、因子逻辑、组合规则、成本影响和项目局限。
 
 项目的价值不是证明某个策略“保证赚钱”，而是证明研究者能够以严谨、透明、可复现的方式完成一项量化投资研究。
+
+## Agent skills
+
+### Issue tracker
+
+本仓库的 issues 和 PRD 使用 GitHub Issues 管理。详见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+使用五个默认 triage 标签：`needs-triage`、`needs-info`、`ready-for-agent`、`ready-for-human`、`wontfix`。详见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+使用 single-context 领域文档结构。详见 `docs/agents/domain.md`。
