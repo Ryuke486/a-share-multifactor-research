@@ -33,5 +33,5 @@
 
 1. Git 仓库不包含 `Data/`、`processed/`、`artifacts/`、官方公告缓存或其他大文件；完整结果复验需要本地数据和 machine-readable release。
 2. v1.0 是文档型 release，没有新增 `processed/project_delivery/CURRENT.json` 或 delivery Python 流水线。
-3. 仓库尚未附开放源代码许可证。公开发布、复制或再分发前，需要用户选择许可证并核对第三方数据、公告与图表素材授权。
+3. 仓库中由 `Ryuke486` 原创的源代码和原创文档采用 MIT License；`Data/`、`processed/`、`artifacts/`、官方公告、原始市场数据及其他第三方材料不属于该授权范围。
 4. Stage 9 的失败 attempt、HANDOFF 和事故证据仍是审计历史，但已从 v1.0 完成条件中移除；它们不能被表述为 Stage 9 通过。

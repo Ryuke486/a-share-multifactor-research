@@ -11,8 +11,12 @@
       "sha256": "20515f732a482efe72ec87affe9b8b74947a8809342aed436ff25aec58a05008"
     },
     {
+      "path": "LICENSE",
+      "sha256": "060c3d2f7f010b26f4000bfd8870151463e250e64ed7baf0eb21645b8a5d05b3"
+    },
+    {
       "path": "README.md",
-      "sha256": "87329fc2ff8f213ca5ee70bd9583cb7f7f0437c17bfa23e449e691806b17ec4b"
+      "sha256": "c91c1dda423880df9d4ccff99392a043fed38981586ad7804a8ab138c7665085"
     },
     {
       "path": "docs/assets/v1/execution_cost_sensitivity.png",
@@ -40,7 +44,7 @@
     },
     {
       "path": "docs/limitations.md",
-      "sha256": "0d00d52fb906e9b622e40302adb58e93575d904e80a3de239ccd28595c7c0eea"
+      "sha256": "244b94e66df470538fdab8fe03a4e183890ff2fa8514027f3475fa66bfb4979c"
     },
     {
       "path": "docs/reproduction.md",
@@ -57,6 +61,10 @@
     {
       "path": "docs/stage9-10-archive.md",
       "sha256": "e9d91adff6f4666fff40eaacff03b7f1f1332b292b5e13383abd3f648fef97ed"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "4616313d839d4e02c5916bd53643a040de022264912d461753acaaafea99ed00"
     },
     {
       "path": "reports/research_report.md",
@@ -78,6 +86,11 @@
     ],
     "resume_executed_for_authoritative_release": false,
     "status": "sealed_and_deferred_to_optional_v2"
+  },
+  "license": {
+    "copyright": "Copyright (c) 2026 Ryuke486",
+    "identifier": "MIT",
+    "scope": "original_source_code_and_original_documentation"
   },
   "release_id": "v1.0.0-research-validation",
   "schema_version": 1,
@@ -136,9 +149,10 @@
       "passed": 1515,
       "skipped": 1,
       "status": "passed",
-      "wall_time_seconds": 421.60
+      "wall_time_seconds": 424.51
     },
     "git_diff_check": "passed",
+    "license_metadata": "passed",
     "release_readback": "passed",
     "ruff": "passed"
   }
