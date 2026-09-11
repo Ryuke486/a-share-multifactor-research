@@ -4,7 +4,7 @@
  "date": "2026-09-11",
  "status": "implemented_and_verified_uncommitted",
  "baseline": {
-  "commit": "1a9feb196ac659edecbe8a271e9e5abe168d00b3",
+  "commit": "fd9180584f22b0775628c4034d95eaf73ae4ae12",
   "branch": "main",
   "step_03_accepted_tree": ".worktrees/v1-boundaries-step03 @ 1a9feb196ac659edecbe8a271e9e5abe168d00b3",
   "step_03_integration": "authorized by the user; 10 delivered files copied byte-identically and re-verified against the step-03 manifest hashes",
@@ -125,13 +125,28 @@
    "pull_request",
    "workflow_dispatch"
   ],
+  "runner": "macos-latest; the verified research platform, because the sealed panel-freeze and recovery paths rely on macOS /dev/fd plus O_NOFOLLOW semantics",
   "matrix": [
    "3.12",
    "3.14"
   ],
   "checkout_fetch_depth": 0,
-  "remote_run": "not_run",
-  "local_steps_executed": true
+  "local_steps_executed": true,
+  "remote_runs": [
+   {
+    "run_id": 34600324383,
+    "url": "https://github.com/Ryuke486/a-share-multifactor-research/actions/runs/34600324383",
+    "runner": "ubuntu-latest",
+    "head_sha": "fd9180584f22b0775628c4034d95eaf73ae4ae12",
+    "result": "failure",
+    "detail": "python 3.14: 62 failed, 1587 passed, 1 skipped; python 3.12 failed as well; static and delivery checks not reached. Root cause: OSError ELOOP on /dev/fd/N raised at src/ashare_multifactor/final_test/panel_binding.py:280 (O_NOFOLLOW against the Linux /proc/self/fd symlink). The same commit passes the full suite on macOS."
+   },
+   {
+    "run_id": "pending",
+    "runner": "macos-latest",
+    "result": "pending after the workflow platform correction"
+   }
+  ]
  },
  "changed_files": [
   {
@@ -149,14 +164,14 @@
   {
    "path": "README.md",
    "state": "modified",
-   "size_bytes": 6264,
-   "sha256": "8450fd93bddea5109af1649d2873f4b2605b9074ca854df8531f6bb3a9ca8602"
+   "size_bytes": 6653,
+   "sha256": "355965595b2856c489eefe2f0049492b6d7bf29cbc04c3581dc983bacd4dc5c0"
   },
   {
    "path": "docs/reproduction.md",
    "state": "modified",
-   "size_bytes": 8641,
-   "sha256": "0519ee0a4ee42d974dbdf2918b9b8322db0ed1f65185e2c84f52701669029c4d"
+   "size_bytes": 8969,
+   "sha256": "72f7b82d40c9f04dc9daa625992d2f027c614e5479a8b982a7dc71b62a786d24"
   },
   {
    "path": "docs/results/index.md",
@@ -179,8 +194,8 @@
   {
    "path": "docs/superpowers/plans/2026-09-11-repository-streamlining/04-reproducible-environment-and-checks.md",
    "state": "modified",
-   "size_bytes": 8325,
-   "sha256": "d3976ca078a513651281d6eb693fadbfb6180d822f9d7196ec9d2de8f96083b6"
+   "size_bytes": 8570,
+   "sha256": "041eb17a3396a13f39f3ca5b05f6e89747697e77c8d3536e3a377981f8b025c4"
   },
   {
    "path": "docs/audits/2026-09-11-v1-boundaries-review.md",
@@ -191,8 +206,8 @@
   {
    "path": ".github/workflows/ci.yml",
    "state": "new",
-   "size_bytes": 1767,
-   "sha256": "13bba39d7e94978e4b338532ef0e40bd062ebd848a6adb56854f502282ad1eaa"
+   "size_bytes": 2383,
+   "sha256": "df46a614f6f695c3bd2e717ba8000158b03bb83a247fb270152aecdbb37ad6f5"
   },
   {
    "path": "requirements-reproducible.txt",
@@ -227,8 +242,8 @@
   {
    "path": "docs/audits/2026-09-11-v1-reproducible-environment.md",
    "state": "new",
-   "size_bytes": 17649,
-   "sha256": "7bd3c01e4490b99a6c1609f0e760f25ca6ec2d0581eed91910166cedf3d89b90"
+   "size_bytes": 19610,
+   "sha256": "66e2ce3a74154ffead16bc9f4784aa550058b31f1fa37a3c6d0a5e96bb4a50ec"
   }
  ],
  "step03_manifest_deviation": {

@@ -6,6 +6,7 @@
 - 兼容范围：`pyproject.toml` 声明 `requires-python = ">=3.12"`，直接依赖版本见 `requirements-verified.txt`。
 - 当前验证环境为 CPython 3.14.7（Homebrew，macOS arm64）；权威 Stage 7/8 release 使用 CPython 3.14.6，各自版本记录在对应 release 的 `lineage.json`。
 - 锁定文件只在 macOS arm64 上验证过，不含下载哈希，因此是版本锁定而不是跨平台或供应链锁文件。
+- 平台边界：完整测试套件要求 macOS。封存恢复路径依赖 macOS 的 `/dev/fd` + `O_NOFOLLOW` 语义，Linux 上最终测试的命名空间替换与 panel 绑定测试会以 `ELOOP` 失败（见[步骤 04 验收报告](audits/2026-09-11-v1-reproducible-environment.md)），因此 Linux 属于未验证平台。
 
 按锁定文件建立研究环境：
 

@@ -59,6 +59,8 @@
 
 以上命令只运行人工合成测试、静态检查和交付一致性检查，不需要本地 28GB 原始数据，也不需要 `processed/`。交付检查核对仓库内 Markdown 链接、报告中关键数字与 `docs/results/v1.0-key-results.json` 记录的机器结果、以及 v1.0 manifest 的发布提交哈希；加 `--verify-sources` 可在保留 `processed/` 的机器上把数值重新读回权威 release。自动检查配置见 `.github/workflows/ci.yml`，完整重建与 release 回读见[复现说明](docs/reproduction.md)。
 
+完整测试套件要求 **macOS**：封存的 attempt-bound panel 恢复路径通过 `/dev/fd` 加 `O_NOFOLLOW` 重新打开已持有的描述符，这在 macOS 上有效，在 Linux 上会有 62 项最终测试以 `ELOOP` 失败（见[验收报告](docs/audits/2026-09-11-v1-reproducible-environment.md)）。因此 CI 也运行在 `macos-latest`；Linux 目前记为未验证平台。
+
 ## 数据边界
 
 本仓库不分发原始行情、`processed/`、`artifacts/` 或官方公告缓存。完整运行需在仓库根目录准备：

@@ -6,6 +6,15 @@ name: verification
 # stage; publish or switch a release pointer; create final-test tokens or
 # attempts; or write repository contents. It only installs dependencies, runs
 # the synthetic test suite, the static checks and the delivery checks.
+#
+# Runner platform: macOS. The verified research environment is Homebrew CPython
+# 3.14.7 on macOS arm64, and the sealed attempt-bound panel freeze and recovery
+# paths open an already held descriptor through /dev/fd with O_NOFOLLOW, which
+# is valid on macOS fdescfs but fails on Linux with ELOOP (run 34600324383:
+# 62 final-test tests failed on ubuntu-latest while the same commit passes the
+# full suite on macOS). Porting those paths to Linux would touch the sealed
+# recovery code and needs its own authorized task, so CI verifies the platform
+# the project actually supports instead of hiding the difference.
 
 on:
   push:
@@ -22,7 +31,7 @@ concurrency:
 jobs:
   verification:
     name: synthetic checks (python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
