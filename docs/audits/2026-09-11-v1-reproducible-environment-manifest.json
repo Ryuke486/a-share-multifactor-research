@@ -4,7 +4,7 @@
  "date": "2026-09-11",
  "status": "implemented_and_verified_uncommitted",
  "baseline": {
-  "commit": "fd9180584f22b0775628c4034d95eaf73ae4ae12",
+  "commit": "e0606538bfcade7608256f9e100507f6a3f06763",
   "branch": "main",
   "step_03_accepted_tree": ".worktrees/v1-boundaries-step03 @ 1a9feb196ac659edecbe8a271e9e5abe168d00b3",
   "step_03_integration": "authorized by the user; 10 delivered files copied byte-identically and re-verified against the step-03 manifest hashes",
@@ -142,9 +142,12 @@
     "detail": "python 3.14: 62 failed, 1587 passed, 1 skipped; python 3.12 failed as well; static and delivery checks not reached. Root cause: OSError ELOOP on /dev/fd/N raised at src/ashare_multifactor/final_test/panel_binding.py:280 (O_NOFOLLOW against the Linux /proc/self/fd symlink). The same commit passes the full suite on macOS."
    },
    {
-    "run_id": "pending",
+    "run_id": 34601416333,
+    "url": "https://github.com/Ryuke486/a-share-multifactor-research/actions/runs/34601416333",
     "runner": "macos-latest",
-    "result": "pending after the workflow platform correction"
+    "head_sha": "e0606538bfcade7608256f9e100507f6a3f06763",
+    "result": "success",
+    "detail": "python 3.12 leg (CPython 3.12.10): 1649 passed, 1 skipped in 579.55s, ruff passed, delivery checks 3/3 pass; python 3.14 leg (CPython 3.14.7): 1649 passed, 1 skipped in 636.27s, ruff passed, delivery checks 3/3 pass; both legs imported the checkout src and never touched Data/, processed/ or artifacts/"
    }
   ]
  },
@@ -164,8 +167,8 @@
   {
    "path": "README.md",
    "state": "modified",
-   "size_bytes": 6653,
-   "sha256": "355965595b2856c489eefe2f0049492b6d7bf29cbc04c3581dc983bacd4dc5c0"
+   "size_bytes": 6705,
+   "sha256": "39f96d61e1aeb562c865d62fce76e773c334d0c75e2e04939bfd81757593a6a9"
   },
   {
    "path": "docs/reproduction.md",
@@ -194,8 +197,8 @@
   {
    "path": "docs/superpowers/plans/2026-09-11-repository-streamlining/04-reproducible-environment-and-checks.md",
    "state": "modified",
-   "size_bytes": 8570,
-   "sha256": "041eb17a3396a13f39f3ca5b05f6e89747697e77c8d3536e3a377981f8b025c4"
+   "size_bytes": 8633,
+   "sha256": "120b13bb68eed83b77143c9a90d8b7f24a202dd0e6363b602b5684152247abd0"
   },
   {
    "path": "docs/audits/2026-09-11-v1-boundaries-review.md",
@@ -242,8 +245,8 @@
   {
    "path": "docs/audits/2026-09-11-v1-reproducible-environment.md",
    "state": "new",
-   "size_bytes": 19610,
-   "sha256": "66e2ce3a74154ffead16bc9f4784aa550058b31f1fa37a3c6d0a5e96bb4a50ec"
+   "size_bytes": 19981,
+   "sha256": "512c9e6841380172abc0bb43a8d66e1e4799c3f20f16d93b164d4e201676f0bb"
   }
  ],
  "step03_manifest_deviation": {

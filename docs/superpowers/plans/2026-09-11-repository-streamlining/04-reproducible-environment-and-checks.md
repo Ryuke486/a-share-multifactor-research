@@ -59,7 +59,7 @@ full_pytest: temporary CPython 3.14.7 environment 1649 passed, 1 skipped in 466.
 ruff: passed in the main worktree and in both temporary environments
 delivery_checks: passed; markdown 72 links in 68 documents; 51 documented results with 118 citations; published manifest verified against commit 1e7eddbe8a23; 51 values re-read from the local releases
 ci_local_steps: passed (lock install, pytest, ruff, git diff --check, delivery check); the same commands are configured in .github/workflows/ci.yml
-ci_remote_run: dispatched by push fd91805; first run 34600324383 on ubuntu-latest failed (62 final-test failures from macOS-specific /dev/fd + O_NOFOLLOW semantics) and the workflow now targets macos-latest; the macOS run result is recorded in the verification report
+ci_remote_run: passed; first run 34600324383 on ubuntu-latest failed (62 final-test failures from macOS-specific /dev/fd + O_NOFOLLOW semantics), the workflow then targeted macos-latest and run 34601416333 succeeded on both python 3.12 (1649 passed, 1 skipped) and 3.14 (1649 passed, 1 skipped) with ruff and delivery checks green
 verification_report: docs/audits/2026-09-11-v1-reproducible-environment.md
 four_step_summary: docs/audits/2026-09-11-v1-reproducible-environment.md section 10
 integration_status: integrated_locally_uncommitted (steps 03 and 04)

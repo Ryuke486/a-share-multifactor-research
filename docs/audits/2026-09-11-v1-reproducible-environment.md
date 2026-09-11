@@ -114,7 +114,7 @@
 | 运行 | 平台 | 结果 | 说明 |
 |---|---|---|---|
 | [34600324383](https://github.com/Ryuke486/a-share-multifactor-research/actions/runs/34600324383) | ubuntu-latest | **failure**：3.12 与 3.14 两条腿均在合成测试失败（3.14：62 failed / 1587 passed / 1 skipped），静态检查与交付检查未执行 | 失败集中在 `final_test` 的命名空间替换与 panel 绑定测试，错误为 `OSError: [Errno 40] Too many levels of symbolic links: '/dev/fd/37'`，触发点 `src/ashare_multifactor/final_test/panel_binding.py:280`。这是 macOS `/dev/fd` + `O_NOFOLLOW` 语义与 Linux `/proc/self/fd` 符号链接语义的差异，同一提交在 macOS 上 1649 项全部通过 |
-| 本报告提交后的运行 | macos-latest | 见下方"平台修正" | 工作流改为 macOS runner 后重跑 |
+| [34601416333](https://github.com/Ryuke486/a-share-multifactor-research/actions/runs/34601416333) | macos-latest | **success**：3.12 与 3.14 两条腿全部步骤通过 | 3.12 腿（Python 3.12.10）：`1649 passed, 1 skipped in 579.55s`；3.14 腿（Python 3.14.7）：`1649 passed, 1 skipped in 636.27s`；两条腿的 Ruff 与交付检查均通过，导入路径为检出目录的 `src/ashare_multifactor/__init__.py`；每条腿约 10–11 分钟 |
 
 **平台修正**：`panel_binding.py`、`recovery_secure_fs.py` 与 `data/manifest.py` 都不在 `final_execution`（9 个文件）或 `evidence_workflow`（55 条显式路径 + `official_*.py`）身份清单内，因此把 `/dev/fd` 读取改成 Linux 兼容写法在身份合同上是被允许的；但那属于封存恢复路径的行为改动，需要独立授权与重新验证，不在步骤 04 范围内。本步骤因此只把 CI 平台对齐到实际支持并已验证的平台（macOS），并在文档中把 Linux 标记为未验证平台，而不是用跳过测试来掩盖差异。
 
@@ -138,7 +138,7 @@
 
 ## 11. 未决项与限制
 
-1. 平台边界：CI 在 macOS runner 上运行。首次 ubuntu 运行（34600324383）暴露了 62 项最终测试失败，根因是封存恢复路径依赖 macOS `/dev/fd` + `O_NOFOLLOW` 语义；把该路径改成 Linux 兼容需要独立授权与重新验证，因此 Linux 目前记为**未验证平台**，而不是"通过"。
+1. 平台边界：CI 在 macOS runner 上运行并已通过（34601416333）。首次 ubuntu 运行（34600324383）暴露了 62 项最终测试失败，根因是封存恢复路径依赖 macOS `/dev/fd` + `O_NOFOLLOW` 语义；把该路径改成 Linux 兼容需要独立授权与重新验证，因此 Linux 目前记为**未验证平台**，而不是"通过"。
 2. 主工作树仍未提交：步骤 03 与步骤 04 的成果均为本地未提交状态，提交/推送/PR 需用户明确授权。若要让 CI 首次运行通过，必须把这些文件纳入提交：`.github/workflows/ci.yml`、`requirements-reproducible.txt`、`docs/results/v1.0-key-results.json`、`src/ashare_multifactor/audit/delivery.py`、`src/ashare_multifactor/cli/delivery.py`、`tests/test_delivery_checks.py`、`docs/audits/2026-09-11-v1-*.md|json`、步骤 03 的代码与测试文件，以及被修改的 `README.md`、`AGENTS.md`、`pyproject.toml`、`docs/reproduction.md`、`docs/results/index.md`、`.gitignore`、`CONTEXT.md`。
 3. v1.0 manifest 保持冻结：`AGENTS.md`、`README.md`、`docs/reproduction.md`、`docs/results/index.md`、`docs/stage9-10-archive.md`、`pyproject.toml` 与发布提交的差异被记录为提示，未改写 manifest；发布新的交付版本需要单独授权并生成新 manifest。
 4. 步骤 03 的机器清单描述其冻结时点。集成与更正后，其 10 个受管文件中有 3 个文档字节改变，7 个代码/测试文件逐字节一致：
