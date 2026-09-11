@@ -168,12 +168,35 @@ def _normalize_baostock_actions(
                 ),
                 pl.lit(0.0).alias("cash_per_share"),
                 "share_ratio",
-                pl.lit("baostock_dividend_operate_year").alias("source"),
+                pl.when(pl.col("official_action_correction"))
+                .then(pl.lit("baostock_dividend_operate_year+cninfo_action_correction"))
+                .otherwise(pl.lit("baostock_dividend_operate_year"))
+                .alias("source"),
             ),
         ),
         how="vertical_relaxed",
     )
-    return rows.sort("effective_date", "symbol")
+    economic_key = [
+        "symbol",
+        "ex_date",
+        "effective_date",
+        "cash_per_share",
+        "share_ratio",
+    ]
+    return (
+        rows.with_columns(
+            pl.when(pl.col("source").str.ends_with("+cninfo_action_correction"))
+            .then(2)
+            .when(pl.col("source").str.ends_with("+cninfo_payment_date"))
+            .then(1)
+            .otherwise(0)
+            .alias("_provenance_priority")
+        )
+        .sort("_provenance_priority", descending=True)
+        .unique(subset=economic_key, maintain_order=True)
+        .drop("_provenance_priority")
+        .sort("effective_date", "symbol")
+    )
 
 
 def _apply_official_action_corrections(

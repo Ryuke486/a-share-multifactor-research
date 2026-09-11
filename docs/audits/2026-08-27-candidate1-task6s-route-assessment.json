@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "task": "06S-corporate-action-provenance-remediation",
+  "status": "passed",
+  "route_order": ["historical_byte_recovery", "consumer_contract_remediation"],
+  "route_1": {
+    "status": "not_recovered",
+    "external_volume": "/Volumes/新加卷",
+    "external_volume_uuid": "830826CA-FDDD-33CE-9DF6-A997F38B741B",
+    "historical_sha256": "ffdfdc8dd0c4835009da53a69ad88c5984d34407d7612887867e4a3006048bab",
+    "historical_size": 177037,
+    "exact_filename_matches": 0,
+    "exact_size_matches": 0,
+    "migration_artifacts_archive_matches": 0,
+    "migration_processed_archive_matches": 0,
+    "read_only": true
+  },
+  "route_2": {
+    "status": "passed",
+    "consumer_semantic_differences": 0,
+    "certified_run_count": 2,
+    "stage7_core_file_count": 98,
+    "stage7_core_hash_mismatches": 0,
+    "stage8_core_hashes_equal": true,
+    "stage8_successor_trees_equal": true,
+    "opening_token_status": "closed",
+    "publication_performed": false
+  },
+  "real_roots_modified": false,
+  "final_test_current_absent": true
+}

@@ -1,0 +1,29 @@
+{
+  "stage7_v1": {
+    "status": "passed",
+    "certificate_sha256": "07a536b78f73dc56bb952fbded56ead4e0d7a0703821ae1ff879d13cc8d70933",
+    "core_file_count": 98,
+    "run_ids": [
+      "stage7_controlled_65b19e1_1",
+      "stage7_controlled_65b19e1_2"
+    ]
+  },
+  "stage8_v1": {
+    "status": "passed",
+    "certificate_sha256": "c594ad2c610723b38ba7ac5d392b60c06a5322093c636182bf298f1d468ec7f5",
+    "core_file_count": 3,
+    "run_ids": [
+      "stage8_tree_763d489_1",
+      "stage8_tree_763d489_2"
+    ]
+  },
+  "mapping_replay": {
+    "status": "passed",
+    "input_mode": "historical certificate plus receipt-declared BaoStock identity; not live regenerated inputs",
+    "consumer_regeneration_repeated": false
+  },
+  "environment": {
+    "python": "3.14.7",
+    "polars": "1.43.2"
+  }
+}

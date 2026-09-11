@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "task": "02-lifecycle-closeout",
+  "date": "2026-09-11",
+  "scope": "candidate-1 reproducible release lifecycle acceptance",
+  "integration_status": "not_authorized",
+  "accepted_tree": {
+    "worktree": "/Users/mikasa/本科时期/Projects/repository1/.worktrees/reproducible-release-lifecycle-candidate1",
+    "branch": "codex/reproducible-release-lifecycle-candidate1",
+    "head": "1e7eddbe8a2319110f275d254b1a7702e41d1aea",
+    "base_commit_equals_main_head": true,
+    "tracked_patch_sha256": "2fbca783851e742f5be1e6528b135ec39bfabab41a5546378507a3ccba0c8a25",
+    "tracked_patch_bytes": 40204,
+    "delivered_file_count": 29,
+    "delivered_files_sha256": "aa8a60724be29286c86a581fdf6674dd4c9ee3e54b038aab8b21327a37afea10"
+  },
+  "delivery_file_list": [
+    {
+      "path": "CONTEXT.md",
+      "state": "new",
+      "size_bytes": 2942,
+      "sha256": "d54744090a43679ed689e2723ea259989976c6f3e892eed22255adb7ce3832e5"
+    },
+    {
+      "path": "docs/audits/2026-08-24-candidate1-task6-final-verification.md",
+      "state": "new",
+      "size_bytes": 12395,
+      "sha256": "ccabe28253e063e26648e2e067fdc45082fcc1be73d7a07f090c3d16d78dd95b"
+    },
+    {
+      "path": "docs/audits/2026-08-26-candidate1-task6r-external-source-revision-assessment.json",
+      "state": "new",
+      "size_bytes": 3283,
+      "sha256": "a63cf8087d62b86289c62e0449a5e4faaca3b8af43e1789a4fcef6755224753a"
+    },
+    {
+      "path": "docs/audits/2026-08-27-candidate1-task6s-external-source-revision-waiver.json",
+      "state": "new",
+      "size_bytes": 6431,
+      "sha256": "8fed228b7bc13081e75376c0aab97dc0b0370b4f560f048d46cec7956e5bcaed"
+    },
+    {
+      "path": "docs/audits/2026-08-27-candidate1-task6s-route-assessment.json",
+      "state": "new",
+      "size_bytes": 1057,
+      "sha256": "e34e10fb76b2dc4ad469ffe84997b0efca6decbd9d8f1102d5751de61d69e776"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/00-execution-map.md",
+      "state": "new",
+      "size_bytes": 4521,
+      "sha256": "08aefb83ef2bf9bccec00ef11548645648afa80b64fb5fedb084558dc91f1774"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/01-characterize-compatibility.md",
+      "state": "new",
+      "size_bytes": 4941,
+      "sha256": "8db2e65473d29cbcdc2be0906615582c926de5ed8220cc62ba4f38ae7fcabbdd"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/02-build-lifecycle-core.md",
+      "state": "new",
+      "size_bytes": 4758,
+      "sha256": "676292f9238a768424908038c459512955e91ef0c337a2828f12e11b6d39f26e"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/03-migrate-stage7.md",
+      "state": "new",
+      "size_bytes": 5529,
+      "sha256": "75ed39de5f447fcc5a8a1e5f9ab83213681d8529291756c03e0f666ce21f3255"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/04-migrate-stage8.md",
+      "state": "new",
+      "size_bytes": 5972,
+      "sha256": "2e853f0f79510caeffc12c5bd3d34105b8d3b7f5939dcd0ca9dfca5efe820920"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/05-remove-duplication.md",
+      "state": "new",
+      "size_bytes": 7958,
+      "sha256": "2d038791eb06ef1e03f788a6882360f5a4f8a54dc2f7ca018c8ce54118dcb948"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06-verify-and-handoff.md",
+      "state": "new",
+      "size_bytes": 8164,
+      "sha256": "dfc56be3aaf85ff0b7f60869eed9c64dca79886888a10cdd19b78df47e97a6c6"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06R-external-source-revision-waiver.md",
+      "state": "new",
+      "size_bytes": 7376,
+      "sha256": "c6e6a4be01d06c4c723745ce0408f2280ae23f58037ef682f17cee3a1f74bb99"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06S-corporate-action-provenance-remediation.md",
+      "state": "new",
+      "size_bytes": 3182,
+      "sha256": "4677daeacd024efcc5967f15f209457993b8ca959b762988caff10e2ddc4a437"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-23-reproducible-release-lifecycle-design.md",
+      "state": "new",
+      "size_bytes": 12050,
+      "sha256": "19b9dbe5bc7deee08165232eba47d458ce3446c4f15ac07bf87c82ca5feea795"
+    },
+    {
+      "path": "src/ashare_multifactor/audit/reproducible_release.py",
+      "state": "new",
+      "size_bytes": 20548,
+      "sha256": "b190bd79e95987de76a2872341ce866c5c6ab07f26813f827f2d0ddb9dd7ce14"
+    },
+    {
+      "path": "src/ashare_multifactor/robustness/pipeline.py",
+      "state": "modified",
+      "size_bytes": 23087,
+      "sha256": "ed68ad892be74a2f160b69c5e24da0a1ac74417c0a6d65742a8295fca26e5cf1"
+    },
+    {
+      "path": "src/ashare_multifactor/robustness/release_adapter.py",
+      "state": "new",
+      "size_bytes": 9650,
+      "sha256": "463c203f819e7b2accc7f86f4a82f889d6cbef19426835271e3f64b451414273"
+    },
+    {
+      "path": "src/ashare_multifactor/validation/corporate_actions.py",
+      "state": "modified",
+      "size_bytes": 10078,
+      "sha256": "a9cfba75954b94c9de835bec7d8e5439e4787008321fbeaafcad156759155160"
+    },
+    {
+      "path": "src/ashare_multifactor/validation/pipeline.py",
+      "state": "modified",
+      "size_bytes": 19122,
+      "sha256": "f1fd7625c5337b644fe69ad1d67723d2d8ce8dbd08748c15ac69b8c50c584c95"
+    },
+    {
+      "path": "src/ashare_multifactor/validation/release_adapter.py",
+      "state": "new",
+      "size_bytes": 5640,
+      "sha256": "fda2dc3d7a1d241247f3f01b3b6e7bb98199184fb6994e025f79ffe4fa61a358"
+    },
+    {
+      "path": "tests/task6r_revision_waiver.py",
+      "state": "new",
+      "size_bytes": 8134,
+      "sha256": "2201bef7c95b52d6cda67a2ef958da7a6cf1fe32e0e555a1f1c6974bc914d584"
+    },
+    {
+      "path": "tests/test_reproducible_release_lifecycle.py",
+      "state": "new",
+      "size_bytes": 22682,
+      "sha256": "51e4d0a5cf7856aee7d48e4cfdd9ca705c891f1806c966fb49673a7ac0e4a819"
+    },
+    {
+      "path": "tests/test_robustness_release_adapter.py",
+      "state": "new",
+      "size_bytes": 14991,
+      "sha256": "c1a37513e18b3abbb9146ee6d92ad067d2b7f56e9c42c1580c56802a6ff1bd74"
+    },
+    {
+      "path": "tests/test_robustness_release_compatibility.py",
+      "state": "new",
+      "size_bytes": 28219,
+      "sha256": "039fc4b141924bc6140e1ee7347db7e433146301b52cb8e08df079c112219d04"
+    },
+    {
+      "path": "tests/test_task6r_revision_waiver.py",
+      "state": "new",
+      "size_bytes": 9293,
+      "sha256": "963241587adb7dc7c11cb767783af49ec7eda49d8198ed845c315435e530b150"
+    },
+    {
+      "path": "tests/test_validation_backtest.py",
+      "state": "modified",
+      "size_bytes": 17110,
+      "sha256": "09e510af874b03cb9d0e82aca3f03633801aacd9a8bd4af277a93368b6b0db21"
+    },
+    {
+      "path": "tests/test_validation_release_adapter.py",
+      "state": "new",
+      "size_bytes": 21158,
+      "sha256": "fd375cf9c64fbb4c2e1858e695406b92c780be264c45d95fae0441240abbcf3c"
+    },
+    {
+      "path": "tests/test_validation_release_compatibility.py",
+      "state": "new",
+      "size_bytes": 21157,
+      "sha256": "95bc59b79b8e454b8914bad54898ca44bf71c8e531141ccc1ef2fd251003eb09"
+    }
+  ],
+  "handoff_cross_check": {
+    "handoff_files_changed_union_count": 19,
+    "delivered_files_not_in_any_handoff": [
+      "CONTEXT.md",
+      "docs/audits/2026-08-26-candidate1-task6r-external-source-revision-assessment.json",
+      "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/00-execution-map.md",
+      "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/03-migrate-stage7.md",
+      "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/04-migrate-stage8.md",
+      "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/05-remove-duplication.md",
+      "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06R-external-source-revision-waiver.md",
+      "docs/superpowers/specs/2026-08-23-reproducible-release-lifecycle-design.md",
+      "tests/task6r_revision_waiver.py",
+      "tests/test_task6r_revision_waiver.py"
+    ],
+    "handoff_entries_absent_on_disk": []
+  },
+  "boundaries_verified": {
+    "stage7_current_sha256": "cc73d95fbebcce6de6666f8dade09c1312c06da15bd8b1fb4d2dc7c7ca3973af",
+    "stage8_current_sha256": "0e42ea37107707d014c743fef3ef040ab61bd47f025db0cb81aa09577f9cac3b",
+    "stage7_manifest_sha256": "6ee12a10b25a53d8a48c596faa76c1833d92c10c511e570d301a5f96c10836fd",
+    "stage8_manifest_sha256": "c75948b4c47007c6f5690451afbebdff02eb5d3c793e6285eb799af898ea1fba",
+    "final_test_current_present": false,
+    "evidence_archive_sha256": "2d2f574c319ff4dbb32b8fbd3e82c0d4ce2fbc30027ff15f8141a09a72871d55"
+  },
+  "unrelated_main_worktree_changes_excluded": [
+    "docs/stage9-10-archive.md (modified, unrelated)",
+    "docs/evidence-archive-2026-09-11.md (new, step 01)",
+    "docs/superpowers/plans/2026-09-11-repository-streamlining/ (new, step 01-04 task files)",
+    "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/ (stale pristine copies; candidate versions supersede)",
+    "docs/superpowers/specs/2026-08-23-reproducible-release-lifecycle-design.md (byte-identical to candidate)"
+  ]
+}

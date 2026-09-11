@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "scope": "candidate1_task6_shadow_acceptance_only",
+  "status": "passed",
+  "historical_raw_identity": {
+    "sha256": "ffdfdc8dd0c4835009da53a69ad88c5984d34407d7612887867e4a3006048bab",
+    "size": 177037
+  },
+  "new_raw_identity": {
+    "sha256": "77e4fb6e076d87d4d5536fa1d4d292ff2f678ccd45a3d087fa35dd18579d3980",
+    "size": 175011
+  },
+  "historical_raw_bytes_recovered": false,
+  "route_1_recovery": {
+    "status": "not_recovered",
+    "external_volume": "/Volumes/新加卷",
+    "external_volume_uuid": "830826CA-FDDD-33CE-9DF6-A997F38B741B",
+    "exact_filename_matches": 0,
+    "exact_size_matches": 0,
+    "archive_matches": 0,
+    "external_volume_modified": false
+  },
+  "certified_run_ids": [
+    "stage7_controlled_65b19e1_1",
+    "stage7_controlled_65b19e1_2"
+  ],
+  "download_evidence": {
+    "source": "baostock_query_dividend_data",
+    "baostock_version": "00.9.30",
+    "query_year_type": "operate",
+    "query_years": [2017, 2018, 2019, 2020, 2021],
+    "symbol_count": 2718,
+    "successful_query_count": 13590,
+    "row_count": 9516,
+    "column_count": 16,
+    "new_raw_identity": {
+      "sha256": "77e4fb6e076d87d4d5536fa1d4d292ff2f678ccd45a3d087fa35dd18579d3980",
+      "size": 175011
+    },
+    "coverage_sha256": "2574758f797296593b118aa2056fae042a48447d9e73aaa78f7e55988acac1c2",
+    "download_log_sha256": "1d388e9ec9afab1eb22b587fec2231248dea28842dbe4ba268fe65d903a475aa",
+    "serial_access": {
+      "process_count": 1,
+      "session_count": 1,
+      "query_count": 13590,
+      "nonzero_error_count": 0,
+      "login_succeeded": true,
+      "logout_succeeded": true
+    }
+  },
+  "serial_access": {
+    "process_count": 1,
+    "session_count": 1,
+    "query_count": 13590,
+    "nonzero_error_count": 0,
+    "login_succeeded": true,
+    "logout_succeeded": true
+  },
+  "consumer_tables": {
+    "corporate_actions.parquet": {
+      "columns": [
+        "action_id",
+        "ex_date",
+        "effective_date",
+        "symbol",
+        "cash_per_share",
+        "share_ratio",
+        "source"
+      ],
+      "schema": {
+        "action_id": "String",
+        "ex_date": "Date",
+        "effective_date": "Date",
+        "symbol": "String",
+        "cash_per_share": "Float64",
+        "share_ratio": "Float64",
+        "source": "String"
+      },
+      "row_count": 26445,
+      "regenerated_identity": {
+        "sha256": "bf21554454f811e82fa58cb2273769ff309b2676d89eeaf22ea6cab06b43952a",
+        "size": 519883
+      },
+      "historical_identities": [
+        {
+          "sha256": "d5f5b74933562e7ac27d794db7e142d59364af6cadd4be29d49405fef53b9509",
+          "size": 519893
+        },
+        {
+          "sha256": "d5f5b74933562e7ac27d794db7e142d59364af6cadd4be29d49405fef53b9509",
+          "size": 519893
+        }
+      ],
+      "historical_run_matches": [true, true],
+      "semantic_difference_count": 0
+    },
+    "security_events.parquet": {
+      "columns": [
+        "effective_date",
+        "source_symbol",
+        "event_type",
+        "target_symbol",
+        "ratio",
+        "cash_per_share",
+        "source"
+      ],
+      "schema": {
+        "effective_date": "Date",
+        "source_symbol": "String",
+        "event_type": "String",
+        "target_symbol": "String",
+        "ratio": "Float64",
+        "cash_per_share": "Float64",
+        "source": "String"
+      },
+      "row_count": 5,
+      "regenerated_identity": {
+        "sha256": "540f41bd73ae918d0f08d8b7beece7c901319efb3760f09886d514f6b0f6f543",
+        "size": 3289
+      },
+      "historical_identities": [
+        {
+          "sha256": "540f41bd73ae918d0f08d8b7beece7c901319efb3760f09886d514f6b0f6f543",
+          "size": 3289
+        },
+        {
+          "sha256": "540f41bd73ae918d0f08d8b7beece7c901319efb3760f09886d514f6b0f6f543",
+          "size": 3289
+        }
+      ],
+      "historical_run_matches": [true, true],
+      "semantic_difference_count": 0
+    }
+  },
+  "consumer_semantic_differences": 0,
+  "remediation": {
+    "public_seam": "load_validation_corporate_actions",
+    "behavior": "deduplicate by economic event after preferring the strongest frozen official provenance",
+    "cash_correction_provenance_covered": true,
+    "share_correction_provenance_covered": true,
+    "dates_amounts_share_ratios_and_accounting_unchanged": true,
+    "post_review_regenerated_row_count": 26445,
+    "post_review_certified_run_semantic_differences": [0, 0]
+  },
+  "shadow_acceptance": {
+    "input_identity_difference_keys": ["baostock_dividends"],
+    "verified_identity_mapping_equal_to_certificate": true,
+    "stage7": {
+      "publish": false,
+      "staged": true,
+      "core_file_count": 98,
+      "core_hash_mismatches": 0,
+      "supersedes": {
+        "run_id": "65b19e1_stage7_validation_controlled_collector_successor",
+        "manifest_sha256": "6ee12a10b25a53d8a48c596faa76c1833d92c10c511e570d301a5f96c10836fd",
+        "lineage_sha256": "daf7804230c7901d99f0e98adf3eea93608be3eb25568413cec2ac50d363404e"
+      }
+    },
+    "stage8": {
+      "publish": false,
+      "staged": true,
+      "core_hash_matches_certificate": {
+        "robustness_results.parquet": true,
+        "report.md": true,
+        "protocol_gate.json": true
+      },
+      "action_coverage_tree_equal": true,
+      "collector_readiness_tree_equal": true,
+      "protocol_version": 3,
+      "opening_token_status": "closed",
+      "predecessor": {
+        "run_id": "a1076c2_stage8_robustness_szse_statistics_successor",
+        "manifest_sha256": "c75948b4c47007c6f5690451afbebdff02eb5d3c793e6285eb799af898ea1fba",
+        "status": "superseded_for_final_execution"
+      },
+      "sealed_test_protocol_byte_equal": false,
+      "sealed_test_protocol_difference_explanation": "Expected staging metadata only: code identity is equal; the isolated temporary opening-ledger root and the later authoritative predecessor binding change the self-hash. Core protocol gate and both successor evidence trees are exact."
+    },
+    "final_test_current_absent": true
+  },
+  "production_adapter_modified": true,
+  "verification": {
+    "focused_pytest": {
+      "passed": 67,
+      "failed": 0
+    },
+    "full_pytest": {
+      "passed": 1606,
+      "skipped": 1,
+      "failed": 0,
+      "duration_seconds": 532.65
+    },
+    "ruff": "passed",
+    "git_diff_check": "passed",
+    "standards_review_open_findings": 0,
+    "spec_review_open_findings": 0
+  },
+  "publication_performed": false
+}

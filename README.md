@@ -43,14 +43,17 @@
 
 ## 快速验证
 
-需要 Python 3.12 或更高版本：
+当前统一验证环境为 **Python 3.14.7 / Polars 1.43.2**；直接依赖版本见 `requirements-verified.txt`。复用现有 `.venv`，新建环境时先确认解释器版本：
 
 ```bash
-python3.12 -m venv .venv
-.venv/bin/python -m pip install -e ".[dev]"
+/opt/homebrew/bin/python3 --version  # 应为 Python 3.14.7
+/opt/homebrew/bin/python3 -m venv .venv
+.venv/bin/python -m pip install -c requirements-verified.txt -e ".[dev]"
 .venv/bin/python -m pytest -q
 .venv/bin/python -m ruff check src tests
 ```
+
+历史证书保留 Python 3.14.6 / Polars 1.42.1 身份；新环境的新运行必须生成自己的代码身份与证书，不能覆盖历史记录。此版本文件固定已验证的直接依赖，不是含全部传递依赖与下载哈希的锁文件。
 
 这些命令只运行人工合成测试和静态检查，不需要本地 28GB 原始数据。完整重建、release 回读和路径要求见[复现说明](docs/reproduction.md)。
 

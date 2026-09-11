@@ -165,6 +165,72 @@ def test_validation_actions_apply_narrow_official_date_correction(
     assert actions.item(0, "source").endswith("+cninfo_action_correction")
 
 
+@pytest.mark.parametrize(
+    ("cash_per_share", "share_ratio", "stock_market_date", "expected_action_id"),
+    (
+        ("0.2", "0", "", "10bf9b4859c85e944e2a35bf"),
+        ("0", "0.1", "2018-06-22", None),
+    ),
+)
+def test_validation_actions_keep_strongest_provenance_after_correction_dedup(
+    tmp_path: Path,
+    cash_per_share: str,
+    share_ratio: str,
+    stock_market_date: str,
+    expected_action_id: str | None,
+) -> None:
+    raw = tmp_path / "baostock_dividends.parquet"
+    pl.DataFrame(
+        {
+            "code": ["sz.000042", "sz.000042"],
+            "query_year": [2018, 2018],
+            "query_year_type": ["operate", "operate"],
+            "dividPlanAnnounceDate": ["2018-04-27", "2018-04-27"],
+            "dividRegistDate": ["2018-06-21", "2018-06-21"],
+            "dividOperateDate": ["2018-06-22", "2018-06-28"],
+            "dividPayDate": ["2018-06-22", "2018-06-22"],
+            "dividStockMarketDate": [stock_market_date, stock_market_date],
+            "dividCashPsBeforeTax": [cash_per_share, cash_per_share],
+            "dividStocksPs": [share_ratio, share_ratio],
+            "dividReserveToStockPs": ["0", "0"],
+        }
+    ).write_parquet(raw)
+    research = normalize_corporate_actions(
+        pl.DataFrame(
+            schema={
+                "symbol": pl.String,
+                "effective_date": pl.Date,
+                "cash_per_share": pl.Float64,
+                "share_ratio": pl.Float64,
+                "source": pl.String,
+            }
+        )
+    )
+    corrections = pl.DataFrame(
+        {
+            "symbol": ["000042"],
+            "source_ex_date": [date(2018, 6, 28)],
+            "corrected_ex_date": [date(2018, 6, 22)],
+            "payment_date": [date(2018, 6, 22)],
+            "source_url": ["https://static.cninfo.com.cn/notice.pdf"],
+        }
+    )
+
+    actions = load_validation_corporate_actions(
+        research,
+        raw,
+        symbols=["000042"],
+        action_corrections=corrections,
+    )
+
+    assert actions.height == 1
+    assert actions.item(0, "source") == (
+        "baostock_dividend_operate_year+cninfo_action_correction"
+    )
+    if expected_action_id is not None:
+        assert actions.item(0, "action_id") == expected_action_id
+
+
 def test_validation_action_query_scope_rejects_unsealed_requests() -> None:
     assert_baostock_query_scope(2017, "operate")
     assert_baostock_query_scope(2021, "operate")

@@ -1,0 +1,375 @@
+{
+  "scope": "local integration and closeout corrections",
+  "backup_root": "/var/folders/df/66fdndm91vd5sb8qkx9ns5vh0000gn/T/candidate1-pre-integration-xug8rk02",
+  "initial_integrated_files": [
+    {
+      "path": "CONTEXT.md",
+      "sha256": "d54744090a43679ed689e2723ea259989976c6f3e892eed22255adb7ce3832e5",
+      "size_bytes": 2942
+    },
+    {
+      "path": "docs/audits/2026-08-24-candidate1-task6-final-verification.md",
+      "sha256": "ccabe28253e063e26648e2e067fdc45082fcc1be73d7a07f090c3d16d78dd95b",
+      "size_bytes": 12395
+    },
+    {
+      "path": "docs/audits/2026-08-26-candidate1-task6r-external-source-revision-assessment.json",
+      "sha256": "a63cf8087d62b86289c62e0449a5e4faaca3b8af43e1789a4fcef6755224753a",
+      "size_bytes": 3283
+    },
+    {
+      "path": "docs/audits/2026-08-27-candidate1-task6s-external-source-revision-waiver.json",
+      "sha256": "8fed228b7bc13081e75376c0aab97dc0b0370b4f560f048d46cec7956e5bcaed",
+      "size_bytes": 6431
+    },
+    {
+      "path": "docs/audits/2026-08-27-candidate1-task6s-route-assessment.json",
+      "sha256": "e34e10fb76b2dc4ad469ffe84997b0efca6decbd9d8f1102d5751de61d69e776",
+      "size_bytes": 1057
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/00-execution-map.md",
+      "sha256": "08aefb83ef2bf9bccec00ef11548645648afa80b64fb5fedb084558dc91f1774",
+      "size_bytes": 4521
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/01-characterize-compatibility.md",
+      "sha256": "8db2e65473d29cbcdc2be0906615582c926de5ed8220cc62ba4f38ae7fcabbdd",
+      "size_bytes": 4941
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/02-build-lifecycle-core.md",
+      "sha256": "676292f9238a768424908038c459512955e91ef0c337a2828f12e11b6d39f26e",
+      "size_bytes": 4758
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/03-migrate-stage7.md",
+      "sha256": "75ed39de5f447fcc5a8a1e5f9ab83213681d8529291756c03e0f666ce21f3255",
+      "size_bytes": 5529
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/04-migrate-stage8.md",
+      "sha256": "2e853f0f79510caeffc12c5bd3d34105b8d3b7f5939dcd0ca9dfca5efe820920",
+      "size_bytes": 5972
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/05-remove-duplication.md",
+      "sha256": "2d038791eb06ef1e03f788a6882360f5a4f8a54dc2f7ca018c8ce54118dcb948",
+      "size_bytes": 7958
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06-verify-and-handoff.md",
+      "sha256": "dfc56be3aaf85ff0b7f60869eed9c64dca79886888a10cdd19b78df47e97a6c6",
+      "size_bytes": 8164
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06R-external-source-revision-waiver.md",
+      "sha256": "c6e6a4be01d06c4c723745ce0408f2280ae23f58037ef682f17cee3a1f74bb99",
+      "size_bytes": 7376
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06S-corporate-action-provenance-remediation.md",
+      "sha256": "4677daeacd024efcc5967f15f209457993b8ca959b762988caff10e2ddc4a437",
+      "size_bytes": 3182
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-23-reproducible-release-lifecycle-design.md",
+      "sha256": "19b9dbe5bc7deee08165232eba47d458ce3446c4f15ac07bf87c82ca5feea795",
+      "size_bytes": 12050
+    },
+    {
+      "path": "src/ashare_multifactor/audit/reproducible_release.py",
+      "sha256": "b190bd79e95987de76a2872341ce866c5c6ab07f26813f827f2d0ddb9dd7ce14",
+      "size_bytes": 20548
+    },
+    {
+      "path": "src/ashare_multifactor/robustness/pipeline.py",
+      "sha256": "ed68ad892be74a2f160b69c5e24da0a1ac74417c0a6d65742a8295fca26e5cf1",
+      "size_bytes": 23087
+    },
+    {
+      "path": "src/ashare_multifactor/robustness/release_adapter.py",
+      "sha256": "463c203f819e7b2accc7f86f4a82f889d6cbef19426835271e3f64b451414273",
+      "size_bytes": 9650
+    },
+    {
+      "path": "src/ashare_multifactor/validation/corporate_actions.py",
+      "sha256": "a9cfba75954b94c9de835bec7d8e5439e4787008321fbeaafcad156759155160",
+      "size_bytes": 10078
+    },
+    {
+      "path": "src/ashare_multifactor/validation/pipeline.py",
+      "sha256": "f1fd7625c5337b644fe69ad1d67723d2d8ce8dbd08748c15ac69b8c50c584c95",
+      "size_bytes": 19122
+    },
+    {
+      "path": "src/ashare_multifactor/validation/release_adapter.py",
+      "sha256": "fda2dc3d7a1d241247f3f01b3b6e7bb98199184fb6994e025f79ffe4fa61a358",
+      "size_bytes": 5640
+    },
+    {
+      "path": "tests/task6r_revision_waiver.py",
+      "sha256": "4a2efc4f61b93783cc4f0acd8473daeb8b7e561db9300396b9a2be4a43f20dcf",
+      "size_bytes": 10908
+    },
+    {
+      "path": "tests/test_reproducible_release_lifecycle.py",
+      "sha256": "51e4d0a5cf7856aee7d48e4cfdd9ca705c891f1806c966fb49673a7ac0e4a819",
+      "size_bytes": 22682
+    },
+    {
+      "path": "tests/test_robustness_release_adapter.py",
+      "sha256": "c1a37513e18b3abbb9146ee6d92ad067d2b7f56e9c42c1580c56802a6ff1bd74",
+      "size_bytes": 14991
+    },
+    {
+      "path": "tests/test_robustness_release_compatibility.py",
+      "sha256": "039fc4b141924bc6140e1ee7347db7e433146301b52cb8e08df079c112219d04",
+      "size_bytes": 28219
+    },
+    {
+      "path": "tests/test_task6r_revision_waiver.py",
+      "sha256": "685e5e28c0664913688135df37f27bdec3fe1ad4dd59846e6a24c652fe0ba778",
+      "size_bytes": 11940
+    },
+    {
+      "path": "tests/test_validation_backtest.py",
+      "sha256": "09e510af874b03cb9d0e82aca3f03633801aacd9a8bd4af277a93368b6b0db21",
+      "size_bytes": 17110
+    },
+    {
+      "path": "tests/test_validation_release_adapter.py",
+      "sha256": "fd375cf9c64fbb4c2e1858e695406b92c780be264c45d95fae0441240abbcf3c",
+      "size_bytes": 21158
+    },
+    {
+      "path": "tests/test_validation_release_compatibility.py",
+      "sha256": "95bc59b79b8e454b8914bad54898ca44bf71c8e531141ccc1ef2fd251003eb09",
+      "size_bytes": 21157
+    }
+  ],
+  "status": "complete",
+  "integration_status": "integrated_locally_uncommitted",
+  "base_commit": "1e7eddbe8a2319110f275d254b1a7702e41d1aea",
+  "final_target": "main working tree",
+  "final_file_count": 39,
+  "final_files": [
+    {
+      "path": ".python-version",
+      "size_bytes": 7,
+      "sha256": "922fe0c3de073b01988e23348ea184456161678c5e329e6f34be89be24383f93"
+    },
+    {
+      "path": "AGENTS.md",
+      "size_bytes": 20700,
+      "sha256": "30eeac0593d67e35c8cc287cc1d499ac655b6e0e6bbbb617561a983ca905a5f2"
+    },
+    {
+      "path": "CONTEXT.md",
+      "size_bytes": 2942,
+      "sha256": "d54744090a43679ed689e2723ea259989976c6f3e892eed22255adb7ce3832e5"
+    },
+    {
+      "path": "README.md",
+      "size_bytes": 5457,
+      "sha256": "808c484c25ff53b4c7fb67a34b5427491cefc9c6bdbc59d5126bfeb238652b9a"
+    },
+    {
+      "path": "docs/audits/2026-08-24-candidate1-task6-final-verification.md",
+      "size_bytes": 12395,
+      "sha256": "ccabe28253e063e26648e2e067fdc45082fcc1be73d7a07f090c3d16d78dd95b"
+    },
+    {
+      "path": "docs/audits/2026-08-26-candidate1-task6r-external-source-revision-assessment.json",
+      "size_bytes": 3283,
+      "sha256": "a63cf8087d62b86289c62e0449a5e4faaca3b8af43e1789a4fcef6755224753a"
+    },
+    {
+      "path": "docs/audits/2026-08-27-candidate1-task6s-external-source-revision-waiver.json",
+      "size_bytes": 6431,
+      "sha256": "8fed228b7bc13081e75376c0aab97dc0b0370b4f560f048d46cec7956e5bcaed"
+    },
+    {
+      "path": "docs/audits/2026-08-27-candidate1-task6s-route-assessment.json",
+      "size_bytes": 1057,
+      "sha256": "e34e10fb76b2dc4ad469ffe84997b0efca6decbd9d8f1102d5751de61d69e776"
+    },
+    {
+      "path": "docs/audits/2026-09-11-candidate1-historical-readback.json",
+      "size_bytes": 795,
+      "sha256": "7ead9d0ce1e46e9b3ee42b3336229f61c030a9e989fb7cf43d6d8fcb50f34ed2"
+    },
+    {
+      "path": "docs/audits/2026-09-11-candidate1-remediation.md",
+      "size_bytes": 5264,
+      "sha256": "c1e3d7b0dd0e7c365365cad59d2bcd7fcd0e00bbc4fe83026ecf71908bd2ca81"
+    },
+    {
+      "path": "docs/audits/2026-09-11-evidence-archive-review.json",
+      "size_bytes": 5618,
+      "sha256": "9742e87e1f761f2839f7daa3721b8d512055be68bc1d732652526822b7712dcb"
+    },
+    {
+      "path": "docs/audits/2026-09-11-evidence-archive-review.md",
+      "size_bytes": 2587,
+      "sha256": "a3a9f5b633922beee88ab58c4ea50583ad092a5875194b04997efe5b8f396510"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/00-execution-map.md",
+      "size_bytes": 4591,
+      "sha256": "2bd670a08d002c53f8c8a6b44670f0e630b0df0832bf2df8cc1c163ea6dfedb4"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/01-characterize-compatibility.md",
+      "size_bytes": 4941,
+      "sha256": "8db2e65473d29cbcdc2be0906615582c926de5ed8220cc62ba4f38ae7fcabbdd"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/02-build-lifecycle-core.md",
+      "size_bytes": 4758,
+      "sha256": "676292f9238a768424908038c459512955e91ef0c337a2828f12e11b6d39f26e"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/03-migrate-stage7.md",
+      "size_bytes": 5529,
+      "sha256": "75ed39de5f447fcc5a8a1e5f9ab83213681d8529291756c03e0f666ce21f3255"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/04-migrate-stage8.md",
+      "size_bytes": 5972,
+      "sha256": "2e853f0f79510caeffc12c5bd3d34105b8d3b7f5939dcd0ca9dfca5efe820920"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/05-remove-duplication.md",
+      "size_bytes": 7958,
+      "sha256": "2d038791eb06ef1e03f788a6882360f5a4f8a54dc2f7ca018c8ce54118dcb948"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06-verify-and-handoff.md",
+      "size_bytes": 8164,
+      "sha256": "dfc56be3aaf85ff0b7f60869eed9c64dca79886888a10cdd19b78df47e97a6c6"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06R-external-source-revision-waiver.md",
+      "size_bytes": 7376,
+      "sha256": "c6e6a4be01d06c4c723745ce0408f2280ae23f58037ef682f17cee3a1f74bb99"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-08-23-reproducible-release-lifecycle/06S-corporate-action-provenance-remediation.md",
+      "size_bytes": 3182,
+      "sha256": "4677daeacd024efcc5967f15f209457993b8ca959b762988caff10e2ddc4a437"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-11-repository-streamlining/01-evidence-retention-and-archive.md",
+      "size_bytes": 5390,
+      "sha256": "f825f062d465c4311d2838fd4290504eff5a1ea37ab9051aa3a25ed48600b563"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-11-repository-streamlining/02-lifecycle-closeout.md",
+      "size_bytes": 6082,
+      "sha256": "fd6e0c0731b496f1e3d3385174facec95793bfaa3895f67013162228c71aea7b"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-08-23-reproducible-release-lifecycle-design.md",
+      "size_bytes": 12172,
+      "sha256": "85f64b7be156b278630dfade712bafd14bb22dfcb771c55d2d7ed1a9f65ab081"
+    },
+    {
+      "path": "requirements-verified.txt",
+      "size_bytes": 180,
+      "sha256": "8cce972788e580e14f49e45b1d96b11a56138b3fc147869aa219460fed35be01"
+    },
+    {
+      "path": "src/ashare_multifactor/audit/reproducible_release.py",
+      "size_bytes": 20548,
+      "sha256": "b190bd79e95987de76a2872341ce866c5c6ab07f26813f827f2d0ddb9dd7ce14"
+    },
+    {
+      "path": "src/ashare_multifactor/robustness/pipeline.py",
+      "size_bytes": 23087,
+      "sha256": "ed68ad892be74a2f160b69c5e24da0a1ac74417c0a6d65742a8295fca26e5cf1"
+    },
+    {
+      "path": "src/ashare_multifactor/robustness/release_adapter.py",
+      "size_bytes": 9650,
+      "sha256": "463c203f819e7b2accc7f86f4a82f889d6cbef19426835271e3f64b451414273"
+    },
+    {
+      "path": "src/ashare_multifactor/validation/corporate_actions.py",
+      "size_bytes": 10078,
+      "sha256": "a9cfba75954b94c9de835bec7d8e5439e4787008321fbeaafcad156759155160"
+    },
+    {
+      "path": "src/ashare_multifactor/validation/pipeline.py",
+      "size_bytes": 19122,
+      "sha256": "f1fd7625c5337b644fe69ad1d67723d2d8ce8dbd08748c15ac69b8c50c584c95"
+    },
+    {
+      "path": "src/ashare_multifactor/validation/release_adapter.py",
+      "size_bytes": 5640,
+      "sha256": "fda2dc3d7a1d241247f3f01b3b6e7bb98199184fb6994e025f79ffe4fa61a358"
+    },
+    {
+      "path": "tests/task6r_revision_waiver.py",
+      "size_bytes": 10908,
+      "sha256": "4a2efc4f61b93783cc4f0acd8473daeb8b7e561db9300396b9a2be4a43f20dcf"
+    },
+    {
+      "path": "tests/test_reproducible_release_lifecycle.py",
+      "size_bytes": 22682,
+      "sha256": "51e4d0a5cf7856aee7d48e4cfdd9ca705c891f1806c966fb49673a7ac0e4a819"
+    },
+    {
+      "path": "tests/test_robustness_release_adapter.py",
+      "size_bytes": 14991,
+      "sha256": "c1a37513e18b3abbb9146ee6d92ad067d2b7f56e9c42c1580c56802a6ff1bd74"
+    },
+    {
+      "path": "tests/test_robustness_release_compatibility.py",
+      "size_bytes": 28219,
+      "sha256": "039fc4b141924bc6140e1ee7347db7e433146301b52cb8e08df079c112219d04"
+    },
+    {
+      "path": "tests/test_task6r_revision_waiver.py",
+      "size_bytes": 11940,
+      "sha256": "685e5e28c0664913688135df37f27bdec3fe1ad4dd59846e6a24c652fe0ba778"
+    },
+    {
+      "path": "tests/test_validation_backtest.py",
+      "size_bytes": 17110,
+      "sha256": "09e510af874b03cb9d0e82aca3f03633801aacd9a8bd4af277a93368b6b0db21"
+    },
+    {
+      "path": "tests/test_validation_release_adapter.py",
+      "size_bytes": 21158,
+      "sha256": "fd375cf9c64fbb4c2e1858e695406b92c780be264c45d95fae0441240abbcf3c"
+    },
+    {
+      "path": "tests/test_validation_release_compatibility.py",
+      "size_bytes": 21157,
+      "sha256": "95bc59b79b8e454b8914bad54898ca44bf71c8e531141ccc1ef2fd251003eb09"
+    }
+  ],
+  "environment": {
+    "python": "3.14.7",
+    "polars": "1.43.2"
+  },
+  "verification": {
+    "full_pytest": "1622 passed, 1 skipped in 424.31s (0:07:04)",
+    "exit_code": 0,
+    "ruff": "passed",
+    "git_diff_check": "passed",
+    "archive_restore": "467112 files passed",
+    "public_signatures_unchanged": true,
+    "cli_and_publication_bytes_unchanged": true,
+    "production_bytes_match_original_candidate": true,
+    "current_pointers_unchanged": true,
+    "final_test_current_absent": true,
+    "historical_receipt_mapping_replay": "passed",
+    "new_real_input_shadow_staging": false,
+    "consumer_regeneration_repeated": false
+  },
+  "unresolved_items": [],
+  "self_hash_policy": "This manifest is not included in its own file hash list; initial_integrated_files preserves the initial copy snapshot.",
+  "final_files_sha256": "11ae391c7091f374079bed67c66819ffd6b18dbd3109de9c1507028839b17d79"
+}

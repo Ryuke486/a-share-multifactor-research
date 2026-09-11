@@ -351,7 +351,7 @@
 
 ## 9. 工程与代码规范
 
-- 使用Python 3.12+；当前本机Python为3.14.6。
+- 当前验证环境以根目录 `.python-version` 和 `requirements-verified.txt` 为准；复用项目 `.venv` 并在运行前核对版本。历史证书保留其原环境身份，新运行生成新的身份与证书。
 - 第一阶段主要使用Polars、NumPy、SciPy、PyYAML、Matplotlib、pytest和ruff。
 - 代码标识符、字段和文件名使用英文；研究文档和面向用户的说明优先使用中文。
 - 使用src布局，包名为ashare_multifactor。

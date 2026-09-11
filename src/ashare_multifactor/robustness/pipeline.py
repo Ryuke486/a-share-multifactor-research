@@ -3,14 +3,13 @@ from __future__ import annotations
 from datetime import date
 import json
 from pathlib import Path
-import shutil
 from typing import Any
-import uuid
 
 import polars as pl
 
-from ashare_multifactor.audit.identity import code_identity
-from ashare_multifactor.audit.publication import publish_release, resolve_current
+from ashare_multifactor.audit import reproducible_release
+from ashare_multifactor.audit.identity import code_identity  # noqa: F401
+from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.combination.definitions import CANDIDATE_FACTORS
 from ashare_multifactor.combination.panel import build_rolling_composite_scores
@@ -37,8 +36,8 @@ from ashare_multifactor.robustness.portfolio_sensitivity import (
 from ashare_multifactor.robustness.protocol import (
     RobustnessProtocol,
     assert_authoritative_period_contracts,
-    assert_robustness_read_allowed,
-    load_robustness_protocol,
+    assert_robustness_read_allowed,  # noqa: F401 - compatibility patch surface
+    load_robustness_protocol,  # noqa: F401 - compatibility patch surface
     read_bounded_parquet,
 )
 from ashare_multifactor.robustness.regime_analysis import (
@@ -49,21 +48,25 @@ from ashare_multifactor.robustness.regime_analysis import (
     time_segments,
 )
 from ashare_multifactor.robustness.release_context import (
-    assert_validation_market_scope as _assert_validation_market_scope,
-    resolve_robustness_data_root,
+    assert_validation_market_scope as _assert_validation_market_scope,  # noqa: F401
+    resolve_robustness_data_root,  # noqa: F401 - adapter compatibility surface
 )
-from ashare_multifactor.robustness.report import render_robustness_report
+from ashare_multifactor.robustness.report import (  # noqa: F401
+    render_robustness_report,
+)
 from ashare_multifactor.robustness.summary import (
-    assess_test_protocol_gate,
-    build_robustness_long_table,
+    assess_test_protocol_gate,  # noqa: F401 - compatibility patch surface
+    build_robustness_long_table,  # noqa: F401 - compatibility patch surface
 )
 from ashare_multifactor.robustness.successor_seal import (
-    Stage8Supersession,
-    build_stage8_successor_lineage,
+    Stage8Supersession,  # noqa: F401 - compatibility patch surface
+    build_stage8_successor_lineage,  # noqa: F401 - compatibility patch surface
     build_stage8_supersession,
     verify_action_coverage_audit,
 )
-from ashare_multifactor.robustness.test_protocol import seal_test_protocol
+from ashare_multifactor.robustness.test_protocol import (  # noqa: F401
+    seal_test_protocol,
+)
 from ashare_multifactor.validation.backtest_extension import run_validation_backtest
 from ashare_multifactor.validation.backtest_inputs import build_continuous_targets
 
@@ -108,56 +111,22 @@ def finalize_robustness_run(
     identity: dict[str, object],
     inputs: dict[str, object] | None = None,
 ) -> dict[str, Any]:
-    missing = [name for name in CORE_ROBUSTNESS_FILES if not (run_root / name).is_file()]
-    if missing:
-        raise FileNotFoundError("robustness run is incomplete: " + ", ".join(missing))
-    assert_robustness_outputs_sealed(run_root)
-    files = [
-        {
-            "path": name,
-            "sha256": sha256_file(run_root / name),
-            "size": (run_root / name).stat().st_size,
-        }
-        for name in CORE_ROBUSTNESS_FILES
-    ]
-    manifest = {
-        "run_id": run_id,
-        "code": identity,
-        "inputs": inputs or {},
-        "core_file_count": len(files),
-        "files": files,
-    }
-    (run_root / "run_manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    return reproducible_release._finalize_compatibility_run(
+        "stage8_v1",
+        run_root,
+        run_id=run_id,
+        code=identity,
+        inputs=inputs or {},
+        validate_domain_outputs=assert_robustness_outputs_sealed,
     )
-    return manifest
 
 
 def compare_robustness_runs(first: Path, second: Path) -> dict[str, Any]:
-    manifests = [
-        json.loads((root / "run_manifest.json").read_text(encoding="utf-8"))
-        for root in (first, second)
-    ]
-    if manifests[0]["code"] != manifests[1]["code"]:
-        raise ValueError("robustness runs used different code identities")
-    if manifests[0]["inputs"] != manifests[1]["inputs"]:
-        raise ValueError("robustness runs used different inputs")
-    hashes: dict[str, str] = {}
-    for name in CORE_ROBUSTNESS_FILES:
-        left = sha256_file(first / name)
-        right = sha256_file(second / name)
-        if left != right:
-            raise ValueError(f"robustness runs differ: {name}")
-        hashes[name] = left
-    return {
-        "outputs_identical": True,
-        "core_file_count": len(CORE_ROBUSTNESS_FILES),
-        "core_hashes": hashes,
-        "run_ids": [manifests[0]["run_id"], manifests[1]["run_id"]],
-        "code": manifests[0]["code"],
-        "inputs": manifests[0]["inputs"],
-    }
+    return reproducible_release._compare_compatibility_runs(
+        "stage8_v1",
+        first,
+        second,
+    )
 
 
 def execute_robustness_run(
@@ -166,60 +135,26 @@ def execute_robustness_run(
     run_id: str | None = None,
 ) -> Path:
     """Execute every pre-registered Stage-8 diagnostic without reading test data."""
-    code_root = code_root.resolve()
-    data_root = resolve_robustness_data_root(code_root)
-    protocol = load_robustness_protocol(code_root / "configs/robustness_protocol.yaml")
-    validation = resolve_current(data_root / "processed/validation_evaluation")
-    if validation.run_id != protocol.validation_release:
-        raise ValueError("authoritative validation release changed")
-    decision = json.loads(
-        (validation.artifacts / "research/selection_decision.json").read_text(
-            encoding="utf-8"
-        )
+    return reproducible_release.run_once(
+        _stage8_release_adapter(),
+        code_root.resolve(),
+        run_id=run_id,
     )
-    if decision.get("selected_candidate") != protocol.main_candidate:
-        raise ValueError("validation main candidate changed")
-    _assert_input_period_contracts(data_root, validation)
-    assert_robustness_read_allowed(protocol.analysis_start, protocol.analysis_end)
-    actual_run_id = run_id or uuid.uuid4().hex
-    run_root = data_root / "artifacts/robustness/full_runs" / actual_run_id
-    if run_root.exists():
-        raise FileExistsError(run_root)
-    run_root.mkdir(parents=True)
-    identity = code_identity(code_root)
-    inputs = _robustness_input_identity(code_root, data_root, validation)
-    try:
-        results, fatal_events = _execute_experiments(
-            code_root, data_root, validation, protocol
-        )
-        table = build_robustness_long_table(results, protocol)
-        gate = assess_test_protocol_gate(
-            table,
-            fatal_events=fatal_events,
-            protocol=protocol,
-        )
-        table.write_parquet(run_root / "robustness_results.parquet")
-        (run_root / "protocol_gate.json").write_text(
-            json.dumps(gate, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        (run_root / "report.md").write_text(
-            render_robustness_report(table, gate, protocol), encoding="utf-8"
-        )
-        if code_identity(code_root) != identity:
-            raise ValueError("code identity changed during robustness run")
-        if _robustness_input_identity(code_root, data_root, validation) != inputs:
-            raise ValueError("robustness inputs changed during run")
-        finalize_robustness_run(
-            run_root,
-            run_id=actual_run_id,
-            identity=identity,
-            inputs=inputs,
-        )
-    except BaseException:
-        shutil.rmtree(run_root, ignore_errors=True)
-        raise
-    return run_root
+
+
+def _stage8_release_adapter(
+    *,
+    successor_audit_root: Path | None = None,
+    collector_readiness_root: Path | None = None,
+):
+    from ashare_multifactor.robustness.release_adapter import (
+        Stage8ReleaseAdapter,
+    )
+
+    return Stage8ReleaseAdapter(
+        successor_audit_root=successor_audit_root,
+        collector_readiness_root=collector_readiness_root,
+    )
 
 
 def execute_robustness_reproducibility(
@@ -227,20 +162,11 @@ def execute_robustness_reproducibility(
     *,
     run_id_prefix: str | None = None,
 ) -> dict[str, Any]:
-    prefix = run_id_prefix or uuid.uuid4().hex
-    first = execute_robustness_run(code_root, run_id=f"{prefix}_1")
-    second = execute_robustness_run(code_root, run_id=f"{prefix}_2")
-    result = compare_robustness_runs(first, second)
-    result["release_eligible"] = result["code"].get("dirty") is False
-    result["reason"] = None if result["release_eligible"] else "git_identity_is_dirty"
-    data_root = resolve_robustness_data_root(code_root)
-    destination = data_root / "processed/robustness/reproducibility.json"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    return reproducible_release.reproduce(
+        _stage8_release_adapter(),
+        code_root,
+        run_id_prefix=run_id_prefix,
     )
-    return result
 
 
 def publish_robustness_release(
@@ -252,139 +178,33 @@ def publish_robustness_release(
 ) -> object:
     """Publish only two-run-identical output from one clean Git identity."""
     code_root = code_root.resolve()
-    data_root = resolve_robustness_data_root(code_root)
-    if (successor_audit_root is None) != (collector_readiness_root is None):
-        raise ValueError("Stage-8 successor audit roots are incomplete")
-    successor_contract = (
-        _successor_release_contract(
+    try:
+        reproducible_release._assert_clean_release_identity(
+            code_identity(code_root)
+        )
+        return reproducible_release.release(
+            _stage8_release_adapter(
+                successor_audit_root=successor_audit_root,
+                collector_readiness_root=collector_readiness_root,
+            ),
             code_root,
-            data_root,
-            successor_audit_root,
-            collector_readiness_root,
+            run_id=run_id,
+            publish=True,
         )
-        if successor_audit_root is not None
-        else None
-    )
-    identity = code_identity(code_root)
-    if identity.get("dirty") is not False:
-        raise ValueError("robustness release requires a clean Git identity")
-    reproducibility_path = data_root / "processed/robustness/reproducibility.json"
-    reproducibility = json.loads(reproducibility_path.read_text(encoding="utf-8"))
-    if (
-        reproducibility.get("outputs_identical") is not True
-        or reproducibility.get("release_eligible") is not True
-        or reproducibility.get("code") != identity
-    ):
-        raise ValueError("robustness reproducibility gate is incomplete")
-    source = (
-        data_root
-        / "artifacts/robustness/full_runs"
-        / reproducibility["run_ids"][1]
-    )
-    verify_reproducible_source(source, reproducibility)
-    gate = json.loads((source / "protocol_gate.json").read_text(encoding="utf-8"))
-    if gate.get("sealed_test_protocol_allowed") is not True:
-        raise ValueError("robustness gate does not allow publication")
-    protocol = load_robustness_protocol(code_root / "configs/robustness_protocol.yaml")
-    research_config = load_config(code_root / "configs/research_protocol.yaml")
-    validation_release = resolve_current(
-        data_root / "processed/validation_evaluation"
-    )
-    _assert_validation_market_scope(
-        validation_release, research_config.supported_markets
-    )
-    validation_pointer = json.loads(
-        (data_root / "processed/validation_evaluation/CURRENT.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    staged = data_root / "artifacts/robustness/release_staging" / run_id
-    if staged.exists():
-        raise FileExistsError(staged)
-    datasets = staged / "datasets"
-    artifacts = staged / "artifacts"
-    datasets.mkdir(parents=True)
-    artifacts.mkdir()
-    shutil.copy2(source / "robustness_results.parquet", datasets)
-    shutil.copy2(source / "report.md", artifacts)
-    shutil.copy2(source / "protocol_gate.json", artifacts)
-    if successor_contract is not None:
-        shutil.copytree(successor_audit_root, artifacts / "action_coverage_audit")
-        shutil.copytree(
-            collector_readiness_root,
-            artifacts / "collector_readiness_audit",
-        )
-    sealed = seal_test_protocol(
-        artifacts / "sealed_test_protocol.json",
-        protocol=protocol,
-        code_identity=identity,
-        validation_pointer=validation_pointer,
-        market_rules_sha256=sha256_file(code_root / "configs/market_rules.yaml"),
-        report_template_sha256=sha256_file(
-            code_root / "docs/templates/stage9-final-test-report-template.md"
-        ),
-        opening_ledger_root=(
-            data_root / "processed/robustness/final_test_opening_ledger"
-        ),
-        gate=gate,
-        supported_markets=research_config.supported_markets,
-        action_source_contract_sha256=(
-            str(successor_contract["action_source_contract_sha256"])
-            if successor_contract is not None
-            else None
-        ),
-        action_coverage_audit_sha256=(
-            str(successor_contract["action_coverage_audit_sha256"])
-            if successor_contract is not None
-            else None
-        ),
-        collector_readiness_audit_sha256=(
-            str(successor_contract["collector_readiness_audit_sha256"])
-            if successor_contract is not None
-            else None
-        ),
-        predecessor=(
-            successor_contract["predecessor"]
-            if successor_contract is not None
-            else None
-        ),
-    )
-    lineage = {
-        "stage": "robustness",
-        "period": ["2005-01-01", "2021-12-31"],
-        "sealed_test_start": "2022-01-01",
-        "main_candidate": protocol.main_candidate,
-        "code": identity,
-        "inputs": reproducibility["inputs"],
-        "reproducibility": reproducibility,
-        "sealed_protocol_sha256": sealed["sealed_protocol_sha256"],
-        "supported_markets": list(research_config.supported_markets),
-    }
-    if successor_contract is not None:
-        lineage = build_stage8_successor_lineage(
-            lineage,
-            supersession=Stage8Supersession(**successor_contract["predecessor"]),
-            action_source_contract_sha256=str(
-                successor_contract["action_source_contract_sha256"]
-            ),
-            action_coverage_audit_sha256=str(
-                successor_contract["action_coverage_audit_sha256"]
-            ),
-            collector_readiness_audit_sha256=str(
-                successor_contract["collector_readiness_audit_sha256"]
-            ),
-        )
-        lineage["execution_protocol"]["supported_markets"] = list(
-            research_config.supported_markets
-        )
-    return publish_release(
-        data_root / "processed/robustness",
-        run_id=run_id,
-        staged_datasets=datasets,
-        staged_artifacts=artifacts,
-        lineage=lineage,
-        manifest_metadata={"stage": "robustness"},
-    )
+    except ValueError as error:
+        if str(error) == "current code identity is dirty":
+            raise ValueError(
+                "robustness release requires a clean Git identity"
+            ) from error
+        if str(error) in {
+            "current code identity differs from certified runs",
+            "reproducibility certificate does not bind two runs",
+            "reproducibility gate is not release eligible",
+        }:
+            raise ValueError(
+                "robustness reproducibility gate is incomplete"
+            ) from error
+        raise
 
 
 def _successor_release_contract(
@@ -428,21 +248,11 @@ def verify_reproducible_source(
     source: Path, reproducibility: dict[str, Any]
 ) -> None:
     """Revalidate the selected run instead of trusting a mutable summary file."""
-    manifest = json.loads((source / "run_manifest.json").read_text(encoding="utf-8"))
-    if manifest.get("run_id") != source.name:
-        raise ValueError("reproducible source run identity changed")
-    if manifest.get("code") != reproducibility.get("code"):
-        raise ValueError("reproducible source code identity changed")
-    if manifest.get("inputs") != reproducibility.get("inputs"):
-        raise ValueError("reproducible source input identity changed")
-    manifest_hashes = {
-        item["path"]: item["sha256"] for item in manifest.get("files", [])
-    }
-    expected = reproducibility.get("core_hashes", {})
-    for name in CORE_ROBUSTNESS_FILES:
-        actual = sha256_file(source / name)
-        if actual != expected.get(name) or actual != manifest_hashes.get(name):
-            raise ValueError(f"reproducible source hash changed: {name}")
+    reproducible_release._verify_compatibility_source(
+        "stage8_v1",
+        source,
+        reproducibility,
+    )
 
 
 def _execute_experiments(

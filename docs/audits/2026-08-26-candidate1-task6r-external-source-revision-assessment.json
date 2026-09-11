@@ -1,0 +1,108 @@
+{
+  "candidate_1_complete": false,
+  "certified_run_ids": [
+    "stage7_controlled_65b19e1_1",
+    "stage7_controlled_65b19e1_2"
+  ],
+  "consumer_comparison": {
+    "corporate_actions.parquet": {
+      "certified_run_matches": [
+        true,
+        true
+      ],
+      "column_and_dtype_match": true,
+      "economic_key_multiset_difference_count": 0,
+      "field_value_difference_count": 2,
+      "full_row_multiset_symmetric_difference_count": 2,
+      "historical_only": {
+        "action_id": "10bf9b4859c85e944e2a35bf",
+        "cash_per_share": 0.2,
+        "effective_date": "2018-06-22",
+        "ex_date": "2018-06-22",
+        "share_ratio": 0.0,
+        "source": "baostock_dividend_operate_year+cninfo_action_correction",
+        "symbol": "000042"
+      },
+      "new_only": {
+        "action_id": "c50a57248ff45e5cff9271d3",
+        "cash_per_share": 0.2,
+        "effective_date": "2018-06-22",
+        "ex_date": "2018-06-22",
+        "share_ratio": 0.0,
+        "source": "baostock_dividend_operate_year",
+        "symbol": "000042"
+      },
+      "regenerated_row_count": 26445,
+      "historical_row_count": 26445
+    },
+    "security_events.parquet": {
+      "certified_run_matches": [
+        true,
+        true
+      ],
+      "column_and_dtype_match": true,
+      "full_row_multiset_symmetric_difference_count": 0,
+      "regenerated_row_count": 5,
+      "historical_row_count": 5
+    }
+  },
+  "consumer_semantic_differences": 2,
+  "download_evidence": {
+    "baostock_version": "00.9.30",
+    "column_count": 16,
+    "coverage_sha256": "2574758f797296593b118aa2056fae042a48447d9e73aaa78f7e55988acac1c2",
+    "download_log_sha256": "1d388e9ec9afab1eb22b587fec2231248dea28842dbe4ba268fe65d903a475aa",
+    "new_raw_identity": {
+      "sha256": "77e4fb6e076d87d4d5536fa1d4d292ff2f678ccd45a3d087fa35dd18579d3980",
+      "size": 175011
+    },
+    "query_year_type": "operate",
+    "query_years": [
+      2017,
+      2018,
+      2019,
+      2020,
+      2021
+    ],
+    "row_count": 9516,
+    "serial_access": {
+      "login_succeeded": true,
+      "logout_succeeded": true,
+      "nonzero_error_count": 0,
+      "process_count": 1,
+      "query_count": 13590,
+      "session_count": 1
+    },
+    "symbol_count": 2718
+  },
+  "external_source_revision_waiver": "rejected",
+  "failure_reason": "Two Stage-7 consumer fields differ for one 000042 corporate-action row: source and the derived action_id.",
+  "historical_raw_bytes_recovered": false,
+  "historical_raw_identity": {
+    "sha256": "ffdfdc8dd0c4835009da53a69ad88c5984d34407d7612887867e4a3006048bab",
+    "size": 177037
+  },
+  "new_provider_rows_explaining_difference": [
+    {
+      "code": "sz.000042",
+      "dividCashPsBeforeTax": "0.2",
+      "dividOperateDate": "2018-06-22",
+      "dividPayDate": "2018-06-22",
+      "dividRegistDate": "2018-06-21",
+      "query_year": 2018
+    },
+    {
+      "code": "sz.000042",
+      "dividCashPsBeforeTax": "0.2",
+      "dividOperateDate": "2018-06-28",
+      "dividPayDate": "2018-06-22",
+      "dividRegistDate": "2018-06-21",
+      "query_year": 2018
+    }
+  ],
+  "production_adapter_modified": false,
+  "publication_performed": false,
+  "shadow_identity_mapping_performed": false,
+  "status": "failed_closed",
+  "task": "06R-external-source-revision-waiver"
+}
