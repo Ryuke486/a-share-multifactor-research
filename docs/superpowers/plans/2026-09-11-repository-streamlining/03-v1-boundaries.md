@@ -26,16 +26,18 @@
 
 ## 做完必须检查的问题
 
-- [ ] 每个迁移模块是否有明确理由，是否遗漏动态引用或源码身份绑定？
-- [ ] v1.0 必需的证据能力是否仍可用，旧导入和 CLI 是否兼容？
-- [ ] 共享层是否摆脱最终测试编排依赖，是否没有新增循环依赖？
-- [ ] 人工反例是否证明 v1.0 入口不会创建 token、attempt 或触发最终测试执行？
-- [ ] 研究计算、排序、参数和数据可得时间是否保持一致？
-- [ ] 历史 release、封印和血缘是否仍按原规则可核验？
-- [ ] 是否没有改旧哈希、放宽校验或改写失败记录来适配新结构？
-- [ ] 新旧接口测试、相关回归、完整 pytest 和 Ruff 是否通过？
-- [ ] 文档是否明确共享能力与延期功能边界，没有宣称 Stage 9 已完成？
-- [ ] 改动是否实际减少跨层依赖，而不是仅增加文件、包装或抽象？
+- [x] 每个迁移模块是否有明确理由，是否遗漏动态引用或源码身份绑定？
+- [x] v1.0 必需的证据能力是否仍可用，旧导入和 CLI 是否兼容？
+- [x] 共享层是否摆脱最终测试编排依赖，是否没有新增循环依赖？
+- [x] 人工反例是否证明 v1.0 入口不会创建 token、attempt 或触发最终测试执行？
+- [x] 研究计算、排序、参数和数据可得时间是否保持一致？
+- [x] 历史 release、封印和血缘是否仍按原规则可核验？
+- [x] 是否没有改旧哈希、放宽校验或改写失败记录来适配新结构？
+- [x] 新旧接口测试、相关回归、完整 pytest 和 Ruff 是否通过？
+- [x] 文档是否明确共享能力与延期功能边界，没有宣称 Stage 9 已完成？
+- [x] 改动是否实际减少跨层依赖，而不是仅增加文件、包装或抽象？
+
+逐项证据见 [2026-09-11 v1.0 边界验收报告](../../../../docs/audits/2026-09-11-v1-boundaries-review.md) 与[机器可读清单](../../../../docs/audits/2026-09-11-v1-boundaries-manifest.json)。第 1 项按"只迁移有明确共享需求的能力"处理：实际迁移 1 个桥接模块，并把共享证据审计层的整体抽取列为未决项与拒绝理由。
 
 ## 输出、验收与强制停点
 
@@ -47,19 +49,22 @@
 
 ```yaml
 task: 03-v1-boundaries
-status: not_started
+status: complete
 predecessor_handoff: 02-lifecycle-closeout.md
-accepted_tree_identity: null
-dependency_review: null
-verification_report: null
-compatibility_tests: pending
-boundary_tests: pending
-full_pytest: pending
-ruff: pending
-historical_identity_compatibility: pending
-current_pointers_unchanged: null
-final_test_remains_sealed: null
-integration_status: pending
-unresolved_items: []
+accepted_tree_identity: .worktrees/v1-boundaries-step03 @ 1a9feb196ac659edecbe8a271e9e5abe168d00b3 (branch codex/v1-boundaries-step03); 11 changed paths (7 modified, 4 new); 10 of them are listed in the verification_report manifest, which excludes itself
+dependency_review: robustness import closure 128 -> 58 modules; final_test modules 64 -> 0; final-test orchestration modules 27 -> 0; all nine v1.0 library packages now depend on final_test zero times
+verification_report: docs/audits/2026-09-11-v1-boundaries-review.md
+compatibility_tests: 57 passed in 16.14s (evidence workflow successor, robustness adapter/compat/publication, final-test CLI, boundary)
+boundary_tests: 7 passed; red before the change (2 of 7 failed, runtime closure test also fails against the pre-change layout)
+full_pytest: 1629 passed, 1 skipped in 431.39s; exit 0 (final run on the frozen step-03 tree)
+ruff: passed; git diff --check passed
+historical_identity_compatibility: passed; final_execution identity unchanged (95fafab8... equals the sealed predecessor record); evidence_workflow changed by design (97 -> 98 records); no new seal or protocol version required; no successor published
+current_pointers_unchanged: true
+final_test_remains_sealed: true
+integration_status: integrated_into_main_working_tree_uncommitted (2026-09-11, authorized by the user before step 04); the ten delivered files were copied byte-identically from the step worktree and re-verified against the step-03 manifest hashes
+integration_evidence: main worktree full pytest 1629 passed, 1 skipped in 447.91s (exit 0), ruff passed, git diff --check clean, Stage 5-8 CURRENT.json pointers unchanged, processed/final_test/CURRENT.json still absent
+unresolved_items:
+  - the shared evidence-audit layer (routing, candidate admission, catalog, document validation) still lives inside final_test; a package-level extraction would need separate authorization and would change the evidence_workflow identity
+  - the rehearsal is reached through the CLI bridge plus a lazy compatibility facade; a future real Stage-8 successor reseal must record the new evidence_workflow identity
 next_authorized_task: null
 ```

@@ -895,7 +895,7 @@ def test_rehearsal_binds_focused_tests_and_reroutes_real_historical_catalog(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    from ashare_multifactor.robustness import evidence_workflow_rehearsal as rehearsal
+    from ashare_multifactor.final_test import evidence_workflow_rehearsal as rehearsal
 
     collector = tmp_path / "collector"
     _write_historical_collector(
@@ -1020,7 +1020,7 @@ def test_rehearsal_rejects_catalog_crossing_final_test_in_shanghai_time(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    from ashare_multifactor.robustness import evidence_workflow_rehearsal as rehearsal
+    from ashare_multifactor.final_test import evidence_workflow_rehearsal as rehearsal
 
     collector = tmp_path / "collector"
     _write_historical_collector(

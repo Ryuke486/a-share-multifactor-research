@@ -4,7 +4,7 @@ import argparse
 import json
 from pathlib import Path
 
-from ashare_multifactor.robustness.evidence_workflow_rehearsal import (
+from ashare_multifactor.final_test.evidence_workflow_rehearsal import (
     build_evidence_workflow_rehearsal,
 )
 from ashare_multifactor.robustness.evidence_workflow_successor_release import (

@@ -1,0 +1,162 @@
+{
+  "schema_version": 1,
+  "task": "03-v1-boundaries",
+  "date": "2026-09-11",
+  "status": "implemented_and_verified_uncommitted",
+  "baseline": {
+    "commit": "1a9feb196ac659edecbe8a271e9e5abe168d00b3",
+    "branch": "codex/v1-boundaries-step03",
+    "worktree": "/Users/mikasa/本科时期/Projects/repository1/.worktrees/v1-boundaries-step03",
+    "environment": {
+      "python": "3.14.7",
+      "polars": "1.43.2"
+    },
+    "current_pointers": {
+      "factor_combination": "0733c6095ba2e5537a2891ea23562ab363ea80de24bc798d1db7015064e69f83",
+      "formal_backtest": "2f8d2d350caa564abb7ccab591594b388a4da59531cb5e03091687ac24466617",
+      "robustness": "0e42ea37107707d014c743fef3ef040ab61bd47f025db0cb81aa09577f9cac3b",
+      "validation_evaluation": "cc73d95fbebcce6de6666f8dade09c1312c06da15bd8b1fb4d2dc7c7ca3973af"
+    },
+    "stage7_manifest_sha256": "6ee12a10b25a53d8a48c596faa76c1833d92c10c511e570d301a5f96c10836fd",
+    "stage8_manifest_sha256": "c75948b4c47007c6f5690451afbebdff02eb5d3c793e6285eb799af898ea1fba",
+    "final_test_current_present": false
+  },
+  "scope_measurements": {
+    "source_lines_total": 62392,
+    "final_test_package": {
+      "files": 91,
+      "lines": 40795,
+      "share": 0.654
+    },
+    "v1_library_packages_checked": [
+      "audit",
+      "research",
+      "validation",
+      "robustness",
+      "data",
+      "factors",
+      "combination",
+      "portfolio",
+      "execution"
+    ],
+    "before": {
+      "robustness_import_closure_modules": 128,
+      "final_test_modules_in_closure": 64,
+      "final_test_orchestration_modules_in_closure": 27,
+      "v1_library_modules_importing_final_test": 1,
+      "entry_module": "src/ashare_multifactor/robustness/evidence_workflow_rehearsal.py"
+    },
+    "after": {
+      "robustness_import_closure_modules": 58,
+      "final_test_modules_in_closure": 0,
+      "final_test_orchestration_modules_in_closure": 0,
+      "v1_library_modules_importing_final_test": 0
+    }
+  },
+  "identity_contract": {
+    "final_execution_paths": 9,
+    "final_execution_sha256_current_tree": "95fafab8b735e47c9011d3ec851320678ccf9376cc772994bcb0e725b369cfbf",
+    "final_execution_sha256_sealed_predecessor": "95fafab8b735e47c9011d3ec851320678ccf9376cc772994bcb0e725b369cfbf",
+    "final_execution_domain_unchanged": true,
+    "evidence_workflow_records_sealed": 97,
+    "evidence_workflow_records_current": 98,
+    "evidence_workflow_sha256_sealed": "0cdeb1e47dfdbcfca9ff5c06f0665040efa93180ba8b23e0816d4e65132447b6",
+    "evidence_workflow_sha256_current": "63b2f582605bace98de46a8af54638b910541d837f38f0dbfbb155530afdff27",
+    "changed_domain": "evidence_workflow_only",
+    "protocol_version_bump_required": false,
+    "successor_published": false,
+    "historical_release_bytes_changed": false,
+    "note": "the evidence workflow hash changes with every bound file byte and is recorded for the final step-03 tree; only the changed domain matters for the change-impact contract"
+  },
+  "changed_files": [
+    {
+      "path": "CONTEXT.md",
+      "state": "modified",
+      "size_bytes": 3322,
+      "sha256": "b3e95549a815ba628b860d6bd1f094f620c330bff5e72e9bffe75921dca18c98"
+    },
+    {
+      "path": "docs/audits/2026-09-11-v1-boundaries-review.md",
+      "state": "new",
+      "size_bytes": 12906,
+      "sha256": "81e5f4922318bdf4feca0a7a40379d7a4d720ea6d1f205a573e6c3795698c1f1"
+    },
+    {
+      "path": "docs/reproduction.md",
+      "state": "modified",
+      "size_bytes": 5904,
+      "sha256": "3c2f65db44570aeee79a4f566b776de9672d30dba57e4b5dc198fcb726ec8827"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-09-11-repository-streamlining/03-v1-boundaries.md",
+      "state": "modified",
+      "size_bytes": 6251,
+      "sha256": "fcf8f1cc6a54b55f31f6807c39cfde9c17e24b0c91374b87bcb097d9af2b3e55"
+    },
+    {
+      "path": "src/ashare_multifactor/cli/robustness.py",
+      "state": "modified",
+      "size_bytes": 5478,
+      "sha256": "fd97ed88b6808630865f91b3cb705d74718b5b5dc6f1b240642770e243abe092"
+    },
+    {
+      "path": "src/ashare_multifactor/final_test/evidence_workflow_rehearsal.py",
+      "state": "new",
+      "size_bytes": 20533,
+      "sha256": "f19144cb3f2347e3fdf9bad0638e6abb89050d579758a8541d29e12db1d65a29"
+    },
+    {
+      "path": "src/ashare_multifactor/robustness/evidence_workflow_rehearsal.py",
+      "state": "modified",
+      "size_bytes": 1079,
+      "sha256": "c4e27fadb02f03969d89b55b6080f2107ae04041f7dae62c1ad177b80be55b90"
+    },
+    {
+      "path": "src/ashare_multifactor/robustness/protocol_identities.py",
+      "state": "modified",
+      "size_bytes": 10853,
+      "sha256": "a8e538b40f90670e06b0f0d12e4678f7e9495310c006663eb1eaab4f5fd86989"
+    },
+    {
+      "path": "tests/test_evidence_workflow_successor.py",
+      "state": "modified",
+      "size_bytes": 41126,
+      "sha256": "986bd5b8267b57b246cc38bbc3d0328eb267d33e14b5dd6134a2dc30021135b0"
+    },
+    {
+      "path": "tests/test_v1_final_test_boundary.py",
+      "state": "new",
+      "size_bytes": 7135,
+      "sha256": "1165ee3ab6de7b2f27cf48665c66b38f3f8c6db09f0a06ea480b8f7e29a81e9d"
+    }
+  ],
+  "verification": {
+    "boundary_tests_red_before_change": "2 of 7 failed against the pre-change layout; the runtime closure test also fails when the old module is restored",
+    "boundary_tests_green": "7 passed",
+    "affected_suites": "57 passed in 16.14s (evidence workflow successor, robustness adapter/compat/publication, final-test CLI, boundary)",
+    "full_pytest": "1629 passed, 1 skipped in 431.39s; exit 0",
+    "ruff": "All checks passed!",
+    "git_diff_check": "passed",
+    "historical_readback": {
+      "stage7": "99 manifest entries verified; certificate and certified source run re-verified",
+      "stage8": "33 manifest entries verified; certificate and certified source run re-verified; seal status=sealed, protocol_version=4, opening_token=closed"
+    }
+  },
+  "rejected_alternatives": [
+    {
+      "option": "extract the shared evidence-audit layer out of final_test",
+      "reason": "26 modules are needed by the two v1.0 entry points and 46 import-time crossings span modules bound by the sealed evidence-workflow identity; too large for a minimal responsibility adjustment and not required for the library boundary"
+    },
+    {
+      "option": "relocate the frozen contract modules (action_source_contract.py, execution_contracts.py, resume.py, ...)",
+      "reason": "the 9 _FINAL_EXECUTION_PATHS are bound by the sealed final_execution_identity; moving them flips the change-impact class and would require a new seal plus real rehearsals, which step 03 does not authorize"
+    }
+  ],
+  "unresolved_items": [
+    "the shared evidence-audit extraction (routing/admission/catalog/document validation) remains inside final_test; only the v1.0 library boundary was fixed",
+    "the rehearsal is now reached through the CLI bridge and the lazy facade; a future real Stage-8 successor reseal must record the new evidence_workflow identity"
+  ],
+  "changed_file_count": 10,
+  "changed_files_sha256": "c2ef26973bc062c70755cb7be1b5f7b99e24fb5cbcfcae97f231f3f69568c72c",
+  "self_hash_policy": "this manifest is not included in its own file list; changed_files holds every other step-03 output"
+}

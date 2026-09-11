@@ -50,6 +50,7 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "src/ashare_multifactor/final_test/routing_audit.py",
     "src/ashare_multifactor/final_test/shared_evidence.py",
     "src/ashare_multifactor/final_test/signals.py",
+    "src/ashare_multifactor/final_test/evidence_workflow_rehearsal.py",
     "src/ashare_multifactor/robustness/change_impact.py",
     "src/ashare_multifactor/robustness/evidence_workflow_readiness.py",
     "src/ashare_multifactor/robustness/evidence_workflow_rehearsal.py",
