@@ -43,19 +43,21 @@
 
 ## 快速验证
 
-当前统一验证环境为 **Python 3.14.7 / Polars 1.43.2**；直接依赖版本见 `requirements-verified.txt`。复用现有 `.venv`，新建环境时先确认解释器版本：
+当前验证环境为 **CPython 3.14.7 / polars 1.43.2**：全部依赖（含传递依赖）锁定在 `requirements-reproducible.txt`，直接依赖版本另见 `requirements-verified.txt`，兼容范围由 `pyproject.toml` 声明（`requires-python = ">=3.12"`）。复用现有 `.venv`，新建环境时按锁定文件安装：
 
 ```bash
-/opt/homebrew/bin/python3 --version  # 应为 Python 3.14.7
-/opt/homebrew/bin/python3 -m venv .venv
-.venv/bin/python -m pip install -c requirements-verified.txt -e ".[dev]"
+/opt/homebrew/bin/python3.14 --version   # 应为 Python 3.14.7
+/opt/homebrew/bin/python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements-reproducible.txt
+.venv/bin/python -m pip install --no-deps -e ".[dev]"
 .venv/bin/python -m pytest -q
 .venv/bin/python -m ruff check src tests
+.venv/bin/python -m ashare_multifactor.cli.delivery check
 ```
 
-历史证书保留 Python 3.14.6 / Polars 1.42.1 身份；新环境的新运行必须生成自己的代码身份与证书，不能覆盖历史记录。此版本文件固定已验证的直接依赖，不是含全部传递依赖与下载哈希的锁文件。
+锁定文件固定版本但不含下载哈希，并且只在 macOS arm64 上验证过；同一份文件在声明的 Python 最低版本 3.12 上也通过安装与测试。历史证书保留 CPython 3.14.6 / polars 1.42.1 身份；新环境的新运行必须生成自己的代码身份与证书，不能覆盖历史记录，也不能用当前锁定文件冒充历史环境。
 
-这些命令只运行人工合成测试和静态检查，不需要本地 28GB 原始数据。完整重建、release 回读和路径要求见[复现说明](docs/reproduction.md)。
+以上命令只运行人工合成测试、静态检查和交付一致性检查，不需要本地 28GB 原始数据，也不需要 `processed/`。交付检查核对仓库内 Markdown 链接、报告中关键数字与 `docs/results/v1.0-key-results.json` 记录的机器结果、以及 v1.0 manifest 的发布提交哈希；加 `--verify-sources` 可在保留 `processed/` 的机器上把数值重新读回权威 release。自动检查配置见 `.github/workflows/ci.yml`，完整重建与 release 回读见[复现说明](docs/reproduction.md)。
 
 ## 数据边界
 
@@ -74,6 +76,7 @@ Data/每天一个文件/后复权/
 - [复现说明](docs/reproduction.md)
 - [结果字典](docs/result_dictionary.md)
 - [关键图表与机器结果索引](docs/results/index.md)
+- [关键结果机器记录](docs/results/v1.0-key-results.json)
 - [已知限制](docs/limitations.md)
 - [Stage 9–10 延期归档](docs/stage9-10-archive.md)
 - [v1.0 机器可读 manifest](releases/v1.0.0-research-validation.json)

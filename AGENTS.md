@@ -351,7 +351,8 @@
 
 ## 9. 工程与代码规范
 
-- 当前验证环境以根目录 `.python-version` 和 `requirements-verified.txt` 为准；复用项目 `.venv` 并在运行前核对版本。历史证书保留其原环境身份，新运行生成新的身份与证书。
+- 当前验证环境以根目录 `.python-version`、`requirements-reproducible.txt`（含传递依赖的精确版本）和 `requirements-verified.txt`（直接依赖版本）为准；复用项目 `.venv` 并在运行前核对版本。历史证书保留其原环境身份，新运行生成新的身份与证书，不得用当前锁定文件冒充历史环境。
+- 交付一致性由 `ashare-delivery check` 自动核对：仓库内 Markdown 链接、报告关键数字与 `docs/results/v1.0-key-results.json` 记录的机器结果、以及 v1.0 manifest 的发布提交哈希。新增或修改报告数字时必须同步记录并保持检查通过。
 - 第一阶段主要使用Polars、NumPy、SciPy、PyYAML、Matplotlib、pytest和ruff。
 - 代码标识符、字段和文件名使用英文；研究文档和面向用户的说明优先使用中文。
 - 使用src布局，包名为ashare_multifactor。

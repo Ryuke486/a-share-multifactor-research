@@ -1,0 +1,1343 @@
+{
+  "schema_version": 1,
+  "release_id": "v1.0.0-research-validation",
+  "generated_on": "2026-09-11",
+  "documents": [
+    "README.md",
+    "reports/research_report.md",
+    "docs/result_dictionary.md",
+    "AGENTS.md"
+  ],
+  "sources": [
+    {
+      "name": "stage4_factor_research",
+      "kind": "file",
+      "root": "artifacts/factor_research"
+    },
+    {
+      "name": "stage5_factor_combination",
+      "kind": "release",
+      "root": "processed/factor_combination",
+      "run_id": "667e0ee00d8941e9a1f5db9a963ae9c3",
+      "manifest_sha256": "d846d866f1766c04f755774a6a750999aa16eef35612a350fbe1797447482fb2"
+    },
+    {
+      "name": "stage6_formal_backtest",
+      "kind": "release",
+      "root": "processed/formal_backtest",
+      "run_id": "b995878_stage6_authoritative",
+      "manifest_sha256": "1a6f3cea593fa14cd7e687fae26b33e1da5f2df86c5616742aff0eb22697128e"
+    },
+    {
+      "name": "stage7_validation_evaluation",
+      "kind": "release",
+      "root": "processed/validation_evaluation",
+      "run_id": "65b19e1_stage7_validation_controlled_collector_successor",
+      "manifest_sha256": "6ee12a10b25a53d8a48c596faa76c1833d92c10c511e570d301a5f96c10836fd"
+    },
+    {
+      "name": "stage8_robustness",
+      "kind": "release",
+      "root": "processed/robustness",
+      "run_id": "a1076c2_stage8_robustness_szse_statistics_successor",
+      "manifest_sha256": "c75948b4c47007c6f5690451afbebdff02eb5d3c793e6285eb799af898ea1fba"
+    }
+  ],
+  "results": [
+    {
+      "key": "stage4.registered_factor_count",
+      "value": 14,
+      "source": "stage4_factor_research",
+      "artifact": "factor_classifications.csv",
+      "artifact_sha256": "f5f733122c00476f5374f7f4051963f3c9249258628acbe04d2f96eb4433c564",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md"
+      ],
+      "citations": [],
+      "phrases": [
+        {
+          "document": "README.md",
+          "text": "14 个预注册因子"
+        },
+        {
+          "document": "reports/research_report.md",
+          "text": "14 个预注册因子"
+        }
+      ]
+    },
+    {
+      "key": "stage4.candidate_count",
+      "value": 6,
+      "source": "stage4_factor_research",
+      "artifact": "factor_classifications.csv",
+      "artifact_sha256": "f5f733122c00476f5374f7f4051963f3c9249258628acbe04d2f96eb4433c564",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md"
+      ],
+      "citations": [],
+      "phrases": [
+        {
+          "document": "README.md",
+          "text": "6 个 candidate"
+        },
+        {
+          "document": "reports/research_report.md",
+          "text": "6 个 candidate"
+        }
+      ]
+    },
+    {
+      "key": "stage4.watch_count",
+      "value": 5,
+      "source": "stage4_factor_research",
+      "artifact": "factor_classifications.csv",
+      "artifact_sha256": "f5f733122c00476f5374f7f4051963f3c9249258628acbe04d2f96eb4433c564",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md"
+      ],
+      "citations": [],
+      "phrases": [
+        {
+          "document": "README.md",
+          "text": "5 个 watch"
+        },
+        {
+          "document": "reports/research_report.md",
+          "text": "5 个 watch"
+        }
+      ]
+    },
+    {
+      "key": "stage4.reject_count",
+      "value": 3,
+      "source": "stage4_factor_research",
+      "artifact": "factor_classifications.csv",
+      "artifact_sha256": "f5f733122c00476f5374f7f4051963f3c9249258628acbe04d2f96eb4433c564",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md"
+      ],
+      "citations": [],
+      "phrases": [
+        {
+          "document": "README.md",
+          "text": "3 个 reject"
+        },
+        {
+          "document": "reports/research_report.md",
+          "text": "3 个 reject"
+        }
+      ]
+    },
+    {
+      "key": "stage5.family_equal.rank_ic_20",
+      "value": 0.10220081732387563,
+      "source": "stage5_factor_combination",
+      "artifact": "artifacts/composite_summary.csv",
+      "artifact_sha256": "6296f56fc034c3a1acf6bfe2232399def3681d5801cbccc49f6d419e60b2d5aa",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "0.102201",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.102201",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.102201",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage5.family_equal.icir_20",
+      "value": 2.7356851157814255,
+      "source": "stage5_factor_combination",
+      "artifact": "artifacts/composite_summary.csv",
+      "artifact_sha256": "6296f56fc034c3a1acf6bfe2232399def3681d5801cbccc49f6d419e60b2d5aa",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "2.735685",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.735685",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "2.735685",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage5.rolling_ic.rank_ic_20",
+      "value": 0.10164207965055248,
+      "source": "stage5_factor_combination",
+      "artifact": "artifacts/composite_summary.csv",
+      "artifact_sha256": "6296f56fc034c3a1acf6bfe2232399def3681d5801cbccc49f6d419e60b2d5aa",
+      "required_documents": [
+        "AGENTS.md"
+      ],
+      "citations": [
+        {
+          "document": "AGENTS.md",
+          "literal": "0.101642",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage5.size_stratified.turnover",
+      "value": 0.6795833333333333,
+      "source": "stage5_factor_combination",
+      "artifact": "artifacts/portfolio_turnover.csv",
+      "artifact_sha256": "8a27ef08eb0606140019cbdce306eb18f390f4aaf83f9f52fbc55b6377ccdf5e",
+      "required_documents": [
+        "AGENTS.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "AGENTS.md",
+          "literal": "67.9583",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "67.9583",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.679583",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage5.top100.turnover",
+      "value": 0.7620833333333332,
+      "source": "stage5_factor_combination",
+      "artifact": "artifacts/portfolio_turnover.csv",
+      "artifact_sha256": "8a27ef08eb0606140019cbdce306eb18f390f4aaf83f9f52fbc55b6377ccdf5e",
+      "required_documents": [
+        "AGENTS.md",
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "AGENTS.md",
+          "literal": "76.2083",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "76.2083",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.total_return",
+      "value": 5.983307426490563,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "598.3307",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "5.983307426490563",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "598.3307",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.annual_return",
+      "value": 0.17603097829253445,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "17.6031",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "17.6031",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.17603097829253445",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "17.6031",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.annual_volatility",
+      "value": 0.3027490664985296,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "30.2749",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.3027490664985296",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "30.2749",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.sharpe_zero_rate",
+      "value": 0.7078534734714144,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.7079",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.7078534734714144",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.7079",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.maximum_drawdown",
+      "value": -0.6696382491083639,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "-66.9638",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-66.9638",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-0.6696382491083639",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-66.9638",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.trade_count",
+      "value": 105271,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "105,271",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "105271",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "105,271",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.filled_order_rate",
+      "value": 0.4942666987410793,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "49.43",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.4942666987410793",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "49.43",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.annualized_traded_value_ratio",
+      "value": 16.109088864309605,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "16.11",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "16.109088864309605",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "16.11",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.implementation_shortfall_rate",
+      "value": 0.0038052023509093746,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "0.3805",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.3805",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.3805",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.average_target_deviation_l1",
+      "value": 0.3234100480450629,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "32.34",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.3234100480450629",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "32.34",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.maximum_scenario_reconciliation_difference",
+      "value": 2.384185791015625e-07,
+      "source": "stage6_formal_backtest",
+      "artifact": "artifacts/summary.json",
+      "artifact_sha256": "402f8725b38fc582a2be00beb141938b262a901041313bcf0933e84ab1d8f491",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.00000024",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.00000024",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.selected_candidate",
+      "value": "rolling_ic_family_size_stratified_buffered",
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/selection_decision.json",
+      "artifact_sha256": "13b9df6d15dddf34fe1a9dfb5e03535d354df43d5fb0550cbe00d9e64e996791",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "rolling_ic_family_size_stratified_buffered",
+          "kind": "text"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "rolling_ic_family_size_stratified_buffered",
+          "kind": "text"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "rolling_ic_family_size_stratified_buffered",
+          "kind": "text"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_size_stratified_buffered.rank_ic",
+      "value": 0.0855167389595109,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0855",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.08551673896",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_size_stratified_buffered.icir",
+      "value": 2.4967828060379973,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.4968",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "2.49678280604",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_size_stratified_buffered.net_annual_return",
+      "value": -0.08384776449189923,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-8.38",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-0.08384776449",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_size_stratified_buffered.maximum_drawdown",
+      "value": -0.5542074882302322,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-55.42",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-0.55420748823",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_size_stratified_buffered.turnover",
+      "value": 0.7498333333333332,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "74.98",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.74983333333",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_size_stratified_buffered.cost_erosion",
+      "value": 0.05126997664889288,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "5.13",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.05126997665",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_top100_equal.rank_ic",
+      "value": 0.0855167389595109,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0855",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.08551673896",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_top100_equal.icir",
+      "value": 2.4967828060379973,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.4968",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "2.49678280604",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_top100_equal.net_annual_return",
+      "value": -0.10242196415281513,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-10.24",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-0.10242196415",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_top100_equal.maximum_drawdown",
+      "value": -0.5922146449967141,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-59.22",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-0.59221464500",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_top100_equal.turnover",
+      "value": 0.8488333333333333,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "84.88",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.84883333333",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.family_equal_top100_equal.cost_erosion",
+      "value": 0.0555165712035931,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "5.55",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.05551657120",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.rolling_ic_family_size_stratified_buffered.rank_ic",
+      "value": 0.08886394848594796,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "0.0889",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0889",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.08886394849",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.rolling_ic_family_size_stratified_buffered.icir",
+      "value": 2.634949160682739,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.6349",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "2.63494916068",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.rolling_ic_family_size_stratified_buffered.net_annual_return",
+      "value": -0.06708285725032914,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "-6.71",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-6.71",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-0.06708285725",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.rolling_ic_family_size_stratified_buffered.maximum_drawdown",
+      "value": -0.5378298720534029,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "README.md",
+          "literal": "-53.78",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-53.78",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-0.53782987205",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.rolling_ic_family_size_stratified_buffered.turnover",
+      "value": 0.7278333333333333,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "72.78",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.72783333333",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage7.rolling_ic_family_size_stratified_buffered.cost_erosion",
+      "value": 0.05159205698288405,
+      "source": "stage7_validation_evaluation",
+      "artifact": "artifacts/research/validation_metrics.parquet",
+      "artifact_sha256": "2e4a22dea78ff0c0441d1ac4902420250d0cc7d6b3900b1b0389131788a30ca3",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "5.16",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.05159205698",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.execution_full_cost.value",
+      "value": 0.09846707289810319,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "9.8467",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.09846707290",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.execution_full_cost.baseline_delta",
+      "value": 0.0,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0000",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.00000000000",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.execution_explicit_only.value",
+      "value": 0.14792430019189418,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "14.7924",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.14792430019",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.execution_explicit_only.baseline_delta",
+      "value": 0.049457227293790984,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "4.9457",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.04945722729",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.execution_impact_high.value",
+      "value": 0.07081059340114382,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "7.0811",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.07081059340",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.execution_impact_high.baseline_delta",
+      "value": -0.027656479496959374,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-2.7656",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "-0.02765647950",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.execution_zero_cost.value",
+      "value": 0.16806380216452776,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "16.8064",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.16806380216",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.execution_zero_cost.baseline_delta",
+      "value": 0.06959672926642457,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.9597",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "0.06959672927",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage8.count.stable",
+      "value": 25,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md"
+      ],
+      "citations": [],
+      "phrases": [
+        {
+          "document": "README.md",
+          "text": "25 个稳定实验"
+        },
+        {
+          "document": "reports/research_report.md",
+          "text": "25 个稳定实验"
+        }
+      ]
+    },
+    {
+      "key": "stage8.count.sensitive",
+      "value": 9,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md"
+      ],
+      "citations": [],
+      "phrases": [
+        {
+          "document": "README.md",
+          "text": "9 个敏感实验"
+        },
+        {
+          "document": "reports/research_report.md",
+          "text": "9 个敏感实验"
+        }
+      ]
+    },
+    {
+      "key": "stage8.count.failed",
+      "value": 2,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "README.md",
+        "reports/research_report.md"
+      ],
+      "citations": [],
+      "phrases": [
+        {
+          "document": "README.md",
+          "text": "2 个失败或未运行实验"
+        },
+        {
+          "document": "reports/research_report.md",
+          "text": "2 个失败或未运行实验"
+        }
+      ]
+    },
+    {
+      "key": "stage8.main_candidate",
+      "value": "rolling_ic_family_size_stratified_buffered",
+      "source": "stage8_robustness",
+      "artifact": "lineage.json",
+      "artifact_sha256": "8b9dc747b818f6b1554668a9c0d85fa6edcc736c2816537a22b59df634f73c1a",
+      "required_documents": [],
+      "citations": [],
+      "phrases": []
+    }
+  ]
+}

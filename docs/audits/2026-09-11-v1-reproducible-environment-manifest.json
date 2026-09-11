@@ -1,0 +1,262 @@
+{
+ "schema_version": 1,
+ "task": "04-reproducible-environment-and-checks",
+ "date": "2026-09-11",
+ "status": "implemented_and_verified_uncommitted",
+ "baseline": {
+  "commit": "1a9feb196ac659edecbe8a271e9e5abe168d00b3",
+  "branch": "main",
+  "step_03_accepted_tree": ".worktrees/v1-boundaries-step03 @ 1a9feb196ac659edecbe8a271e9e5abe168d00b3",
+  "step_03_integration": "authorized by the user; 10 delivered files copied byte-identically and re-verified against the step-03 manifest hashes",
+  "environment": {
+   "python": "3.14.7",
+   "polars": "1.43.2"
+  },
+  "current_pointers": {
+   "factor_combination": "0733c6095ba2e5537a2891ea23562ab363ea80de24bc798d1db7015064e69f83",
+   "formal_backtest": "2f8d2d350caa564abb7ccab591594b388a4da59531cb5e03091687ac24466617",
+   "validation_evaluation": "cc73d95fbebcce6de6666f8dade09c1312c06da15bd8b1fb4d2dc7c7ca3973af",
+   "robustness": "0e42ea37107707d014c743fef3ef040ab61bd47f025db0cb81aa09577f9cac3b"
+  },
+  "final_test_current_present": false
+ },
+ "environment_constraints": {
+  "requirements_reproducible": {
+   "path": "requirements-reproducible.txt",
+   "sha256": "37de28960798f8aa4715a689b527e6fe7e2d856f86f90b51b4d91873fc074c12",
+   "packages": 23,
+   "python": "3.14.7",
+   "platform": "macOS 26 arm64",
+   "contains_hashes": false,
+   "leak_scan": "no absolute paths, file URLs, hosts or credentials"
+  },
+  "requirements_verified": {
+   "path": "requirements-verified.txt",
+   "sha256": "8cce972788e580e14f49e45b1d96b11a56138b3fc147869aa219460fed35be01"
+  },
+  "python_version_file": "3.14.7",
+  "pyproject_requires_python": ">=3.12",
+  "ruff_target_version": "py312"
+ },
+ "fresh_environments": [
+  {
+   "name": "py314",
+   "interpreter": "CPython 3.14.7",
+   "location": "temporary environment outside the repository (removed after verification)",
+   "lock_install": "succeeded (exit 0)",
+   "project_install": "editable, as documented in README and CI",
+   "import_path": "current working tree src/ashare_multifactor/__init__.py, evaluated from outside the repository",
+   "full_pytest": "1649 passed, 1 skipped in 466.44s (exit 0)",
+   "delivery_tests": "20 passed",
+   "ruff": "passed",
+   "delivery_check": "passed",
+   "kind": "verified frozen environment"
+  },
+  {
+   "name": "py312",
+   "interpreter": "CPython 3.12.14",
+   "location": "temporary environment outside the repository (removed after verification)",
+   "lock_install": "succeeded (exit 0)",
+   "project_install": "editable, as documented in README and CI",
+   "import_path": "current working tree src/ashare_multifactor/__init__.py, evaluated from outside the repository",
+   "full_pytest": "1649 passed, 1 skipped in 466.45s (exit 0)",
+   "delivery_tests": "20 passed",
+   "ruff": "passed",
+   "delivery_check": "passed",
+   "kind": "declared minimum Python"
+  },
+  {
+   "name": "non_editable_probe",
+   "finding": "a site-packages install cannot run the repository test suite: 161 failed, 1488 passed, 1 skipped because tests resolve the repository root from the imported package location; CI and the documented install stay editable"
+  }
+ ],
+ "delivery_checks": {
+  "implementation": [
+   "src/ashare_multifactor/audit/delivery.py",
+   "src/ashare_multifactor/cli/delivery.py"
+  ],
+  "console_script": "ashare-delivery",
+  "key_results_record": {
+   "path": "docs/results/v1.0-key-results.json",
+   "sha256": "dd6add9095359462a46d0fcb356d5d2b9bbdff78578dbc535357759b09f346f3",
+   "results": 51,
+   "citations": 118
+  },
+  "checks": [
+   "markdown_links",
+   "documented_results",
+   "delivery_manifest",
+   "result_sources (local, opt-in)"
+  ],
+  "markdown_documents": 68,
+  "local_links": 72,
+  "manifest_anchor": "publication commit 1e7eddbe8a2319110f275d254b1a7702e41d1aea (last commit touching the delivered manifest)",
+  "worktree_drift_reported": [
+   "AGENTS.md",
+   "README.md",
+   "docs/reproduction.md",
+   "docs/results/index.md",
+   "docs/stage9-10-archive.md",
+   "pyproject.toml"
+  ],
+  "tests": {
+   "file": "tests/test_delivery_checks.py",
+   "passed": 20,
+   "negative_controls": 7
+  }
+ },
+ "identity_contract": {
+  "final_execution_sha256": "95fafab8b735e47c9011d3ec851320678ccf9376cc772994bcb0e725b369cfbf",
+  "final_execution_records": 9,
+  "final_execution_unchanged": true,
+  "evidence_workflow_records": 98,
+  "evidence_workflow_step03_sha256": "63b2f582605bace98de46a8af54638b910541d837f38f0dbfbb155530afdff27",
+  "evidence_workflow_current_sha256": "8a8f466a8e036c8c5ce533c09ae1534815d6f3d4ede189933bbb7dd5c73f2f8a",
+  "changed_domain": "evidence_workflow_only",
+  "reason": "pyproject.toml gained the ashare-delivery console script",
+  "protocol_version_bump_required": false,
+  "successor_published": false
+ },
+ "ci": {
+  "workflow": ".github/workflows/ci.yml",
+  "permissions": "contents: read",
+  "triggers": [
+   "push",
+   "pull_request",
+   "workflow_dispatch"
+  ],
+  "matrix": [
+   "3.12",
+   "3.14"
+  ],
+  "checkout_fetch_depth": 0,
+  "remote_run": "not_run",
+  "local_steps_executed": true
+ },
+ "changed_files": [
+  {
+   "path": ".gitignore",
+   "state": "modified",
+   "size_bytes": 144,
+   "sha256": "1c9ab3ffa78410a1704fb02ac11a46b91a1b8b8778889bc1a4e06a037c280137"
+  },
+  {
+   "path": "AGENTS.md",
+   "state": "modified",
+   "size_bytes": 21129,
+   "sha256": "0515643793761b8b543e56438dcb5b133f781ca35f273a17304c3a6c66c97deb"
+  },
+  {
+   "path": "README.md",
+   "state": "modified",
+   "size_bytes": 6264,
+   "sha256": "8450fd93bddea5109af1649d2873f4b2605b9074ca854df8531f6bb3a9ca8602"
+  },
+  {
+   "path": "docs/reproduction.md",
+   "state": "modified",
+   "size_bytes": 8641,
+   "sha256": "0519ee0a4ee42d974dbdf2918b9b8322db0ed1f65185e2c84f52701669029c4d"
+  },
+  {
+   "path": "docs/results/index.md",
+   "state": "modified",
+   "size_bytes": 3148,
+   "sha256": "2f4dda6604c60a99e47cff41c129f50b9a5be695c28bd521ad365931c08a7567"
+  },
+  {
+   "path": "pyproject.toml",
+   "state": "modified",
+   "size_bytes": 1065,
+   "sha256": "10b47c51100ef4abd2bc3abea0941747bf00abf5b3a1dfd676f0a49dbd8737a6"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-11-repository-streamlining/03-v1-boundaries.md",
+   "state": "modified",
+   "size_bytes": 6731,
+   "sha256": "c421f8d4af9d7899822a97efe3aca11d73a3451a58a8536ae73ea9d8f76d3db3"
+  },
+  {
+   "path": "docs/superpowers/plans/2026-09-11-repository-streamlining/04-reproducible-environment-and-checks.md",
+   "state": "modified",
+   "size_bytes": 8325,
+   "sha256": "d3976ca078a513651281d6eb693fadbfb6180d822f9d7196ec9d2de8f96083b6"
+  },
+  {
+   "path": "docs/audits/2026-09-11-v1-boundaries-review.md",
+   "state": "modified",
+   "size_bytes": 13261,
+   "sha256": "ab80a20cb2b9acec4850a214fbb423a7dfcc9d3d313370d1c612f9c287c7ce33"
+  },
+  {
+   "path": ".github/workflows/ci.yml",
+   "state": "new",
+   "size_bytes": 1767,
+   "sha256": "13bba39d7e94978e4b338532ef0e40bd062ebd848a6adb56854f502282ad1eaa"
+  },
+  {
+   "path": "requirements-reproducible.txt",
+   "state": "new",
+   "size_bytes": 1657,
+   "sha256": "37de28960798f8aa4715a689b527e6fe7e2d856f86f90b51b4d91873fc074c12"
+  },
+  {
+   "path": "docs/results/v1.0-key-results.json",
+   "state": "new",
+   "size_bytes": 39906,
+   "sha256": "dd6add9095359462a46d0fcb356d5d2b9bbdff78578dbc535357759b09f346f3"
+  },
+  {
+   "path": "src/ashare_multifactor/audit/delivery.py",
+   "state": "new",
+   "size_bytes": 39275,
+   "sha256": "83c6e50167769f2ac451a61aa9417a2707d95071c7a71b6ddf52e8c294569d0c"
+  },
+  {
+   "path": "src/ashare_multifactor/cli/delivery.py",
+   "state": "new",
+   "size_bytes": 2026,
+   "sha256": "8e5477cdb20fa8ffec027c56d7ca92d8426c72a10e763e70875b4e7b3d1383ae"
+  },
+  {
+   "path": "tests/test_delivery_checks.py",
+   "state": "new",
+   "size_bytes": 9414,
+   "sha256": "daeb00f108236b6c15ad52eeb3ee972bb984c97cfec83e4b28614a2a7f985878"
+  },
+  {
+   "path": "docs/audits/2026-09-11-v1-reproducible-environment.md",
+   "state": "new",
+   "size_bytes": 17649,
+   "sha256": "7bd3c01e4490b99a6c1609f0e760f25ca6ec2d0581eed91910166cedf3d89b90"
+  }
+ ],
+ "step03_manifest_deviation": {
+  "note": "the step-03 manifest describes its freeze point; three documents changed afterwards during integration and correction, all seven code/test files stay byte-identical",
+  "files": [
+   {
+    "path": "docs/audits/2026-09-11-v1-boundaries-review.md",
+    "step03_sha256": "81e5f4922318bdf4feca0a7a40379d7a4d720ea6d1f205a573e6c3795698c1f1",
+    "reason": "corrected the Stage 5/6 pointer labels and the changed-path count"
+   },
+   {
+    "path": "docs/reproduction.md",
+    "step03_sha256": "3c2f65db44570aeee79a4f566b776de9672d30dba57e4b5dc198fcb726ec8827",
+    "reason": "step-04 environment, quick-verification and verification-order rewrite"
+   },
+   {
+    "path": "docs/superpowers/plans/2026-09-11-repository-streamlining/03-v1-boundaries.md",
+    "step03_sha256": "fcf8f1cc6a54b55f31f6807c39cfde9c17e24b0c91374b87bcb097d9af2b3e55",
+    "reason": "integration status and corrected changed-path count"
+   }
+  ]
+ },
+ "unresolved_items": [
+  "remote CI has not been dispatched; only local step execution is verified",
+  "step 03 and step 04 deliverables are integrated but uncommitted",
+  "the frozen v1.0 manifest still describes the publication commit; a new delivery version needs separate authorization",
+  "03-v1-boundaries.md bytes differ from the step-03 manifest entry because the integration handoff was recorded afterwards",
+  "delivery checks do not detect newly added, unrecorded numbers in documents",
+  "candidate worktrees under .worktrees/ and artifacts/.factor_combination-*.tmp (520 KB) are not cleaned up"
+ ]
+}

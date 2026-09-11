@@ -27,16 +27,16 @@
 
 ## 做完必须检查的问题
 
-- [ ] 新建干净环境是否能仅凭版本化文件完成安装，没有依赖旧 .venv？
-- [ ] 解释器与直接/传递依赖版本是否可追溯，平台范围是否清楚？
-- [ ] 是否未自动升级研究依赖，未泄露绝对用户路径、令牌或私有源信息？
-- [ ] 当前 Python 最低支持声明是否有测试依据，未验证范围是否披露？
-- [ ] 安装导入、相关测试、完整 pytest 和 Ruff 是否在新环境通过？
-- [ ] CI 是否只使用人工/可公开数据，不读取 Data、真实归档或最终测试结果？
-- [ ] 工作流是否没有采集、发布、CURRENT 切换和凭据写入权限？
-- [ ] 数字、链接和 manifest 检查是否能捕获人工制造的真实错误？
-- [ ] 历史 v1.0 manifest 是否保持原字节，未被更新成新源码哈希？
-- [ ] 文档命令与实际执行是否一致，本地通过与远端 CI 通过是否分开报告？
+- [x] 新建干净环境是否能仅凭版本化文件完成安装，没有依赖旧 .venv？——`requirements-reproducible.txt` 加上 `pip install --no-deps -e ".[dev]"` 在两个全新解释器安装成功，导入路径来自当前工作树而非旧 `.venv`。
+- [x] 解释器与直接/传递依赖版本是否可追溯，平台范围是否清楚？——CPython 3.14.7 / macOS arm64 基线，23 个包精确版本，明确声明不含下载哈希、非跨平台锁文件。
+- [x] 是否未自动升级研究依赖，未泄露绝对用户路径、令牌或私有源信息？——锁定值等于现有 `.venv` 已装版本；导出剔除了 editable 的 GitHub 行与 pip，仅保留 Homebrew 工具路径。
+- [x] 当前 Python 最低支持声明是否有测试依据，未验证范围是否披露？——在 CPython 3.12.14 上按同一锁定文件安装并运行完整 pytest；未验证平台已在文档中披露。
+- [x] 安装导入、相关测试、完整 pytest 和 Ruff 是否在新环境通过？——两个新环境的 pytest 与 Ruff 结果见验收报告第 3 节。
+- [x] CI 是否只使用人工/可公开数据，不读取 Data、真实归档或最终测试结果？——工作流只运行合成测试、静态检查与交付检查，检出中不存在 `Data/`、`processed/`、`artifacts/`。
+- [x] 工作流是否没有采集、发布、CURRENT 切换和凭据写入权限？——`permissions: contents: read`，无发布、采集、研究重跑或密钥写入步骤。
+- [x] 数字、链接和 manifest 检查是否能捕获人工制造的真实错误？——20 项测试含 7 类人工反例，全部按预期失败，见验收报告第 6 节。
+- [x] 历史 v1.0 manifest 是否保持原字节，未被更新成新源码哈希？——`releases/` 无改动，差异按提示报告，未改写冻结 manifest。
+- [x] 文档命令与实际执行是否一致，本地通过与远端 CI 通过是否分开报告？——README 与复现说明的命令均实际执行；远端状态记为 `not_run`。
 
 ## 输出、总验收与强制停点
 
@@ -50,21 +50,28 @@
 
 ```yaml
 task: 04-reproducible-environment-and-checks
-status: not_started
+status: complete
 predecessor_handoff: 03-v1-boundaries.md
-accepted_tree_identity: null
-environment_constraints: null
-fresh_environment_install: pending
-full_pytest: pending
-ruff: pending
-delivery_checks: pending
-ci_local_steps: pending
+accepted_tree_identity: main local working tree based on 1a9feb196ac659edecbe8a271e9e5abe168d00b3 with the step-03 result integrated byte-identically; step-04 file list and hashes in the verification manifest
+environment_constraints: requirements-reproducible.txt (23 third-party pins, CPython 3.14.7 / macOS arm64, no download hashes); requirements-verified.txt keeps the direct pins; pyproject.toml keeps the compatible ranges with requires-python >=3.12
+fresh_environment_install: passed on temporary CPython 3.14.7 and CPython 3.12.14 environments outside the repository; installed from the versioned files only and imported from the current working tree
+full_pytest: temporary CPython 3.14.7 environment 1649 passed, 1 skipped in 466.44s (exit 0); temporary CPython 3.12.14 environment 1649 passed, 1 skipped in 466.45s (exit 0); main worktree 1629 passed, 1 skipped in 447.91s (run before the 20 delivery tests were added)
+ruff: passed in the main worktree and in both temporary environments
+delivery_checks: passed; markdown 72 links in 68 documents; 51 documented results with 118 citations; published manifest verified against commit 1e7eddbe8a23; 51 values re-read from the local releases
+ci_local_steps: passed (lock install, pytest, ruff, git diff --check, delivery check); the same commands are configured in .github/workflows/ci.yml
 ci_remote_run: not_run
-verification_report: null
-four_step_summary: null
-integration_status: pending
-current_pointers_unchanged: null
-final_test_remains_sealed: null
-unresolved_items: []
+verification_report: docs/audits/2026-09-11-v1-reproducible-environment.md
+four_step_summary: docs/audits/2026-09-11-v1-reproducible-environment.md section 10
+integration_status: integrated_locally_uncommitted (steps 03 and 04)
+current_pointers_unchanged: true
+final_test_remains_sealed: true
+unresolved_items:
+  - remote CI has not been dispatched; only local step execution is verified
+  - steps 03 and 04 are integrated but uncommitted; the new versioned files must be committed before the workflow can run
+  - a non-editable install cannot run the test suite (161 failures from repository-root resolution); CI and the documented install stay editable
+  - the frozen v1.0 manifest still describes its publication commit; a new delivery version needs separate authorization
+  - three step-03 documents deviate from the step-03 manifest after integration and correction, with reasons and hashes recorded in the verification report
+  - delivery checks do not detect newly added, unrecorded numbers
+  - candidate worktrees and the stale artifacts temporary directory are not cleaned up
 next_authorized_task: null
 ```

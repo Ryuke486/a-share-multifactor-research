@@ -1,0 +1,56 @@
+name: verification
+
+# Synthetic, data-free verification of the v1.0 deliverable.
+#
+# The workflow must never: read Data/, processed/ or artifacts/; run a research
+# stage; publish or switch a release pointer; create final-test tokens or
+# attempts; or write repository contents. It only installs dependencies, runs
+# the synthetic test suite, the static checks and the delivery checks.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verification:
+    name: synthetic checks (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      # The delivery check reads the publication commit of the delivered
+      # manifest, so the full history must be available.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-reproducible.txt
+          python -m pip install --no-deps -e ".[dev]"
+      - name: Report the imported package and versions
+        run: |
+          python -VV
+          python -c "import ashare_multifactor; print(ashare_multifactor.__file__)"
+          python -m pip freeze
+      - name: Synthetic test suite
+        run: python -m pytest -q
+      - name: Static checks
+        run: |
+          python -m ruff check src tests
+          git diff --check
+      - name: Delivery checks
+        run: python -m ashare_multifactor.cli.delivery check
