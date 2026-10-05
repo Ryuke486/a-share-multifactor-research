@@ -6,7 +6,7 @@
 - 兼容范围：`pyproject.toml` 声明 `requires-python = ">=3.12"`，直接依赖版本见 `requirements-verified.txt`。
 - 当前验证环境为 CPython 3.14.7（Homebrew，macOS arm64）；权威 Stage 7/8 release 使用 CPython 3.14.6，各自版本记录在对应 release 的 `lineage.json`。
 - 锁定文件只在 macOS arm64 上验证过，不含下载哈希，因此是版本锁定而不是跨平台或供应链锁文件。
-- 平台边界：完整测试套件要求 macOS。封存恢复路径依赖 macOS 的 `/dev/fd` + `O_NOFOLLOW` 语义，Linux 上最终测试的命名空间替换与 panel 绑定测试会以 `ELOOP` 失败（见[步骤 04 验收报告](audits/2026-09-11-v1-reproducible-environment.md)），因此 Linux 属于未验证平台。
+- 平台边界：macOS 是已验证平台。此前 Linux 上的 `ELOOP` 失败全部来自延期最终测试的封存恢复代码（见[步骤 04 验收报告](audits/2026-09-11-v1-reproducible-environment.md)）；该代码于 2026-10-05 移出 main 后，CI 增加了不阻塞的 Linux 试运行，在其通过并记录前 Linux 仍属未验证平台。
 
 按锁定文件建立研究环境：
 
@@ -157,24 +157,7 @@ v1.0 预期值：
 
 v1.0 不运行任何 `ashare-final-test` 命令，不创建 token 或 attempt，不导入最终测试数据，不生成策略结果，也不手工创建 `processed/final_test/CURRENT.json`。Stage 9–10 的未来恢复条件见[延期归档](stage9-10-archive.md)。
 
-v1.0 库层（`audit`、`research`、`validation`、`robustness` 及共享包）不导入 `ashare_multifactor.final_test`，该边界由 `tests/test_v1_final_test_boundary.py` 固定。唯一允许的桥接是 Stage 8 的证据工作流演练：它复算的是延期最终测试的证据就绪度，因此与被演练的证据层一起放在 `ashare_multifactor.final_test.evidence_workflow_rehearsal`，只由操作命令显式调用：
-
-```bash
-.venv/bin/python -m ashare_multifactor.cli.robustness rehearse-evidence \
-  --root . \
-  --collector-readiness-root <dir> \
-  --junit-report <junit.xml> \
-  --readiness-output-root <dir> \
-  --historical-derivation <json> \
-  --historical-derivation-manifest <json> \
-  --historical-pdf-discovery <json> \
-  --historical-pdf-receipt-index <json> \
-  --historical-pdf-existing-inventory <json> \
-  --historical-pdf-cache-root <dir> \
-  --admission-date-rule <json>
-```
-
-旧路径 `ashare_multifactor.robustness.evidence_workflow_rehearsal` 仍可按需解析（惰性兼容外观），但导入任何 v1.0 包都不会因此加载 `final_test`。
+延期最终测试的代码（包括原 `ashare-final-test` 命令和 `ashare-robustness rehearse-evidence` 证据演练）已于 2026-10-05 移出 main，完整保存在 Git 标签 `archive/stage9-final-test`。main 上没有任何模块导入或引用它，该边界由 `tests/test_v1_final_test_boundary.py` 固定；该测试同时核对冻结身份清单中的每个路径都能从 main 或存档提交中取回。恢复步骤与开启前提见[延期归档](stage9-10-archive.md)。
 
 ## 8. 结果核对顺序
 

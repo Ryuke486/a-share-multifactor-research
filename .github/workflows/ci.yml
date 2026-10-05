@@ -7,14 +7,14 @@ name: verification
 # attempts; or write repository contents. It only installs dependencies, runs
 # the synthetic test suite, the static checks and the delivery checks.
 #
-# Runner platform: macOS. The verified research environment is Homebrew CPython
-# 3.14.7 on macOS arm64, and the sealed attempt-bound panel freeze and recovery
-# paths open an already held descriptor through /dev/fd with O_NOFOLLOW, which
-# is valid on macOS fdescfs but fails on Linux with ELOOP (run 34600324383:
-# 62 final-test tests failed on ubuntu-latest while the same commit passes the
-# full suite on macOS). Porting those paths to Linux would touch the sealed
-# recovery code and needs its own authorized task, so CI verifies the platform
-# the project actually supports instead of hiding the difference.
+# Runner platforms. macOS is the verified research platform (Homebrew CPython
+# 3.14.7 on macOS arm64) and its legs are required. Linux previously failed
+# only because the sealed final-test recovery code reopened held descriptors
+# through /dev/fd with O_NOFOLLOW (run 34600324383: 62 final-test tests failed
+# with ELOOP on ubuntu-latest). That code was archived off main on 2026-10-05
+# (tag archive/stage9-final-test), so ubuntu-latest now runs as a non-blocking
+# trial: it reports its result but cannot fail the workflow until it has passed
+# and been recorded, after which continue-on-error should be removed.
 
 on:
   push:
@@ -30,11 +30,13 @@ concurrency:
 
 jobs:
   verification:
-    name: synthetic checks (python ${{ matrix.python-version }})
-    runs-on: macos-latest
+    name: synthetic checks (${{ matrix.os }}, python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.os == 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
+        os: [macos-latest, ubuntu-latest]
         python-version: ["3.12", "3.14"]
     steps:
       # The delivery check reads the publication commit of the delivered
