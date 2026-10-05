@@ -13,6 +13,7 @@ from ashare_multifactor.robustness.pipeline import (
     finalize_robustness_run,
 )
 from ashare_multifactor.robustness.protocol import load_robustness_protocol
+from ashare_multifactor.robustness.protocol_identities import identity_payload
 from ashare_multifactor.robustness.test_protocol import (
     seal_test_protocol,
     verify_test_opening_token,
@@ -225,3 +226,70 @@ def test_robustness_run_finalization_rejects_test_dates_and_compares_hashes(
     pl.DataFrame({"date": [date(2022, 1, 4)]}).write_parquet(leaked / "leak.parquet")
     with pytest.raises(ValueError, match="sealed final test date"):
         assert_robustness_outputs_sealed(leaked)
+
+
+def _identities(*, evidence: str) -> dict[str, dict[str, object]]:
+    return {
+        "research": identity_payload(
+            "research_result_identity",
+            {"stage7": "same", "stage8_results": "same"},
+        ),
+        "final_execution": identity_payload(
+            "final_execution_identity",
+            {"execution": "same"},
+        ),
+        "evidence_workflow": identity_payload(
+            "evidence_workflow_identity",
+            {"workflow": evidence},
+        ),
+    }
+
+
+def test_protocol_v4_binds_split_identities_and_new_readiness_gates(
+    tmp_path: Path,
+) -> None:
+    sealed = seal_test_protocol(
+        tmp_path / "sealed.json",
+        protocol=load_robustness_protocol(Path("configs/robustness_protocol.yaml")),
+        code_identity={
+            "commit": "a" * 40,
+            "tree": "b" * 40,
+            "dirty": False,
+            "sources": [],
+            "python": "3.14.6",
+            "dependencies": {},
+        },
+        validation_pointer={
+            "run_id": "65b19e1_stage7_validation_controlled_collector_successor",
+            "manifest_sha256": "c" * 64,
+        },
+        market_rules_sha256="d" * 64,
+        report_template_sha256="e" * 64,
+        opening_ledger_root=tmp_path / "ledger",
+        gate={"sealed_test_protocol_allowed": True},
+        action_source_contract_sha256="1" * 64,
+        action_coverage_audit_sha256="2" * 64,
+        collector_readiness_audit_sha256="3" * 64,
+        predecessor={
+            "run_id": "old",
+            "manifest_sha256": "4" * 64,
+            "reason": "evidence workflow successor",
+            "status": "superseded_for_final_execution",
+        },
+        protocol_identities=_identities(evidence="v4"),
+        predecessor_final_execution_identity=_identities(evidence="v3")[
+            "final_execution"
+        ],
+        change_impact_audit_sha256="5" * 64,
+        evidence_workflow_readiness_audit_sha256="6" * 64,
+    )
+
+    assert sealed["protocol_version"] == 4
+    assert sealed["protocol_identities"]["research"]["role"] == (
+        "research_result_identity"
+    )
+    assert sealed["change_impact_audit_sha256"] == "5" * 64
+    assert sealed["evidence_workflow_readiness_audit_sha256"] == "6" * 64
+    assert sealed["predecessor_final_execution_identity"] == _identities(
+        evidence="v3"
+    )["final_execution"]

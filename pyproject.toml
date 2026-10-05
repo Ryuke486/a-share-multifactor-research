@@ -12,7 +12,6 @@ dependencies = [
   "matplotlib>=3.9",
   "numpy>=2.0",
   "polars>=1.30",
-  "pypdf>=6.14",
   "pyyaml>=6.0",
   "scipy>=1.13",
 ]
@@ -30,7 +29,6 @@ ashare-combine = "ashare_multifactor.cli.combinations:main"
 ashare-backtest = "ashare_multifactor.cli.formal_backtest:main"
 ashare-validation = "ashare_multifactor.cli.validation:main"
 ashare-robustness = "ashare_multifactor.cli.robustness:main"
-ashare-final-test = "ashare_multifactor.cli.final_test:main"
 ashare-delivery = "ashare_multifactor.cli.delivery:main"
 ashare-supplements = "ashare_multifactor.cli.supplements:main"
 

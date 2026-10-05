@@ -1,19 +1,25 @@
-"""Boundary contract between the v1.0 layers and the deferred final test.
+"""Boundary contract after archiving the deferred final test off main.
 
-The final-test package is archived as optional v2.0 work. v1.0 computation and
-release code must therefore stay free of it: the only crossing allowed is the
-explicitly named bridge, which is the ``rehearse-evidence`` operator command and
-the lazy compatibility facade it needs.
+The Stage 9-10 final-test code is optional v2.0 work. It was removed from main in
+one revertable commit and is preserved under the Git tag
+``archive/stage9-final-test`` (commit ``ARCHIVE_COMMIT``). These tests prove that
+nothing on main still depends on it, that every public entry point resolves, and
+that the frozen identity contracts still name files that exist either on main or
+in the archived commit, so a future v2.0 can restore them byte-for-byte.
 """
 
 from __future__ import annotations
 
 import ast
+import importlib
 import json
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
+
+import pytest
 
 import ashare_multifactor
 
@@ -21,20 +27,15 @@ import ashare_multifactor
 CODE_ROOT = Path(ashare_multifactor.__file__).resolve().parents[2]
 SOURCE_ROOT = CODE_ROOT / "src/ashare_multifactor"
 FINAL_TEST_PREFIX = "ashare_multifactor.final_test"
-BRIDGE_FACADE = SOURCE_ROOT / "robustness/evidence_workflow_rehearsal.py"
-NEW_REHEARSAL_PATH = "src/ashare_multifactor/final_test/evidence_workflow_rehearsal.py"
-LEGACY_REHEARSAL_PATH = "src/ashare_multifactor/robustness/evidence_workflow_rehearsal.py"
-
-V1_LIBRARY_PACKAGES = (
-    "audit",
-    "combination",
-    "data",
-    "execution",
-    "factors",
-    "portfolio",
-    "research",
-    "robustness",
-    "validation",
+ARCHIVE_COMMIT = "d7c28288265d4f3f0e20a5371ce984157c14760f"
+ARCHIVED_PATHS = (
+    "src/ashare_multifactor/final_test",
+    "src/ashare_multifactor/cli/final_test.py",
+    "src/ashare_multifactor/cli/final_test_review.py",
+    "src/ashare_multifactor/robustness/change_impact.py",
+    "src/ashare_multifactor/robustness/evidence_workflow_readiness.py",
+    "src/ashare_multifactor/robustness/evidence_workflow_rehearsal.py",
+    "src/ashare_multifactor/robustness/evidence_workflow_successor_release.py",
 )
 FINAL_EXECUTION_PATHS = (
     "configs/final_execution_sources.yaml",
@@ -49,36 +50,24 @@ FINAL_EXECUTION_PATHS = (
 )
 
 
-def _v1_library_files() -> list[Path]:
-    files = [
-        SOURCE_ROOT / "__init__.py",
-        SOURCE_ROOT / "__main__.py",
-        SOURCE_ROOT / "config.py",
-    ]
-    for package in V1_LIBRARY_PACKAGES:
-        files.extend(sorted((SOURCE_ROOT / package).rglob("*.py")))
-    return [path for path in files if path.is_file()]
-
-
-def _run_in_project(script: str) -> str:
-    environment = dict(os.environ)
-    environment["PYTHONPATH"] = "src"
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=CODE_ROOT,
-        env=environment,
-        capture_output=True,
-        text=True,
-        check=False,
+def _git(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ("git", *args), cwd=CODE_ROOT, capture_output=True, text=True, check=False
     )
-    assert result.returncode == 0, result.stderr
-    return result.stdout
 
 
-def test_v1_library_layers_do_not_import_the_final_test_package() -> None:
+def _archive_available() -> bool:
+    return _git("cat-file", "-e", f"{ARCHIVE_COMMIT}^{{commit}}").returncode == 0
+
+
+def test_archived_paths_are_absent_from_main() -> None:
+    present = [relative for relative in ARCHIVED_PATHS if (CODE_ROOT / relative).exists()]
+    assert present == []
+
+
+def test_no_source_module_imports_the_final_test_package() -> None:
     offenders: list[str] = []
-    for path in _v1_library_files():
+    for path in sorted(SOURCE_ROOT.rglob("*.py")):
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
             modules: list[str] = []
             if isinstance(node, ast.ImportFrom) and node.module:
@@ -90,75 +79,68 @@ def test_v1_library_layers_do_not_import_the_final_test_package() -> None:
     assert offenders == []
 
 
-def test_the_only_final_test_mention_in_v1_layers_is_the_documented_facade() -> None:
-    mentioning = {
-        path
-        for path in _v1_library_files()
-        if FINAL_TEST_PREFIX in path.read_text(encoding="utf-8")
-    }
-    assert mentioning == {BRIDGE_FACADE}
-
-
-def test_importing_v1_library_layers_never_loads_final_test() -> None:
+def test_every_module_on_main_imports_without_the_archived_code() -> None:
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = "src"
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
     script = "\n".join(
         (
             "import importlib, json, pkgutil, sys",
-            f"packages = {list(V1_LIBRARY_PACKAGES)!r}",
-            "for name in packages:",
-            "    package = importlib.import_module('ashare_multifactor.' + name)",
-            "    for info in pkgutil.walk_packages(",
-            "        package.__path__, package.__name__ + '.'",
-            "    ):",
-            "        importlib.import_module(info.name)",
-            "importlib.import_module('ashare_multifactor.cli.validation')",
+            "import ashare_multifactor",
+            "names = [info.name for info in pkgutil.walk_packages(",
+            "    ashare_multifactor.__path__, 'ashare_multifactor.')]",
+            "for name in names:",
+            "    importlib.import_module(name)",
             "loaded = sorted(m for m in sys.modules if m.startswith("
             f"{FINAL_TEST_PREFIX!r}))",
-            "print(json.dumps(loaded))",
+            "print(json.dumps({'modules': len(names), 'final_test': loaded}))",
         )
     )
-    assert json.loads(_run_in_project(script).strip()) == []
-
-
-def test_legacy_rehearsal_path_resolves_lazily_through_the_bridge() -> None:
-    script = "\n".join(
-        (
-            "import importlib, json, sys",
-            "module = importlib.import_module("
-            "'ashare_multifactor.robustness.evidence_workflow_rehearsal')",
-            "before = sorted(m for m in sys.modules if m.startswith("
-            f"{FINAL_TEST_PREFIX!r}))",
-            "function = module.build_evidence_workflow_rehearsal",
-            "after = sorted(m for m in sys.modules if m.startswith("
-            f"{FINAL_TEST_PREFIX!r}))",
-            "print(json.dumps({",
-            "    'loaded_before': before,",
-            "    'loaded_after_nonempty': bool(after),",
-            "    'module': function.__module__,",
-            "}))",
-        )
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=CODE_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    payload = json.loads(_run_in_project(script).strip())
-    assert payload["loaded_before"] == []
-    assert payload["loaded_after_nonempty"] is True
-    assert payload["module"] == (
-        "ashare_multifactor.final_test.evidence_workflow_rehearsal"
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout.strip())
+    assert payload["modules"] > 0
+    assert payload["final_test"] == []
+
+
+def test_every_declared_console_script_resolves() -> None:
+    scripts = tomllib.loads((CODE_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]["scripts"]
+    assert "ashare-final-test" not in scripts
+    for target in scripts.values():
+        module_name, function_name = target.split(":")
+        assert callable(getattr(importlib.import_module(module_name), function_name))
+
+
+def test_robustness_cli_offers_only_stage_eight_commands() -> None:
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = "src"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from ashare_multifactor.cli.robustness import main; main()",
+            "rehearse-evidence",
+        ],
+        cwd=CODE_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
     )
+    assert result.returncode != 0
+    assert "invalid choice" in result.stderr
 
 
-def test_legacy_rehearsal_path_rejects_unknown_attributes() -> None:
-    from ashare_multifactor.robustness import evidence_workflow_rehearsal
-
-    try:
-        evidence_workflow_rehearsal.not_a_rehearsal_symbol
-    except AttributeError as error:
-        assert "not_a_rehearsal_symbol" in str(error)
-    else:  # pragma: no cover - the facade must not invent attributes
-        raise AssertionError("unknown facade attribute was resolved")
-
-
-def test_v1_robustness_entry_fails_closed_without_final_test_state(
-    tmp_path: Path,
-) -> None:
+def test_v1_robustness_entry_fails_closed_without_release_state(tmp_path: Path) -> None:
     environment = dict(os.environ)
     environment["PYTHONPATH"] = "src"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -181,21 +163,33 @@ def test_v1_robustness_entry_fails_closed_without_final_test_state(
     assert list(tmp_path.iterdir()) == []
 
 
-def test_identity_contract_paths_survive_the_rehearsal_relocation() -> None:
+def test_frozen_identity_paths_are_unchanged() -> None:
+    from ashare_multifactor.robustness.protocol_identities import _FINAL_EXECUTION_PATHS
+
+    assert _FINAL_EXECUTION_PATHS == FINAL_EXECUTION_PATHS
+
+
+def test_every_frozen_identity_path_is_restorable_from_main_or_the_archive() -> None:
+    if not _archive_available():
+        pytest.skip("the archived commit is not in this clone's history")
     from ashare_multifactor.robustness.protocol_identities import (
         _EVIDENCE_WORKFLOW_EXTRA_PATHS,
         _FINAL_EXECUTION_PATHS,
-        build_evidence_workflow_identity,
-        build_final_execution_identity,
     )
 
-    assert _FINAL_EXECUTION_PATHS == FINAL_EXECUTION_PATHS
-    execution = build_final_execution_identity(CODE_ROOT)
-    assert set(execution["records"]) == set(FINAL_EXECUTION_PATHS)
-    workflow = build_evidence_workflow_identity(CODE_ROOT)
-    assert NEW_REHEARSAL_PATH in workflow["records"]
-    assert LEGACY_REHEARSAL_PATH in workflow["records"]
-    assert NEW_REHEARSAL_PATH in _EVIDENCE_WORKFLOW_EXTRA_PATHS
-    assert all(
-        (CODE_ROOT / relative).is_file() for relative in workflow["records"]
-    )
+    unrecoverable = [
+        relative
+        for relative in (*_FINAL_EXECUTION_PATHS, *_EVIDENCE_WORKFLOW_EXTRA_PATHS)
+        if not (CODE_ROOT / relative).is_file()
+        and _git("cat-file", "-e", f"{ARCHIVE_COMMIT}:{relative}").returncode != 0
+    ]
+    assert unrecoverable == []
+
+
+def test_archived_commit_still_contains_the_final_test_package() -> None:
+    if not _archive_available():
+        pytest.skip("the archived commit is not in this clone's history")
+    listing = _git("ls-tree", "--name-only", ARCHIVE_COMMIT, "src/ashare_multifactor/final_test/")
+    assert listing.returncode == 0
+    files = [line for line in listing.stdout.splitlines() if line.endswith(".py")]
+    assert len(files) == 91

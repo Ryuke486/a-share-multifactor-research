@@ -7,12 +7,18 @@ import pytest
 
 from ashare_multifactor.audit.publication import publish_release
 from ashare_multifactor.audit.records import file_record
-from ashare_multifactor.final_test.data_inventory import write_json
 from ashare_multifactor.robustness.pipeline import (
     _assert_validation_market_scope,
     _successor_release_contract,
     verify_reproducible_source,
 )
+
+
+def write_json(path: Path, payload: object) -> None:
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_stage8_publish_rejects_bj_in_validation_forward_returns(

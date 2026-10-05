@@ -38,7 +38,6 @@ polars-runtime-32==1.43.2
 polars==1.43.2
 Pygments==2.21.0
 pyparsing==3.3.2
-pypdf==6.16.2
 pytest==9.1.1
 python-dateutil==2.9.0.post0
 PyYAML==6.0.3
