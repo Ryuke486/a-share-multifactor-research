@@ -915,6 +915,13 @@ def _factor_statistic_specs(report: tuple[str, ...]) -> list[KeyResultSpec]:
                 "mean_ic",
                 (("period", period), ("object_name", name)),
             )
+    for field in ("bps", "share"):
+        add(
+            f"supplement.cost_components.impact_cost.{field}",
+            "cost_components.csv",
+            field,
+            (("component", "impact_cost"),),
+        )
     specs.append(
         KeyResultSpec(
             "stage4.correlation.momentum_60.reversal_20",

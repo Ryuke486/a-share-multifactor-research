@@ -27,8 +27,22 @@ from ashare_multifactor.supplements.benchmark import (
     universe_benchmark_index,
 )
 from ashare_multifactor.supplements.figure import plot_benchmark_comparison
+from ashare_multifactor.supplements.figure_data import (
+    correlation_matrix,
+    cost_components,
+    drawdowns,
+    quintile_excess,
+    rolling_mean_ic,
+)
 from ashare_multifactor.supplements.ic_pipeline import build_ic_supplements
 from ashare_multifactor.supplements.legs import quantile_leg_decomposition
+from ashare_multifactor.supplements.report_figures import (
+    plot_correlation_heatmap,
+    plot_cost_components,
+    plot_drawdowns,
+    plot_quintile_panels,
+    plot_rolling_ic,
+)
 from ashare_multifactor.validation.protocol import assert_validation_read_allowed
 
 
@@ -45,6 +59,18 @@ COMPOSITE_METHODS = ("family_equal", "rolling_ic_family")
 BUILD_ROOT = Path("processed/v1_supplements/build")
 OUTPUT_ROOT = Path("artifacts/v1_supplements")
 FIGURE_NAME = "benchmark_comparison.png"
+HEATMAP_ORDER = (
+    "ep_ttm", "bp", "sp_ttm",
+    "momentum_60", "momentum_120", "momentum_12_1",
+    "reversal_5", "reversal_20",
+    "turnover_20", "amihud_20",
+    "volatility_20", "volatility_60", "downside_volatility_60",
+    "log_market_cap",
+)
+QUINTILE_PANELS = (
+    "family_equal", "reversal_5", "reversal_20", "turnover_20",
+    "amihud_20", "volatility_20", "volatility_60",
+)
 _TOLERANCE = 1e-12
 
 
@@ -82,7 +108,8 @@ def run_supplements(config_path: Path, *, root: Path = Path(".")) -> Path:
     selected = str(selection["selected_candidate"])
     relative = _relative_table(navs, index, stage6, stage7, inputs)
     calendar = _calendar_years(navs[selected], index)
-    legs = _leg_table(root, stage5, stage7, inputs)
+    quantiles, variants = _quantile_frames(root, stage5, stage7, inputs)
+    legs = _leg_table(quantiles, variants)
     for path in (
         root / "processed/factor_research/factor_panel.parquet",
         root / "artifacts/factor_research/rank_ic.csv",
@@ -108,6 +135,9 @@ def run_supplements(config_path: Path, *, root: Path = Path(".")) -> Path:
     executable_ic.write_csv(output / "executable_ic.csv")
     newey_west_lags.write_csv(output / "newey_west_lags.csv")
     plot_benchmark_comparison(levels, output / "figures" / FIGURE_NAME, split=VALIDATION_START)
+    _write_report_figures(
+        root, output, stage5, stage6, stage7, levels, _quintile_excess_table(quantiles), inputs
+    )
     _write_manifest(output, root, inputs, selected)
     return output
 
@@ -371,12 +401,13 @@ def _calendar_years(nav: pl.DataFrame, index: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _leg_table(
+def _quantile_frames(
     root: Path,
     stage5: PublishedRelease,
     stage7: PublishedRelease,
     inputs: dict[str, str],
-) -> pl.DataFrame:
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Monthly quantile returns of every factor (primary variant) and composite, by period."""
     stage4 = root / "artifacts/factor_research"
     classifications = pl.read_csv(_record(stage4 / "factor_classifications.csv", inputs, root))
     variants = classifications.select(
@@ -385,8 +416,9 @@ def _leg_table(
     research_factors = pl.read_csv(
         _record(stage4 / "quantile_returns.csv", inputs, root), try_parse_dates=True
     )
-    validation_factors_path = stage7.artifacts / "research/factor_quantile_returns.parquet"
-    validation_factors = pl.read_parquet(validation_factors_path)
+    validation_factors = pl.read_parquet(
+        stage7.artifacts / "research/factor_quantile_returns.parquet"
+    )
     research_composites = pl.read_parquet(stage5.artifacts / "composite_quantiles.parquet")
     validation_composites = pl.read_parquet(
         stage7.artifacts / "research/composite_quantile_returns.parquet"
@@ -395,6 +427,7 @@ def _leg_table(
     def factors(frame: pl.DataFrame) -> pl.DataFrame:
         return frame.join(variants, on=["factor_name", "score_variant"], how="inner").select(
             "date",
+            pl.lit("factor").alias("object_type"),
             pl.col("factor_name").alias("object_name"),
             "quantile",
             "n_obs",
@@ -404,6 +437,7 @@ def _leg_table(
     def composites(frame: pl.DataFrame) -> pl.DataFrame:
         return frame.filter(pl.col("method").is_in(COMPOSITE_METHODS)).select(
             "date",
+            pl.lit("composite").alias("object_type"),
             pl.col("method").alias("object_name"),
             "quantile",
             "n_obs",
@@ -413,18 +447,32 @@ def _leg_table(
     parts = []
     for period, start, end, factor_frame, composite_frame in (
         ("research_2005_2016", ANALYSIS_START, RESEARCH_END, research_factors, research_composites),
-        ("validation_2017_2021", VALIDATION_START, ANALYSIS_END, validation_factors, validation_composites),
+        (
+            "validation_2017_2021",
+            VALIDATION_START,
+            ANALYSIS_END,
+            validation_factors,
+            validation_composites,
+        ),
     ):
-        for object_type, frame in (
-            ("factor", factors(factor_frame)),
-            ("composite", composites(composite_frame)),
-        ):
-            bounded = frame.filter(pl.col("date").is_between(start, end))
+        for frame in (factors(factor_frame), composites(composite_frame)):
             parts.append(
-                quantile_leg_decomposition(bounded, quantile_count=5).with_columns(
-                    pl.lit(period).alias("period"), pl.lit(object_type).alias("object_type")
+                frame.filter(pl.col("date").is_between(start, end)).with_columns(
+                    pl.lit(period).alias("period")
                 )
             )
+    return pl.concat(parts), variants
+
+
+def _leg_table(quantiles: pl.DataFrame, variants: pl.DataFrame) -> pl.DataFrame:
+    parts = [
+        quantile_leg_decomposition(
+            frame.drop("period", "object_type"), quantile_count=5
+        ).with_columns(pl.lit(period).alias("period"), pl.lit(object_type).alias("object_type"))
+        for (period, object_type), frame in quantiles.group_by(
+            "period", "object_type", maintain_order=True
+        )
+    ]
     return (
         pl.concat(parts)
         .join(
@@ -432,11 +480,89 @@ def _leg_table(
             on="object_name",
             how="left",
         )
-        .select("period", "object_type", "object_name", "classification", pl.exclude(
-            "period", "object_type", "object_name", "classification"
-        ))
+        .select(
+            "period",
+            "object_type",
+            "object_name",
+            "classification",
+            pl.exclude("period", "object_type", "object_name", "classification"),
+        )
         .sort("period", "object_type", "object_name")
     )
+
+
+def _quintile_excess_table(quantiles: pl.DataFrame) -> pl.DataFrame:
+    parts = [
+        quintile_excess(frame.drop("period", "object_type")).with_columns(
+            pl.lit(period).alias("period")
+        )
+        for (period,), frame in quantiles.group_by("period", maintain_order=True)
+    ]
+    return pl.concat(parts).select("period", "object_name", "quantile", "mean_excess", "months")
+
+
+def _write_report_figures(
+    root: Path,
+    output: Path,
+    stage5: PublishedRelease,
+    stage6: PublishedRelease,
+    stage7: PublishedRelease,
+    levels: pl.DataFrame,
+    quintiles: pl.DataFrame,
+    inputs: dict[str, str],
+) -> None:
+    figures = output / "figures"
+    correlations = pl.read_csv(
+        _record(root / "artifacts/factor_research/factor_correlations.csv", inputs, root)
+    )
+    plot_correlation_heatmap(
+        correlation_matrix(correlations, order=HEATMAP_ORDER),
+        HEATMAP_ORDER,
+        figures / "factor_correlation_heatmap.png",
+    )
+
+    def composite_ic(frame: pl.DataFrame, start: date, end: date) -> pl.DataFrame:
+        return frame.filter(
+            (pl.col("horizon") == 20)
+            & pl.col("method").is_in(COMPOSITE_METHODS)
+            & pl.col("date").is_between(start, end)
+            & pl.col("rank_ic").is_not_null()
+        ).select("date", "method", "rank_ic")
+
+    rolling = rolling_mean_ic(
+        pl.concat(
+            [
+                composite_ic(
+                    pl.read_parquet(stage5.artifacts / "composite_ic.parquet"),
+                    ANALYSIS_START,
+                    RESEARCH_END,
+                ),
+                composite_ic(
+                    pl.read_parquet(stage7.artifacts / "research/composite_rank_ic.parquet"),
+                    VALIDATION_START,
+                    ANALYSIS_END,
+                ),
+            ]
+        )
+    )
+    rolling.write_csv(output / "rolling_ic.csv")
+    plot_rolling_ic(rolling, figures / "composite_rolling_ic.png", split=VALIDATION_START)
+
+    breakdown_path = stage6.artifacts / "cost_breakdown.csv"
+    inputs[f"stage6:{stage6.run_id}/artifacts/cost_breakdown.csv"] = _sha256(breakdown_path)
+    traded = float(
+        pl.read_parquet(stage6.datasets / "trades.parquet", columns=["amount"])["amount"].sum()
+    )
+    components = cost_components(pl.read_csv(breakdown_path).row(0, named=True), traded_amount=traded)
+    components.write_csv(output / "cost_components.csv")
+    plot_cost_components(components, figures / "research_cost_components.png")
+
+    losses = drawdowns(levels, columns=("strategy_net", "equal_weight", "cap_weight"))
+    losses.write_parquet(output / "drawdowns.parquet")
+    plot_drawdowns(losses, figures / "drawdowns.png", split=VALIDATION_START)
+
+    quintiles.write_csv(output / "quintile_excess.csv")
+    plot_quintile_panels(quintiles, QUINTILE_PANELS, figures / "quintile_excess.png")
 
 
 def _write_manifest(output: Path, root: Path, inputs: dict[str, str], selected: str) -> None:

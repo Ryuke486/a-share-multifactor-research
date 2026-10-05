@@ -11,19 +11,23 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import polars as pl  # noqa: E402
 
+from ashare_multifactor.supplements.figure_style import (  # noqa: E402
+    GRID as _GRID,
+    MUTED_INK as _MUTED_INK,
+    PRIMARY_INK as _PRIMARY_INK,
+    SECONDARY_INK as _SECONDARY_INK,
+    SERIES,
+    SURFACE as _SURFACE,
+)
 
-_SURFACE = "#fcfcfb"
-_PRIMARY_INK = "#0b0b0b"
-_SECONDARY_INK = "#52514e"
-_MUTED_INK = "#898781"
-_GRID = "#e1e0d9"
+
 # categorical slots 1-3 of the validated default palette; the zero-cost line is the
 # same strategy, so it keeps slot 1 and differs by dash pattern
 _SERIES = (
-    ("strategy_net", "Strategy, full cost", "net", "#2a78d6", "-"),
-    ("strategy_zero_cost", "Strategy, zero cost", "zero cost", "#2a78d6", "--"),
-    ("equal_weight", "Universe equal-weight", "EW", "#eb6834", "-"),
-    ("cap_weight", "Universe cap-weight", "CW", "#1baf7a", "-"),
+    ("strategy_net", "Strategy, full cost", "net", SERIES[0], "-"),
+    ("strategy_zero_cost", "Strategy, zero cost", "zero cost", SERIES[0], "--"),
+    ("equal_weight", "Universe equal-weight", "EW", SERIES[1], "-"),
+    ("cap_weight", "Universe cap-weight", "CW", SERIES[2], "-"),
 )
 
 
