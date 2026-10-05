@@ -451,6 +451,7 @@ class ResultSelect:
     field: str | None = None
     where: tuple[tuple[str, Any], ...] = ()
     stat: str | None = None
+    denominator: str | None = None
 
 
 @dataclass(frozen=True)
@@ -634,6 +635,22 @@ def v1_key_result_specs() -> tuple[KeyResultSpec, ...]:
                 required_documents=required,
             )
         )
+    for side in ("buy", "sell"):
+        specs.append(
+            KeyResultSpec(
+                f"stage6.unfilled_quantity_share.{side}",
+                "stage6_formal_backtest",
+                ResultSelect(
+                    "datasets/orders.parquet",
+                    kind="parquet",
+                    field="remaining_quantity",
+                    denominator="quantity",
+                    where=(("side", side),),
+                    stat="sum_ratio",
+                ),
+                required_documents=report_dictionary,
+            )
+        )
     specs.append(
         KeyResultSpec(
             "stage7.selected_candidate",
@@ -755,6 +772,12 @@ def _resolve_value(base: Path, select: ResultSelect) -> Any:
         return frame.get_column(str(select.field)).n_unique()
     if select.stat == "mean":
         return frame.get_column(str(select.field)).mean()
+    if select.stat == "sum_ratio":
+        if select.denominator is None:
+            raise ValueError("a sum_ratio selection requires a denominator column")
+        return frame.get_column(str(select.field)).sum() / frame.get_column(
+            select.denominator
+        ).sum()
     if select.field is None:
         raise ValueError("a field is required for a single-row selection")
     if frame.height != 1:

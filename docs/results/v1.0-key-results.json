@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_id": "v1.0.0-research-validation",
-  "generated_on": "2026-09-11",
+  "generated_on": "2026-10-05",
   "documents": [
     "README.md",
     "reports/research_report.md",
@@ -586,6 +586,54 @@
         {
           "document": "docs/result_dictionary.md",
           "literal": "0.00000024",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.unfilled_quantity_share.buy",
+      "value": 0.037243336468061765,
+      "source": "stage6_formal_backtest",
+      "artifact": "datasets/orders.parquet",
+      "artifact_sha256": "a681a847db84051767496d84cc9522dccd4662dedfbb2a41da377da6e897c9b1",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "3.72",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "3.72",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "stage6.unfilled_quantity_share.sell",
+      "value": 0.029608056339574165,
+      "source": "stage6_formal_backtest",
+      "artifact": "datasets/orders.parquet",
+      "artifact_sha256": "a681a847db84051767496d84cc9522dccd4662dedfbb2a41da377da6e897c9b1",
+      "required_documents": [
+        "reports/research_report.md",
+        "docs/result_dictionary.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.96",
+          "kind": "number"
+        },
+        {
+          "document": "docs/result_dictionary.md",
+          "literal": "2.96",
           "kind": "number"
         }
       ],

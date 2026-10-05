@@ -244,6 +244,45 @@ def test_recording_rejects_a_required_document_without_the_number(tmp_path: Path
         )
 
 
+def test_recording_resolves_a_filtered_ratio_of_column_sums(tmp_path: Path) -> None:
+    import polars as pl
+
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    pl.DataFrame(
+        {
+            "side": ["buy", "buy", "sell"],
+            "quantity": [1000, 3000, 500],
+            "remaining_quantity": [100, 0, 500],
+        }
+    ).write_parquet(artifacts / "orders.parquet")
+    (tmp_path / "report.md").write_text("买单未成交股数占比 2.50%。\n", encoding="utf-8")
+
+    record = build_key_results(
+        tmp_path,
+        specs=(
+            KeyResultSpec(
+                "fixture.buy_unfilled_share",
+                "fixture",
+                ResultSelect(
+                    "orders.parquet",
+                    kind="parquet",
+                    field="remaining_quantity",
+                    denominator="quantity",
+                    where=(("side", "buy"),),
+                    stat="sum_ratio",
+                ),
+                required_documents=("report.md",),
+            ),
+        ),
+        sources=(SourceSpec("fixture", "file", "artifacts"),),
+        documents=("report.md",),
+    )
+
+    assert record["results"][0]["value"] == pytest.approx(0.025)
+    assert record["results"][0]["citations"][0]["literal"] == "2.50"
+
+
 def test_source_verification_detects_a_changed_artifact(tmp_path: Path) -> None:
     _number_fixture(tmp_path)
     (tmp_path / "artifacts" / "summary.json").write_text(

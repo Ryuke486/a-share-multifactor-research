@@ -7,7 +7,7 @@
 | 字段 | 含义 | 单位/范围 |
 |---|---|---|
 | `rank_ic` | 月度截面因子分数与未来收益的 Spearman 相关系数均值 | 小数 |
-| `icir` | 月度 Rank IC 均值相对波动的年化比率 | 比率 |
+| `icir` | 年化 ICIR：月度 Rank IC 均值 ÷ 月度 Rank IC 标准差 × √12；按月度口径需除以 √12 | 比率 |
 | `net_annual_return` / `annual_return` | 扣除对应情景交易成本后的年化收益 | 小数；文档展示为百分比 |
 | `annual_volatility` | 日收益年化波动率 | 小数；文档展示为百分比 |
 | `maximum_drawdown` | NAV 相对历史高点的最大跌幅 | 负小数；文档展示为百分比 |
@@ -42,7 +42,7 @@ Stage 4 报告 manifest SHA-256：`d1987c69b46ae931cbc21cdf07b4c0661569c56c589d4
 | 报告项 | 值 | 来源字段 |
 |---|---:|---|
 | `family_equal` 20 日平均 Rank IC | 0.102201 | `mean_rank_ic` |
-| `family_equal` 20 日 ICIR | 2.735685 | `icir` |
+| `family_equal` 20 日年化 ICIR | 2.735685 | `icir` |
 | 规模分层缓冲平均单边目标换手 | 0.679583 | `average_one_way_turnover` |
 
 Stage 5 run id 为 `667e0ee00d8941e9a1f5db9a963ae9c3`，manifest SHA-256 为 `d846d866f1766c04f755774a6a750999aa16eef35612a350fbe1797447482fb2`。
@@ -64,6 +64,18 @@ Stage 5 run id 为 `667e0ee00d8941e9a1f5db9a963ae9c3`，manifest SHA-256 为 `d8
 | `implementation_shortfall_rate` | 0.0038052023509093746 | 0.3805% |
 | `average_target_deviation_l1` | 0.3234100480450629 | 32.34% |
 | `maximum_scenario_reconciliation_difference` | 2.384185791015625e-07 | 0.00000024 元 |
+
+执行指标口径：
+
+- `filled_order_rate`：`status = filled`（剩余数量为零）的订单数 ÷ 全部订单数。部分成交后被新信号取消的订单不计入，因此它是按笔数的"完全成交率"，不是按股数或金额的成交比例。
+- `average_target_deviation_l1`：每次新信号第一个执行日收盘时，实际权重与目标权重的 L1 距离（双边求和），再对全部执行日取平均；不是持有期内的平均偏离。
+
+按股数的未成交比例从同一 release 的 `datasets/orders.parquet` 计算（`sum(remaining_quantity) / sum(quantity)`，按 `side` 过滤）：
+
+| 订单方向 | 原始值 | 文档显示 |
+|---|---:|---:|
+| 买单 | 0.037243336468061765 | 3.72% |
+| 卖单 | 0.029608056339574165 | 2.96% |
 
 Stage 6 run id 为 `b995878_stage6_authoritative`，manifest SHA-256 为 `1a6f3cea593fa14cd7e687fae26b33e1da5f2df86c5616742aff0eb22697128e`。
 
@@ -87,6 +99,8 @@ Stage 7 run id 为 `65b19e1_stage7_validation_controlled_collector_successor`，
 ## Stage 8：稳健性
 
 机器来源：`processed/robustness/releases/a1076c2_stage8_robustness_szse_statistics_successor/datasets/robustness_results.parquet`。
+
+实验覆盖区间：执行成本类实验在 2005–2021 全区间重跑执行器；组合、因子删除和滚动窗口类实验只重建 2017–2021 目标，2005–2016 段沿用 Stage 5 研究期目标（`validation/backtest_inputs.py` 中 `_RESEARCH_PORTFOLIO` 的映射），因此其 2005–2021 指标中研究期部分对所有变体相同。`regime_pre_registered` 的 `market_size:*` 样本只覆盖 2017–2021，取值为股票池大/小盘股票的平均 20 日未来收益，不是策略收益。
 
 按唯一 `(experiment_id, status, interpretation)` 汇总：
 

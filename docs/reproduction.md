@@ -37,7 +37,7 @@
 .venv/bin/python -m ashare_multifactor.cli.delivery check
 ```
 
-交付检查在无数据环境下核对三件事：仓库内 Markdown 链接是否都指向可交付文件；`README.md`、研究报告和结果字典中的关键数字是否仍是 `docs/results/v1.0-key-results.json` 所记录机器结果的精确渲染；v1.0 manifest 的交付文件哈希是否仍与其发布提交一致。加上 `--verify-sources` 会在本地进一步把记录中的 51 项数值重新读回 `processed/` 中的权威 release（缺少本地数据时该项明确跳过）。
+交付检查在无数据环境下核对三件事：仓库内 Markdown 链接是否都指向可交付文件；`README.md`、研究报告和结果字典中的关键数字是否仍是 `docs/results/v1.0-key-results.json` 所记录机器结果的精确渲染；v1.0 manifest 的交付文件哈希是否仍与其发布提交一致。加上 `--verify-sources` 会在本地进一步把记录中的 53 项数值重新读回 `processed/` 中的权威 release（缺少本地数据时该项明确跳过）。
 
 如需查看单个公开接口的命令边界：
 
