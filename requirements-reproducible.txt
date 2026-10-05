@@ -15,7 +15,8 @@
 #   the project itself and pip are deliberately not pinned;
 # - no download hashes are recorded: wheels are platform specific and were not
 #   archived, so this is a version lock, not a supply-chain lock;
-# - verified on macOS arm64 only; it is not a cross-platform lock file;
+# - research runs used macOS arm64; CI also installs this file on Linux x86_64
+#   (Python 3.12 and 3.14) and passes the synthetic checks there;
 # - pyproject.toml keeps the compatible version ranges used for development;
 # - the authoritative Stage 5-8 certificates keep their own historical identity
 #   (CPython 3.14.6, polars 1.42.1, numpy 2.5.1, matplotlib 3.11.0,

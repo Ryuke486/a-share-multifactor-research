@@ -5,8 +5,8 @@
 - 精确研究环境：`requirements-reproducible.txt`，固定已验证环境中的全部直接与传递依赖版本。
 - 兼容范围：`pyproject.toml` 声明 `requires-python = ">=3.12"`，直接依赖版本见 `requirements-verified.txt`。
 - 当前验证环境为 CPython 3.14.7（Homebrew，macOS arm64）；权威 Stage 7/8 release 使用 CPython 3.14.6，各自版本记录在对应 release 的 `lineage.json`。
-- 锁定文件只在 macOS arm64 上验证过，不含下载哈希，因此是版本锁定而不是跨平台或供应链锁文件。
-- 平台边界：macOS 是已验证平台。此前 Linux 上的 `ELOOP` 失败全部来自延期最终测试的封存恢复代码（见[步骤 04 验收报告](audits/2026-09-11-v1-reproducible-environment.md)）；该代码于 2026-10-05 移出 main 后，CI 增加了不阻塞的 Linux 试运行，在其通过并记录前 Linux 仍属未验证平台。
+- 锁定文件不含下载哈希，因此是版本锁定而不是供应链锁文件；它在 macOS arm64 上用于真实数据研究运行，CI 也用它在 Linux x86_64 上安装并通过全部合成检查。
+- 平台边界：真实数据研究运行只在 macOS arm64 上产生过。此前 Linux 上的 `ELOOP` 失败全部来自延期最终测试的封存恢复代码（见[步骤 04 验收报告](audits/2026-09-11-v1-reproducible-environment.md)）；该代码于 2026-10-05 移出 main 后，CI run 37326943900 在 Linux 上通过全部合成测试、静态检查与交付检查，Linux 腿现为必须通过项。
 
 按锁定文件建立研究环境：
 

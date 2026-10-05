@@ -44,13 +44,13 @@ v1.0 已把 Stage 9–10 归档为可选 v2.0，但 `final_test/` 及其 CLI 仍
 - [x] 全量 pytest、Ruff、`git diff --check`、`ashare-delivery check --verify-sources`。
 - [x] 补充步骤重跑，产物与基线逐字节一致；Stage 5–8 指针不变；最终测试 `CURRENT.json` 仍不存在。
 - [x] 恢复演练：在临时工作树对移除提交执行 `git revert`，完整测试套件恢复到移除前的数量并通过。
-- [ ] CI 增加 Linux 腿（不阻塞试运行）；结果待推送后记录，macOS 仍为权威平台。
+- [x] CI 增加 Linux 腿：首次以不阻塞方式运行（run 37326943900），macOS 与 Linux 的 Python 3.12/3.14 四条腿全部通过（各 861 项测试、Ruff、交付检查），随后 Linux 腿改为必须通过。
 
 ## HANDOFF（执行后更新）
 
 ```yaml
 task: archive-final-test-code
-status: complete_pending_linux_ci
+status: complete
 archive_tag: archive/stage9-final-test -> d7c2828 (pushed)
 removal_commit: 7f09a10
 removed: 142 files, 70,201 lines (final_test package, two CLIs, two robustness CLI commands, four v2-only robustness modules, final-test tests, pypdf)
@@ -60,5 +60,5 @@ delivery_check_verify_sources: passed (268 results)
 supplement_outputs: byte-identical to the pre-removal baseline (16 files)
 current_pointers_unchanged: true
 final_test_current_absent: true
-open_item: ubuntu-latest CI legs added as non-blocking; record the first result, then drop continue-on-error if green
+linux_ci: run 37326943900 passed on ubuntu-latest (Python 3.12: 861 passed in 113 s; Python 3.14: 861 passed in 159 s) and on macos-latest; continue-on-error removed, all four legs required
 ```

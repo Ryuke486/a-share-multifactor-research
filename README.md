@@ -57,11 +57,11 @@
 .venv/bin/python -m ashare_multifactor.cli.delivery check
 ```
 
-锁定文件固定版本但不含下载哈希，并且只在 macOS arm64 上验证过；同一份文件在声明的 Python 最低版本 3.12 上也通过安装与测试。历史证书保留 CPython 3.14.6 / polars 1.42.1 身份；新环境的新运行必须生成自己的代码身份与证书，不能覆盖历史记录，也不能用当前锁定文件冒充历史环境。
+锁定文件固定版本但不含下载哈希；它在 macOS arm64 上用于真实数据研究运行，CI 还用同一份文件在 macOS 与 Linux x86_64、Python 3.12 与 3.14 上安装并通过全部合成检查。历史证书保留 CPython 3.14.6 / polars 1.42.1 身份；新环境的新运行必须生成自己的代码身份与证书，不能覆盖历史记录，也不能用当前锁定文件冒充历史环境。
 
 以上命令只运行人工合成测试、静态检查和交付一致性检查，不需要本地 28GB 原始数据，也不需要 `processed/`。交付检查核对仓库内 Markdown 链接、报告中关键数字与 `docs/results/v1.0-key-results.json` 记录的机器结果、以及 v1.0 manifest 的发布提交哈希；加 `--verify-sources` 可在保留 `processed/` 的机器上把数值重新读回权威 release。自动检查配置见 `.github/workflows/ci.yml`，完整重建与 release 回读见[复现说明](docs/reproduction.md)。
 
-macOS 是已验证的研究平台，CI 的 macOS 腿（Python 3.12 与 3.14）为必须通过项。此前 Linux 上的 62 项失败都来自延期最终测试的封存恢复代码（见[验收报告](docs/audits/2026-09-11-v1-reproducible-environment.md)）；该代码已移出 main，CI 现在增加了不阻塞的 Linux 试运行腿，在其通过并记录之前，Linux 仍记为未验证平台。
+CI 在 macOS 与 Linux 上各跑 Python 3.12 与 3.14 四条腿，全部为必须通过项；移出最终测试代码后的首次运行（run 37326943900）四条腿均通过。此前 Linux 上的 62 项失败都来自延期最终测试的封存恢复代码（见[验收报告](docs/audits/2026-09-11-v1-reproducible-environment.md)），该代码已移出 main。真实数据的研究运行只在 macOS arm64 上产生过；Linux 已验证的是合成测试、静态检查与交付检查。
 
 延期的 Stage 9–10 最终测试代码不在 main 上，完整保存在 Git 标签 `archive/stage9-final-test`；恢复方式与开启前提见[延期归档](docs/stage9-10-archive.md)。
 
