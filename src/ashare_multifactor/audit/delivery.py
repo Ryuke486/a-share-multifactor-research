@@ -17,7 +17,7 @@ import hashlib
 import json
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import unquote
@@ -478,6 +478,7 @@ V1_SOURCES = (
     SourceSpec("stage6_formal_backtest", "release", "processed/formal_backtest"),
     SourceSpec("stage7_validation_evaluation", "release", "processed/validation_evaluation"),
     SourceSpec("stage8_robustness", "release", "processed/robustness"),
+    SourceSpec("v1_supplements", "file", "artifacts/v1_supplements"),
 )
 
 _STAGE7_CANDIDATES = (
@@ -723,7 +724,108 @@ def v1_key_result_specs() -> tuple[KeyResultSpec, ...]:
             ResultSelect("lineage.json", field="main_candidate"),
         )
     )
+    specs.extend(_supplement_specs())
     return tuple(specs)
+
+
+_SUPPLEMENT_PERIODS = (
+    ("research", "research_2005_2016", "research_path"),
+    ("validation", "validation_2017_2021", "rolling_ic_family_size_stratified_buffered"),
+)
+_SUPPLEMENT_LEG_OBJECTS = (
+    "family_equal",
+    "rolling_ic_family",
+    "amihud_20",
+    "reversal_20",
+    "reversal_5",
+    "turnover_20",
+    "volatility_20",
+    "volatility_60",
+)
+
+
+_SUPPLEMENT_README_KEYS = frozenset(
+    {
+        "supplement.research.equal_weight.annual_return",
+        "supplement.validation.equal_weight.annual_return",
+        "supplement.validation.rolling_ic_family_size_stratified_buffered.net"
+        ".equal_weight.annual_relative_return",
+        "supplement.validation.rolling_ic_family_size_stratified_buffered.zero_cost"
+        ".equal_weight.annual_relative_return",
+        "supplement.legs.research_2005_2016.family_equal.long_leg",
+        "supplement.legs.validation_2017_2021.family_equal.long_leg",
+        "supplement.legs.validation_2017_2021.family_equal.short_leg",
+    }
+)
+
+
+def _supplement_specs() -> list[KeyResultSpec]:
+    """Benchmark and long/short-leg numbers from the descriptive v1.0 supplements."""
+    report = ("reports/research_report.md",)
+    specs: list[KeyResultSpec] = []
+
+    def relative(key: str, where: tuple[tuple[str, Any], ...], field: str) -> None:
+        specs.append(
+            KeyResultSpec(
+                f"supplement.{key}",
+                "v1_supplements",
+                ResultSelect("relative_performance.csv", kind="csv", field=field, where=where),
+                required_documents=report,
+            )
+        )
+
+    for label, period, portfolio in _SUPPLEMENT_PERIODS:
+        for benchmark in ("equal_weight", "cap_weight"):
+            relative(
+                f"{label}.{benchmark}.annual_return",
+                (("period", period), ("portfolio", portfolio), ("cost_mode", "net"),
+                 ("benchmark", benchmark)),
+                "benchmark_annual_return",
+            )
+    portfolios = [(label, period, portfolio) for label, period, portfolio in _SUPPLEMENT_PERIODS]
+    portfolios += [
+        ("validation", "validation_2017_2021", candidate)
+        for candidate in ("family_equal_size_stratified_buffered", "family_equal_top100_equal")
+    ]
+    for label, period, portfolio in portfolios:
+        for cost_mode in ("net", "zero_cost"):
+            where = (("period", period), ("portfolio", portfolio), ("cost_mode", cost_mode),
+                     ("benchmark", "equal_weight"))
+            for field in ("annual_relative_return", "information_ratio", "beta"):
+                relative(f"{label}.{portfolio}.{cost_mode}.equal_weight.{field}", where, field)
+    for year in range(2017, 2022):
+        for field in ("strategy_net", "equal_weight", "cap_weight"):
+            specs.append(
+                KeyResultSpec(
+                    f"supplement.calendar.{year}.{field}",
+                    "v1_supplements",
+                    ResultSelect(
+                        "calendar_year_returns.csv", kind="csv", field=field,
+                        where=(("year", year),),
+                    ),
+                    required_documents=report,
+                )
+            )
+    for _, period, _ in _SUPPLEMENT_PERIODS:
+        for name in _SUPPLEMENT_LEG_OBJECTS:
+            for field in ("long_leg", "long_leg_t", "short_leg", "short_leg_t"):
+                specs.append(
+                    KeyResultSpec(
+                        f"supplement.legs.{period}.{name}.{field}",
+                        "v1_supplements",
+                        ResultSelect(
+                            "leg_decomposition.csv", kind="csv", field=field,
+                            where=(("period", period), ("object_name", name)),
+                        ),
+                        required_documents=report,
+                    )
+                )
+    return [
+        replace(spec, required_documents=("README.md", *spec.required_documents))
+        if spec.key in _SUPPLEMENT_README_KEYS
+        else spec
+        for spec in specs
+    ]
 
 
 def _source_base(root: Path, record: Mapping[str, Any]) -> Path:

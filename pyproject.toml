@@ -32,6 +32,7 @@ ashare-validation = "ashare_multifactor.cli.validation:main"
 ashare-robustness = "ashare_multifactor.cli.robustness:main"
 ashare-final-test = "ashare_multifactor.cli.final_test:main"
 ashare-delivery = "ashare_multifactor.cli.delivery:main"
+ashare-supplements = "ashare_multifactor.cli.supplements:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
