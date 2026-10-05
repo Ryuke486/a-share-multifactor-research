@@ -36,9 +36,9 @@
 ![策略与股票池基准增长对比](../assets/v1/benchmark_comparison.png)
 
 - 图表：`docs/assets/v1/benchmark_comparison.png`
-- 来源：描述性补充 `artifacts/v1_supplements/`（`ashare_multifactor.cli.supplements`，代码提交 `fe4ac50`）
+- 来源：描述性补充 `artifacts/v1_supplements/`（`ashare_multifactor.cli.supplements`，代码提交 `32280a9`）
 - 原文件：`artifacts/v1_supplements/figures/benchmark_comparison.png`
-- 补充 manifest SHA-256：`806fdb605a674df12af8b9d568ab36cc2118208bc4eb4e520523b34e1d5522f0`
+- 补充 manifest SHA-256：`e5aff1b68dd5674fa9c4de14db99eff0ee651640d8e3ec0a477335aea2221fcc`
 - 图表 SHA-256：`5b323213350a1a2ffe1749eb81e5af66b9814c18060dcb73dc15cd8ec0cb63d7`
 
 ## 本地 machine-readable release
@@ -59,7 +59,7 @@
 
 ## 机器可读关键结果记录
 
-[v1.0-key-results.json](v1.0-key-results.json) 把交付文档中引用的 160 项关键数字绑定到权威 release、artifact 路径和 artifact 哈希：每一条记录数值、来源、被引用的文档以及引用字面量。它由 `ashare-delivery record-results` 从本地 release 生成，不手工填写。
+[v1.0-key-results.json](v1.0-key-results.json) 把交付文档中引用的 266 项关键数字绑定到权威 release、artifact 路径和 artifact 哈希：每一条记录数值、来源、被引用的文档以及引用字面量。它由 `ashare-delivery record-results` 从本地 release 生成，不手工填写。
 
 - `ashare-delivery check` 验证文档中的数字仍是记录值的精确渲染，并且仍出现在要求的文档中；
 - `ashare-delivery check --verify-sources` 在保留 `processed/` 的机器上把记录数值重新读回 release，并核对 artifact 字节未变；

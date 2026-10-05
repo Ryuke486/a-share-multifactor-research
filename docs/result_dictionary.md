@@ -137,6 +137,10 @@ Stage 8 run id 为 `a1076c2_stage8_robustness_szse_statistics_successor`，manif
 | `leg_decomposition.csv` | `long_leg` / `short_leg` | 多头腿 = 最高五分组 − 股票池均值；空头腿 = 股票池均值 − 最低五分组；按月计算后取均值，单位为月收益小数 |
 | 同上 | `long_leg_t` / `short_leg_t` | Newey–West t 值，滞后阶数与因子评价相同（20 日标签为 0） |
 | `benchmark_daily.parquet` | — | 选定方案 NAV 与两个基准的逐日增长序列，供图表使用 |
+| `executable_ic.csv` | `close_mean_ic` / `open_mean_ic` | 同一共同样本上，收盘到收盘标签与“下一交易日开盘买入、h 个有效交易日后开盘卖出”标签的平均月度 Rank IC |
+| 同上 | `mean_ic_retained` / `label_coverage` | 可成交口径 IC ÷ 收盘口径 IC；共同样本行数 ÷ 收盘标签有效行数 |
+| `newey_west_lags.csv` | `t_published_lag` / `t_automatic_lag` | 已发布口径（20 日标签滞后 0）与 Newey–West（1994）自动滞后 floor(4·(T/100)^(2/9)) 下的 t 值；前者与已发布 `nw_t` 逐项一致 |
+| 同上 | `q_published_lag` / `q_automatic_lag` | 14 个因子主口径作为一个检验族的 BH q 值；前者与已发布 `bh_q` 逐项一致 |
 
 ## 最终测试与 v1.0
 
