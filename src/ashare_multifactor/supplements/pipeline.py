@@ -27,6 +27,7 @@ from ashare_multifactor.supplements.benchmark import (
     universe_benchmark_index,
 )
 from ashare_multifactor.supplements.figure import plot_benchmark_comparison
+from ashare_multifactor.supplements.ic_pipeline import build_ic_supplements
 from ashare_multifactor.supplements.legs import quantile_leg_decomposition
 from ashare_multifactor.validation.protocol import assert_validation_read_allowed
 
@@ -82,6 +83,19 @@ def run_supplements(config_path: Path, *, root: Path = Path(".")) -> Path:
     relative = _relative_table(navs, index, stage6, stage7, inputs)
     calendar = _calendar_years(navs[selected], index)
     legs = _leg_table(root, stage5, stage7, inputs)
+    for path in (
+        root / "processed/factor_research/factor_panel.parquet",
+        root / "artifacts/factor_research/rank_ic.csv",
+        root / "artifacts/factor_research/factor_summary.csv",
+    ):
+        _record(path, inputs, root)
+    executable_ic, newey_west_lags = build_ic_supplements(
+        root,
+        stage5,
+        stage7,
+        panel_files,
+        fdr_threshold=config.factor_research.fdr_q_threshold,
+    )
 
     if output.exists():
         shutil.rmtree(output)
@@ -91,6 +105,8 @@ def run_supplements(config_path: Path, *, root: Path = Path(".")) -> Path:
     relative.write_csv(output / "relative_performance.csv")
     calendar.write_csv(output / "calendar_year_returns.csv")
     legs.write_csv(output / "leg_decomposition.csv")
+    executable_ic.write_csv(output / "executable_ic.csv")
+    newey_west_lags.write_csv(output / "newey_west_lags.csv")
     plot_benchmark_comparison(levels, output / "figures" / FIGURE_NAME, split=VALIDATION_START)
     _write_manifest(output, root, inputs, selected)
     return output

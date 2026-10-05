@@ -820,12 +820,115 @@ def _supplement_specs() -> list[KeyResultSpec]:
                         required_documents=report,
                     )
                 )
+    specs.extend(_factor_statistic_specs(report))
     return [
         replace(spec, required_documents=("README.md", *spec.required_documents))
         if spec.key in _SUPPLEMENT_README_KEYS
         else spec
         for spec in specs
     ]
+
+
+_REGISTERED_FACTORS = (
+    "amihud_20",
+    "bp",
+    "downside_volatility_60",
+    "ep_ttm",
+    "log_market_cap",
+    "momentum_120",
+    "momentum_12_1",
+    "momentum_60",
+    "reversal_20",
+    "reversal_5",
+    "sp_ttm",
+    "turnover_20",
+    "volatility_20",
+    "volatility_60",
+)
+_EXECUTABLE_IC_OBJECTS = (*_SUPPLEMENT_LEG_OBJECTS, "momentum_60")
+
+
+def _factor_statistic_specs(report: tuple[str, ...]) -> list[KeyResultSpec]:
+    """Executable-label IC, Newey-West lag sensitivity and the momentum discussion."""
+    specs: list[KeyResultSpec] = []
+
+    def add(key: str, artifact: str, field: str, where: tuple[tuple[str, Any], ...]) -> None:
+        specs.append(
+            KeyResultSpec(
+                key,
+                "v1_supplements",
+                ResultSelect(artifact, kind="csv", field=field, where=where),
+                required_documents=report,
+            )
+        )
+
+    for _, period, _ in _SUPPLEMENT_PERIODS:
+        add(
+            f"supplement.executable_ic.{period}.label_coverage",
+            "executable_ic.csv",
+            "label_coverage",
+            (("period", period), ("object_name", "family_equal"), ("horizon", 20)),
+        )
+        cases = [(name, 20) for name in _EXECUTABLE_IC_OBJECTS] + [("reversal_5", 5)]
+        for name, horizon in cases:
+            where = (("period", period), ("object_name", name), ("horizon", horizon))
+            for field in ("close_mean_ic", "open_mean_ic", "mean_ic_retained"):
+                add(
+                    f"supplement.executable_ic.{period}.{name}.h{horizon}.{field}",
+                    "executable_ic.csv",
+                    field,
+                    where,
+                )
+    research = "research_2005_2016"
+    for name in (*_REGISTERED_FACTORS, "family_equal", "rolling_ic_family"):
+        for field in ("t_published_lag", "t_automatic_lag"):
+            add(
+                f"supplement.newey_west.{research}.{name}.{field}",
+                "newey_west_lags.csv",
+                field,
+                (("period", research), ("object_name", name)),
+            )
+    for name in ("family_equal", "momentum_60"):
+        for field in ("t_published_lag", "t_automatic_lag"):
+            add(
+                f"supplement.newey_west.validation_2017_2021.{name}.{field}",
+                "newey_west_lags.csv",
+                field,
+                (("period", "validation_2017_2021"), ("object_name", name)),
+            )
+    for field in ("q_published_lag", "q_automatic_lag"):
+        add(
+            f"supplement.newey_west.{research}.log_market_cap.{field}",
+            "newey_west_lags.csv",
+            field,
+            (("period", research), ("object_name", "log_market_cap")),
+        )
+    for period in (research, "validation_2017_2021"):
+        names = ("momentum_60", "momentum_120", "momentum_12_1") if period == research else (
+            "momentum_60",
+            "log_market_cap",
+        )
+        for name in names:
+            add(
+                f"supplement.newey_west.{period}.{name}.mean_ic",
+                "newey_west_lags.csv",
+                "mean_ic",
+                (("period", period), ("object_name", name)),
+            )
+    specs.append(
+        KeyResultSpec(
+            "stage4.correlation.momentum_60.reversal_20",
+            "stage4_factor_research",
+            ResultSelect(
+                "factor_correlations.csv",
+                kind="csv",
+                field="mean_correlation",
+                where=(("factor_a", "momentum_60"), ("factor_b", "reversal_20")),
+            ),
+            required_documents=report,
+        )
+    )
+    return specs
 
 
 def _source_base(root: Path, record: Mapping[str, Any]) -> Path:
