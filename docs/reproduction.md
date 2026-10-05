@@ -37,7 +37,7 @@
 .venv/bin/python -m ashare_multifactor.cli.delivery check
 ```
 
-交付检查在无数据环境下核对三件事：仓库内 Markdown 链接是否都指向可交付文件；`README.md`、研究报告和结果字典中的关键数字是否仍是 `docs/results/v1.0-key-results.json` 所记录机器结果的精确渲染；v1.0 manifest 的交付文件哈希是否仍与其发布提交一致。加上 `--verify-sources` 会在本地进一步把记录中的 53 项数值重新读回 `processed/` 中的权威 release（缺少本地数据时该项明确跳过）。
+交付检查在无数据环境下核对三件事：仓库内 Markdown 链接是否都指向可交付文件；`README.md`、研究报告和结果字典中的关键数字是否仍是 `docs/results/v1.0-key-results.json` 所记录机器结果的精确渲染；v1.0 manifest 的交付文件哈希是否仍与其发布提交一致。加上 `--verify-sources` 会在本地进一步把记录中的 160 项数值重新读回 `processed/` 中的权威 release（缺少本地数据时该项明确跳过）。
 
 如需查看单个公开接口的命令边界：
 
@@ -114,6 +114,18 @@ Data/每天一个文件/后复权/
 ```
 
 这两项属于大规模本地重跑。v1.0 的日常核验优先使用下一节的只读 release 回读，不应为了查看报告而重新发布 `CURRENT.json`。
+
+### 基准对比与多空两条腿（描述性补充）
+
+报告第 7、8 节的数字来自一个只读的补充步骤：
+
+```bash
+.venv/bin/python -m ashare_multifactor.cli.supplements
+```
+
+它只读取 Stage 4 产物与 Stage 5–7 的权威 release，并通过第二阶段构建器把 2017–2021 日面板重建到隔离目录 `processed/v1_supplements/build/`（不写入 `processed/validation_evaluation/daily_panel`）。重建结果与 Stage 7 执行面板中的全部收盘价逐一比较，必须完全相等；策略年化收益必须精确复现已发布值，否则整步失败。输出写入 `artifacts/v1_supplements/`，其 `manifest.json` 记录全部输入与输出的 SHA-256 和代码提交。该步骤不修改任何 release、目标权重或选择结果，也不读取 2022 年及以后的数据；本机约 30 秒。
+
+注意：重建的 parquet 与 Stage 7 当时被清理掉的日面板内容一致，但文件字节会因写入库版本不同而不同，因此不能用 Stage 7 血缘中的旧文件哈希核对，只能做上述内容级核对。
 
 ## 6. 只读回读权威 release
 

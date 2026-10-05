@@ -122,6 +122,22 @@ Stage 7 run id 为 `65b19e1_stage7_validation_controlled_collector_successor`，
 
 Stage 8 run id 为 `a1076c2_stage8_robustness_szse_statistics_successor`，manifest SHA-256 为 `c75948b4c47007c6f5690451afbebdff02eb5d3c793e6285eb799af898ea1fba`。
 
+## 描述性补充：基准对比与多空两条腿
+
+机器来源：`artifacts/v1_supplements/`（由 `ashare_multifactor.cli.supplements` 生成，`manifest.json` 记录全部输入输出哈希）。数字本身由 `docs/results/v1.0-key-results.json` 绑定，下面只定义字段。
+
+| 文件 | 字段 | 含义 |
+|---|---|---|
+| `relative_performance.csv` | `benchmark_annual_return` | 零成本股票池基准年化收益；`benchmark = equal_weight` 为等权，`cap_weight` 为总市值加权 |
+| 同上 | `annual_relative_return` | 几何超额年化：(策略累计增长 ÷ 基准累计增长)^(1/年数) − 1；年数口径与 Stage 6/7 一致 |
+| 同上 | `information_ratio` | 日超额收益均值 × 252 ÷ 跟踪误差；`tracking_error` 为日超额收益标准差 × √252 |
+| 同上 | `beta` / `correlation` | 策略日收益对基准日收益的 beta 与相关系数 |
+| 同上 | `cost_mode` | `net` 为完整成本 NAV，`zero_cost` 为同一执行路径的零成本影子 NAV |
+| `calendar_year_returns.csv` | `strategy_net` 等 | 选定方案与两个基准的自然年收益，以上一年最后一个交易日为基点 |
+| `leg_decomposition.csv` | `long_leg` / `short_leg` | 多头腿 = 最高五分组 − 股票池均值；空头腿 = 股票池均值 − 最低五分组；按月计算后取均值，单位为月收益小数 |
+| 同上 | `long_leg_t` / `short_leg_t` | Newey–West t 值，滞后阶数与因子评价相同（20 日标签为 0） |
+| `benchmark_daily.parquet` | — | 选定方案 NAV 与两个基准的逐日增长序列，供图表使用 |
+
 ## 最终测试与 v1.0
 
 - `processed/final_test/CURRENT.json`：不存在；

@@ -31,6 +31,16 @@
 - 展示字段：四个执行成本实验的 `annual_return`
 - 图表 SHA-256：`2583e1d1d85a4f13a778e479c58cf9e8dd0d9aa9cdfecb5f38c18f9efd7ff92d`
 
+### 策略与股票池基准增长对比
+
+![策略与股票池基准增长对比](../assets/v1/benchmark_comparison.png)
+
+- 图表：`docs/assets/v1/benchmark_comparison.png`
+- 来源：描述性补充 `artifacts/v1_supplements/`（`ashare_multifactor.cli.supplements`，代码提交 `fe4ac50`）
+- 原文件：`artifacts/v1_supplements/figures/benchmark_comparison.png`
+- 补充 manifest SHA-256：`806fdb605a674df12af8b9d568ab36cc2118208bc4eb4e520523b34e1d5522f0`
+- 图表 SHA-256：`5b323213350a1a2ffe1749eb81e5af66b9814c18060dcb73dc15cd8ec0cb63d7`
+
 ## 本地 machine-readable release
 
 下列路径默认被 Git 忽略，只在完整本地研究环境中存在：
@@ -42,13 +52,14 @@
 | Stage 6 | `processed/formal_backtest/CURRENT.json` | 订单、成交、持仓、三账本、NAV、成本与对账 |
 | Stage 7 | `processed/validation_evaluation/CURRENT.json` | 三个冻结候选的验证指标与选择决定 |
 | Stage 8 | `processed/robustness/CURRENT.json` | 稳健性实验、协议门禁与证据工作流审计 |
+| 描述性补充 | `artifacts/v1_supplements/manifest.json` | 股票池基准对比、自然年收益、多空两条腿分解 |
 | Stage 9 | `processed/final_test/CURRENT.json` | v1.0 中必须不存在 |
 
 报告数字的字段级映射见[结果字典](../result_dictionary.md)。各 release 的 run id、manifest 哈希和交付文件哈希见[v1.0 manifest](../../releases/v1.0.0-research-validation.json)。
 
 ## 机器可读关键结果记录
 
-[v1.0-key-results.json](v1.0-key-results.json) 把交付文档中引用的 53 项关键数字绑定到权威 release、artifact 路径和 artifact 哈希：每一条记录数值、来源、被引用的文档以及引用字面量。它由 `ashare-delivery record-results` 从本地 release 生成，不手工填写。
+[v1.0-key-results.json](v1.0-key-results.json) 把交付文档中引用的 160 项关键数字绑定到权威 release、artifact 路径和 artifact 哈希：每一条记录数值、来源、被引用的文档以及引用字面量。它由 `ashare-delivery record-results` 从本地 release 生成，不手工填写。
 
 - `ashare-delivery check` 验证文档中的数字仍是记录值的精确渲染，并且仍出现在要求的文档中；
 - `ashare-delivery check --verify-sources` 在保留 `processed/` 的机器上把记录数值重新读回 release，并核对 artifact 字节未变；
