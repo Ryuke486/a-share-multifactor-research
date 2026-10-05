@@ -5316,6 +5316,42 @@
       "phrases": []
     },
     {
+      "key": "supplement.cost_components.impact_cost.bps",
+      "value": 22.150622589195663,
+      "source": "v1_supplements",
+      "artifact": "cost_components.csv",
+      "artifact_sha256": "60ae950f5af98df37d5f0f79f4d1c5f32ae233fb5646ba259e0f261e6d3ff683",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "22.2",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.cost_components.impact_cost.share",
+      "value": 0.5821141833338261,
+      "source": "v1_supplements",
+      "artifact": "cost_components.csv",
+      "artifact_sha256": "60ae950f5af98df37d5f0f79f4d1c5f32ae233fb5646ba259e0f261e6d3ff683",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "58.2",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
       "key": "stage4.correlation.momentum_60.reversal_20",
       "value": -0.4781157866978474,
       "source": "stage4_factor_research",

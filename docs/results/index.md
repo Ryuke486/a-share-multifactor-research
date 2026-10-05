@@ -36,10 +36,57 @@
 ![策略与股票池基准增长对比](../assets/v1/benchmark_comparison.png)
 
 - 图表：`docs/assets/v1/benchmark_comparison.png`
-- 来源：描述性补充 `artifacts/v1_supplements/`（`ashare_multifactor.cli.supplements`，代码提交 `32280a9`）
+- 来源：描述性补充 `artifacts/v1_supplements/`（`ashare_multifactor.cli.supplements`，代码提交 `6b2c82b`）
 - 原文件：`artifacts/v1_supplements/figures/benchmark_comparison.png`
-- 补充 manifest SHA-256：`e5aff1b68dd5674fa9c4de14db99eff0ee651640d8e3ec0a477335aea2221fcc`
+- 补充 manifest SHA-256：`5d60984e10f3823dc058a8c259aab5983b233ae89c4ff2b102fe57d5f046005b`
 - 图表 SHA-256：`5b323213350a1a2ffe1749eb81e5af66b9814c18060dcb73dc15cd8ec0cb63d7`
+
+以下五张图与上图出自同一次补充运行（同一代码提交与补充 manifest）。
+
+### 因子平均截面相关
+
+![因子平均截面相关](../assets/v1/factor_correlation_heatmap.png)
+
+- 图表：`docs/assets/v1/factor_correlation_heatmap.png`
+- 原文件：`artifacts/v1_supplements/figures/factor_correlation_heatmap.png`
+- 数据表：`artifacts/factor_research/factor_correlations.csv`（Stage 4）
+- 图表 SHA-256：`b8e72f46e9f0aa41ca22cf43a9ea478b8331b120c262b9244d725bdd5b658dbd`
+
+### 复合信号滚动 Rank IC
+
+![复合信号滚动 Rank IC](../assets/v1/composite_rolling_ic.png)
+
+- 图表：`docs/assets/v1/composite_rolling_ic.png`
+- 原文件：`artifacts/v1_supplements/figures/composite_rolling_ic.png`
+- 数据表：`artifacts/v1_supplements/rolling_ic.csv`（来自 Stage 5/7 已发布 IC 序列）
+- 图表 SHA-256：`71864dfe5faa3212a2f769c465595a7d028294297c3b1ddd2c6151407462207c`
+
+### 研究期交易成本构成
+
+![研究期交易成本构成](../assets/v1/research_cost_components.png)
+
+- 图表：`docs/assets/v1/research_cost_components.png`
+- 原文件：`artifacts/v1_supplements/figures/research_cost_components.png`
+- 数据表：`artifacts/v1_supplements/cost_components.csv`（来自 Stage 6 `cost_breakdown.csv` 与成交额）
+- 图表 SHA-256：`5d952c94029c913a2f03cd8e1558394fa153c5a09a10559f158decb8af6049b6`
+
+### 策略与股票池基准回撤
+
+![策略与股票池基准回撤](../assets/v1/drawdowns.png)
+
+- 图表：`docs/assets/v1/drawdowns.png`
+- 原文件：`artifacts/v1_supplements/figures/drawdowns.png`
+- 数据表：`artifacts/v1_supplements/drawdowns.parquet`
+- 图表 SHA-256：`d6dac068990fd28d11a7cb5363b87fc4cb13edac7ad34d9fe52fff359fdfbac7`
+
+### 五分组相对股票池的超额收益
+
+![五分组相对股票池的超额收益](../assets/v1/quintile_excess.png)
+
+- 图表：`docs/assets/v1/quintile_excess.png`
+- 原文件：`artifacts/v1_supplements/figures/quintile_excess.png`
+- 数据表：`artifacts/v1_supplements/quintile_excess.csv`（来自 Stage 4/5/7 分组收益）
+- 图表 SHA-256：`92ead2e21f20325b6b8974f007f409c6c0ccfe5b538ac44c7e65a3f9a27afeb9`
 
 ## 本地 machine-readable release
 
@@ -59,7 +106,7 @@
 
 ## 机器可读关键结果记录
 
-[v1.0-key-results.json](v1.0-key-results.json) 把交付文档中引用的 266 项关键数字绑定到权威 release、artifact 路径和 artifact 哈希：每一条记录数值、来源、被引用的文档以及引用字面量。它由 `ashare-delivery record-results` 从本地 release 生成，不手工填写。
+[v1.0-key-results.json](v1.0-key-results.json) 把交付文档中引用的 268 项关键数字绑定到权威 release、artifact 路径和 artifact 哈希：每一条记录数值、来源、被引用的文档以及引用字面量。它由 `ashare-delivery record-results` 从本地 release 生成，不手工填写。
 
 - `ashare-delivery check` 验证文档中的数字仍是记录值的精确渲染，并且仍出现在要求的文档中；
 - `ashare-delivery check --verify-sources` 在保留 `processed/` 的机器上把记录数值重新读回 release，并核对 artifact 字节未变；

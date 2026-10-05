@@ -141,6 +141,10 @@ Stage 8 run id 为 `a1076c2_stage8_robustness_szse_statistics_successor`，manif
 | 同上 | `mean_ic_retained` / `label_coverage` | 可成交口径 IC ÷ 收盘口径 IC；共同样本行数 ÷ 收盘标签有效行数 |
 | `newey_west_lags.csv` | `t_published_lag` / `t_automatic_lag` | 已发布口径（20 日标签滞后 0）与 Newey–West（1994）自动滞后 floor(4·(T/100)^(2/9)) 下的 t 值；前者与已发布 `nw_t` 逐项一致 |
 | 同上 | `q_published_lag` / `q_automatic_lag` | 14 个因子主口径作为一个检验族的 BH q 值；前者与已发布 `bh_q` 逐项一致 |
+| `rolling_ic.csv` | `rolling_ic` | 复合信号 20 日 Rank IC 的 12 个月滚动均值；窗口不足 12 个月时为空 |
+| `cost_components.csv` | `bps` / `share` | Stage 6 各成本项 ÷ 全部成交额（bps）与 ÷ 总交易成本；各项之和必须等于记录的总成本 |
+| `drawdowns.parquet` | 各列 | 选定方案与两个基准相对历史高点的回撤 |
+| `quintile_excess.csv` | `mean_excess` | 各分组 20 日收益减去当月股票池均值后的月度平均；`quantile = 5` 为得分最高组 |
 
 ## 最终测试与 v1.0
 
