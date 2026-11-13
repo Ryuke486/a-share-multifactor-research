@@ -13,6 +13,7 @@ from typing import Protocol
 
 import polars as pl
 
+from ashare_multifactor.audit.records import sha256_file as _file_sha256
 from ashare_multifactor.config import ResearchConfig, load_config
 from ashare_multifactor.data.discovery import DailyFilePair, discover_daily_pairs
 from ashare_multifactor.data.reader import read_daily_pair
@@ -86,14 +87,6 @@ def _write_json(path: Path, payload: object) -> None:
         encoding="utf-8",
     )
     os.replace(temporary, path)
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _write_year(root: Path, year: int, frames: list[pl.DataFrame]) -> PartitionManifest:

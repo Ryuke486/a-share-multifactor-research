@@ -5,6 +5,8 @@ import hashlib
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
+
 
 def _action_id(row: dict[str, object]) -> str:
     payload = "|".join(
@@ -24,7 +26,7 @@ def _action_id(row: dict[str, object]) -> str:
 def normalize_corporate_actions(
     frame: pl.DataFrame,
     *,
-    maximum_date: date = date(2016, 12, 31),
+    maximum_date: date = RESEARCH_END,
 ) -> pl.DataFrame:
     required = {
         "symbol",
@@ -50,9 +52,9 @@ def normalize_corporate_actions(
         pl.col("source").cast(pl.String),
     )
     if normalized.filter(
-        (pl.col("ex_date") < date(2005, 1, 1))
+        (pl.col("ex_date") < RESEARCH_START)
         | (pl.col("ex_date") > maximum_date)
-        | (pl.col("effective_date") < date(2005, 1, 1))
+        | (pl.col("effective_date") < RESEARCH_START)
         | (pl.col("effective_date") > maximum_date)
         | (pl.col("cash_per_share") < 0)
         | (pl.col("share_ratio") < -1)

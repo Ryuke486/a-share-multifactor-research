@@ -11,7 +11,7 @@
 按锁定文件建立研究环境：
 
 ```bash
-/opt/homebrew/bin/python3.14 -m venv .venv
+python3.14 -m venv .venv   # 研究运行所用解释器：Homebrew 的 /opt/homebrew/bin/python3.14
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -r requirements-reproducible.txt
 .venv/bin/python -m pip install --no-deps -e ".[dev]"
@@ -20,7 +20,7 @@
 只想按兼容范围安装（例如在未验证的操作系统或较新的 Python 上）时：
 
 ```bash
-/opt/homebrew/bin/python3.14 -m venv .venv
+python3.14 -m venv .venv   # 研究运行所用解释器：Homebrew 的 /opt/homebrew/bin/python3.14
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e ".[dev]"
 ```

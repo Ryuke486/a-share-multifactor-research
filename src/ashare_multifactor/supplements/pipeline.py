@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import date
-import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -19,6 +18,13 @@ from typing import Any
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import (
+    RESEARCH_END,
+    RESEARCH_START,
+    VALIDATION_END,
+    VALIDATION_START,
+)
+from ashare_multifactor.audit.records import sha256_file as _sha256
 from ashare_multifactor.audit.publication import PublishedRelease, resolve_current
 from ashare_multifactor.config import ResearchConfig, load_config
 from ashare_multifactor.data.build import build_parquet_dataset
@@ -46,10 +52,8 @@ from ashare_multifactor.supplements.report_figures import (
 from ashare_multifactor.validation.protocol import assert_validation_read_allowed
 
 
-ANALYSIS_START = date(2005, 1, 1)
-RESEARCH_END = date(2016, 12, 31)
-VALIDATION_START = date(2017, 1, 1)
-ANALYSIS_END = date(2021, 12, 31)
+ANALYSIS_START = RESEARCH_START
+ANALYSIS_END = VALIDATION_END
 CANDIDATES = (
     "family_equal_size_stratified_buffered",
     "family_equal_top100_equal",
@@ -165,10 +169,6 @@ def _record(path: Path, inputs: dict[str, str], root: Path | None = None) -> Pat
     key = str(path.relative_to(root)) if root is not None else str(path)
     inputs[key] = _sha256(path)
     return path
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _panel_files(panel: Path, years: range) -> list[Path]:

@@ -111,3 +111,8 @@ def factor_source_columns(factor_names: Sequence[str]) -> tuple[str, ...]:
             column for name in factor_names for column in definitions_by_name[name].source_columns
         )
     )
+
+
+def primary_variant(definition: FactorDefinition) -> str:
+    """Score column that carries the factor's headline (pre-registered) result."""
+    return "score_size_neutral" if definition.size_neutralize else "score"

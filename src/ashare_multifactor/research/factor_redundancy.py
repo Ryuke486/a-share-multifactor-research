@@ -12,7 +12,7 @@ import polars as pl
 from scipy import stats
 
 from ashare_multifactor.config import FactorResearchSettings
-from ashare_multifactor.factors.definitions import FactorDefinition
+from ashare_multifactor.factors.definitions import FactorDefinition, primary_variant
 from ashare_multifactor.research.factor_metrics import MINIMUM_CROSS_SECTION
 
 
@@ -75,8 +75,8 @@ def analyze_factor_redundancy(
                 {
                     "factor_a": left.name,
                     "factor_b": right.name,
-                    "primary_variant_a": _primary_variant(left),
-                    "primary_variant_b": _primary_variant(right),
+                    "primary_variant_a": primary_variant(left),
+                    "primary_variant_b": primary_variant(right),
                     "mean_correlation": mean,
                     "common_months": common_months,
                     "reason": reason,
@@ -242,7 +242,3 @@ def _redundancy_flags(
                 }
             )
     return pl.DataFrame(rows, schema=_FLAG_SCHEMA, strict=False)
-
-
-def _primary_variant(definition: FactorDefinition) -> str:
-    return "score_size_neutral" if definition.size_neutralize else "score"

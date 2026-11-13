@@ -6,14 +6,16 @@ import math
 import numpy as np
 import polars as pl
 
+from ashare_multifactor.protocol_dates import VALIDATION_END, VALIDATION_START
+
 
 def validation_portfolio_metrics(
     candidate: str,
     result: dict[str, pl.DataFrame],
     target_diagnostics: pl.DataFrame,
     *,
-    validation_start: date = date(2017, 1, 1),
-    validation_end: date = date(2021, 12, 31),
+    validation_start: date = VALIDATION_START,
+    validation_end: date = VALIDATION_END,
 ) -> dict[str, object]:
     """Summarize the validation slice while retaining the research boundary NAV."""
     nav = result["nav"].sort("date")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import date
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -9,6 +8,7 @@ import uuid
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import FINAL_TEST_START, VALIDATION_END, VALIDATION_START
 from ashare_multifactor.audit import reproducible_release
 from ashare_multifactor.audit.identity import (  # noqa: F401
     code_identity,
@@ -26,7 +26,7 @@ from ashare_multifactor.research.factor_lineage import validate_file_records
 from ashare_multifactor.validation.protocol import assert_stage_six_release_allowed
 
 
-SEALED_TEST_START = date(2022, 1, 1)
+SEALED_TEST_START = FINAL_TEST_START
 DATE_COLUMNS = {
     "date",
     "ex_date",
@@ -298,7 +298,7 @@ def _validation_input_identity(
     validation_daily_root = data_root / "processed/validation_evaluation/daily_panel"
     validation_daily = validate_panel_source(
         validation_daily_root,
-        Period(date(2017, 1, 1), date(2021, 12, 31)),
+        Period(VALIDATION_START, VALIDATION_END),
     )
     stage_five = resolve_current(data_root / "processed/factor_combination")
     stage_six = resolve_current(data_root / "processed/formal_backtest")

@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
 from pathlib import Path
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import FINAL_TEST_START, VALIDATION_END, VALIDATION_START
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 
 
-VALIDATION_START = date(2017, 1, 1)
-VALIDATION_END = date(2021, 12, 31)
 VALIDATION_YEARS = range(VALIDATION_START.year, VALIDATION_END.year + 1)
 _RAW_DATE_COLUMNS = (
     "dividPreNoticeDate",
@@ -122,7 +120,7 @@ def _normalize_baostock_actions(
         ).alias("share_ratio"),
     )
     for column in _RAW_DATE_COLUMNS:
-        if column in parsed.columns and parsed.filter(pl.col(column) >= date(2022, 1, 1)).height:
+        if column in parsed.columns and parsed.filter(pl.col(column) >= FINAL_TEST_START).height:
             raise ValueError(f"sealed final test date found in BaoStock cache: {column}")
     parsed = _apply_official_action_corrections(parsed, action_corrections)
     parsed = _apply_payment_date_overrides(parsed, payment_date_overrides)

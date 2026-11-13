@@ -5,9 +5,10 @@ from datetime import date
 import json
 from pathlib import Path
 
+from ashare_multifactor.protocol_dates import FACTOR_WARMUP_START, FINAL_TEST_START
 
-EARLIEST_ALLOWED_DATE = date(2003, 1, 1)
-FINAL_TEST_START = date(2022, 1, 1)
+
+EARLIEST_ALLOWED_DATE = FACTOR_WARMUP_START
 APPROVED_STAGE_SIX_RELEASE = "b995878_stage6_authoritative"
 
 

@@ -11,6 +11,7 @@ from typing import Iterable, Mapping
 
 import yaml
 
+from ashare_multifactor.audit.records import sha256_file as _sha256
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.data.manifest import DailyPanelSource
 from ashare_multifactor.factors.definitions import FactorDefinition
@@ -290,11 +291,3 @@ def _display_path(path: Path, root: Path) -> str:
         return path.relative_to(root).as_posix()
     except ValueError as error:
         raise ValueError(f"lineage path escapes factor research root: {path}") from error
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return digest.hexdigest()

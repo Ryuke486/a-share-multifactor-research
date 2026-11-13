@@ -10,7 +10,7 @@ import re
 import polars as pl
 
 from ashare_multifactor.config import FactorResearchSettings
-from ashare_multifactor.factors.definitions import FactorDefinition
+from ashare_multifactor.factors.definitions import FactorDefinition, primary_variant
 from ashare_multifactor.research.factor_card_plots import write_factor_figures
 from ashare_multifactor.research.factor_card_validation import validate_factor_card_inputs
 from ashare_multifactor.research.factor_evaluation import FactorEvaluationBundle
@@ -63,7 +63,7 @@ def _render_card(
     definition: FactorDefinition,
     settings: FactorResearchSettings,
 ) -> str:
-    variant = _primary_variant(definition)
+    variant = primary_variant(definition)
     summaries = evaluation.factor_summary.filter(
         (pl.col("factor_name") == definition.name) & (pl.col("score_variant") == variant)
     )
@@ -293,10 +293,6 @@ def _format_integer(value: object) -> str:
 
 def _finite(value: object) -> bool:
     return value is not None and not isinstance(value, (bool, str)) and math.isfinite(float(value))
-
-
-def _primary_variant(definition: FactorDefinition) -> str:
-    return "score_size_neutral" if definition.size_neutralize else "score"
 
 
 def _direction_meaning(direction: int) -> str:

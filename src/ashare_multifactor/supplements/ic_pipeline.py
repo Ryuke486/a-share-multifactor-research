@@ -14,6 +14,12 @@ from typing import Any
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import (
+    RESEARCH_END,
+    RESEARCH_START,
+    VALIDATION_END,
+    VALIDATION_START,
+)
 from ashare_multifactor.audit.publication import PublishedRelease
 from ashare_multifactor.supplements.ic_labels import executable_forward_returns
 from ashare_multifactor.supplements.ic_statistics import (
@@ -31,8 +37,8 @@ FACTOR_MINIMUM_CROSS_SECTION = 20
 COMPOSITE_MINIMUM_CROSS_SECTION = 3
 _IC_TOLERANCE = 1e-10
 _PERIODS = (
-    ("research_2005_2016", date(2005, 1, 1), date(2016, 12, 31)),
-    ("validation_2017_2021", date(2017, 1, 1), date(2021, 12, 31)),
+    ("research_2005_2016", RESEARCH_START, RESEARCH_END),
+    ("validation_2017_2021", VALIDATION_START, VALIDATION_END),
 )
 
 

@@ -9,7 +9,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 
 from ashare_multifactor.config import FactorResearchSettings
-from ashare_multifactor.factors.definitions import FactorDefinition
+from ashare_multifactor.factors.definitions import FactorDefinition, primary_variant
 from ashare_multifactor.research.factor_evaluation import FactorEvaluationBundle
 
 
@@ -21,7 +21,7 @@ def write_factor_figures(
 ) -> None:
     """Write the four fixed card figures without reading raw factor observations."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    variant = _primary_variant(definition)
+    variant = primary_variant(definition)
     _line_figure(
         evaluation.rank_ic.filter(
             (pl.col("factor_name") == definition.name)
@@ -138,7 +138,3 @@ def _show_no_data(axis: object) -> None:
 def _save_and_clear(figure: Figure, path: Path) -> None:
     figure.savefig(path, dpi=120)
     figure.clear()
-
-
-def _primary_variant(definition: FactorDefinition) -> str:
-    return "score_size_neutral" if definition.size_neutralize else "score"

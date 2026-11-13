@@ -11,15 +11,16 @@ import numpy as np
 import polars as pl
 from scipy import stats
 
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.factors.definitions import FactorDefinition
 
 
 MINIMUM_CROSS_SECTION = 20
 SUBPERIODS = (
-    ("2005-2008", date(2005, 1, 1), date(2008, 12, 31)),
+    ("2005-2008", RESEARCH_START, date(2008, 12, 31)),
     ("2009-2012", date(2009, 1, 1), date(2012, 12, 31)),
-    ("2013-2016", date(2013, 1, 1), date(2016, 12, 31)),
+    ("2013-2016", date(2013, 1, 1), RESEARCH_END),
 )
 RANK_IC_SCHEMA = {
     "date": pl.Date,

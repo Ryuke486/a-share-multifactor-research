@@ -7,6 +7,8 @@ from pathlib import Path
 
 import yaml
 
+from ashare_multifactor.protocol_dates import FACTOR_WARMUP_START
+
 
 @dataclass(frozen=True)
 class Period:
@@ -441,7 +443,7 @@ def load_config(path: Path) -> ResearchConfig:
         settings = config.validation_evaluation
         if Period(settings.analysis_start, settings.analysis_end) != config.validation:
             raise ValueError("validation evaluation must match the frozen validation period")
-        if settings.data_start != date(2003, 1, 1):
+        if settings.data_start != FACTOR_WARMUP_START:
             raise ValueError("validation evaluation data_start must preserve 2003 warmup")
         if settings.primary_metric != "net_annual_return":
             raise ValueError("validation primary metric must be net_annual_return")

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
 import math
 
 import numpy as np
 import polars as pl
+
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START, VALIDATION_END
 
 
 def classify_market_regimes(
@@ -58,14 +59,12 @@ def classify_market_regimes(
 def time_segments(frame: pl.DataFrame) -> pl.DataFrame:
     if "date" not in frame.columns:
         raise ValueError("time segmentation requires date")
-    invalid = frame.filter(
-        (pl.col("date") < date(2005, 1, 1)) | (pl.col("date") > date(2021, 12, 31))
-    )
+    invalid = frame.filter((pl.col("date") < RESEARCH_START) | (pl.col("date") > VALIDATION_END))
     if invalid.height:
         raise ValueError("time segmentation outside robustness sample")
     return frame.with_columns(
         pl.lit("time_period").alias("segment_type"),
-        pl.when(pl.col("date") <= date(2016, 12, 31))
+        pl.when(pl.col("date") <= RESEARCH_END)
         .then(pl.lit("research_2005_2016"))
         .otherwise(pl.lit("validation_2017_2021"))
         .alias("segment"),

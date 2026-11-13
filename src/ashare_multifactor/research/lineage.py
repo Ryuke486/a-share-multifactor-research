@@ -8,6 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping
 
+from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.data.manifest import DailyPanelSource, validate_panel_source
 from ashare_multifactor.research.pipeline_io import read_json, write_json
@@ -98,11 +99,7 @@ def _object_digest(payload: object) -> str:
 def _file_summary(path: Path) -> dict[str, int | str]:
     if not path.exists():
         raise FileNotFoundError(f"required intermediate result not found: {path}")
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return {"sha256": digest.hexdigest(), "size_bytes": path.stat().st_size}
+    return {"sha256": sha256_file(path), "size_bytes": path.stat().st_size}
 
 
 def _identity(

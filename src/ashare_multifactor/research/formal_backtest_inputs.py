@@ -5,6 +5,7 @@ from pathlib import Path
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import VALIDATION_START
 from ashare_multifactor.audit.publication import PublishedRelease, resolve_current
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.execution.market_state import build_execution_panel
@@ -83,7 +84,7 @@ def load_formal_backtest_inputs(
 
 
 def _validate_targets(targets: pl.DataFrame) -> None:
-    if targets.is_empty() or targets.filter(pl.col("date") >= pl.date(2017, 1, 1)).height:
+    if targets.is_empty() or targets.filter(pl.col("date") >= VALIDATION_START).height:
         raise ValueError("invalid stage five targets")
     summary = targets.group_by("date").agg(
         pl.len().alias("count"), pl.col("target_weight").sum().alias("weight")

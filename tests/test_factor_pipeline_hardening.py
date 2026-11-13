@@ -8,7 +8,10 @@ import shutil
 import polars as pl
 import pytest
 
-from factor_pipeline_fixtures import write_prepared_daily_panel
+from factor_pipeline_fixtures import (
+    write_completed_factor_research,
+    write_prepared_daily_panel,
+)
 from ashare_multifactor.factors.definitions import (
     FACTOR_DEFINITIONS,
     FactorDefinition,
@@ -161,10 +164,9 @@ def test_stage_crash_before_root_publish_leaves_no_mixed_live_outputs(
     stage: str,
     remaining_stages: set[str],
 ) -> None:
-    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    config_path, daily_root, _ = write_completed_factor_research(tmp_path)
     factor_root = daily_root.parent
     artifact_root = tmp_path / "artifacts/factor_research"
-    run_factor_pipeline(config_path, "all")
 
     def crash_before_publish(staging: Path, live: Path) -> None:
         assert staging.parent == live.parent

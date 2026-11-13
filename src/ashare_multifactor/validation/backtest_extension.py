@@ -1,15 +1,20 @@
 from __future__ import annotations
 
-from datetime import date
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import (
+    FACTOR_WARMUP_START,
+    FINAL_TEST_START,
+    RESEARCH_START,
+    VALIDATION_START,
+)
 from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
 from ashare_multifactor.execution.fees import FeeSchedule
 from ashare_multifactor.validation.protocol import assert_validation_read_allowed
 
 
-SEALED_TEST_START = date(2022, 1, 1)
+SEALED_TEST_START = FINAL_TEST_START
 
 
 def run_validation_backtest(
@@ -24,8 +29,8 @@ def run_validation_backtest(
     maximum = execution_panel.get_column("date").max()
     if maximum is None:
         raise ValueError("validation execution panel is empty")
-    assert_validation_read_allowed(date(2003, 1, 1), maximum)
-    if maximum < date(2017, 1, 1):
+    assert_validation_read_allowed(FACTOR_WARMUP_START, maximum)
+    if maximum < VALIDATION_START:
         raise ValueError("validation execution panel does not reach validation period")
     _reject_sealed_dates(target_weights, ("date",), "target_weights")
     _reject_sealed_dates(
@@ -39,7 +44,7 @@ def run_validation_backtest(
             ("effective_date",),
             "security_events",
         )
-    if target_weights.filter(pl.col("date") < date(2005, 1, 1)).height:
+    if target_weights.filter(pl.col("date") < RESEARCH_START).height:
         raise ValueError("validation targets predate the research period")
     return run_backtest(
         execution_panel,

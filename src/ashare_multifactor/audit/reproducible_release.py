@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
 import json
 from pathlib import Path
 import re
@@ -9,6 +8,7 @@ import shutil
 from typing import Callable, Mapping, Protocol
 import uuid
 
+from ashare_multifactor.audit.records import sha256_file as _sha256
 from ashare_multifactor.audit.publication import publish_release
 
 
@@ -303,10 +303,6 @@ def run_once(
 
 def _read_manifest(run_root: Path) -> dict[str, object]:
     return json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
-
-
-def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def _verify_manifest(

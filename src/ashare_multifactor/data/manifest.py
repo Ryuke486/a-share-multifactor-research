@@ -13,6 +13,7 @@ from typing import Mapping
 
 import polars as pl
 
+from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.config import Period
 
 
@@ -42,11 +43,7 @@ def _read_manifest(path: Path) -> tuple[dict[str, object], bytes]:
 
 
 def _file_summary(path: Path) -> dict[str, int | str]:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        while chunk := source.read(1024 * 1024):
-            digest.update(chunk)
-    return {"sha256": digest.hexdigest(), "size_bytes": path.stat().st_size}
+    return {"sha256": sha256_file(path), "size_bytes": path.stat().st_size}
 
 
 def _parquet_summary(path: Path) -> tuple[int, date, date]:

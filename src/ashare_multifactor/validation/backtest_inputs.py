@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import date
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import VALIDATION_END, VALIDATION_START
 from ashare_multifactor.execution.market_state import build_execution_panel
 
 
@@ -33,9 +33,9 @@ def build_continuous_targets(
     )
     if research.is_empty() or validation.is_empty():
         raise ValueError("continuous target inputs are incomplete")
-    if research.filter(pl.col("date") >= date(2017, 1, 1)).height:
+    if research.filter(pl.col("date") >= VALIDATION_START).height:
         raise ValueError("research targets cross into validation")
-    if validation.filter(~pl.col("date").is_between(date(2017, 1, 1), date(2021, 12, 31))).height:
+    if validation.filter(~pl.col("date").is_between(VALIDATION_START, VALIDATION_END)).height:
         raise ValueError("validation targets cross a sealed boundary")
     combined = pl.concat((research, validation)).sort("date", "symbol")
     if combined.select(pl.struct("date", "symbol").is_duplicated().any()).item():
@@ -50,13 +50,13 @@ def extend_execution_panel(
     adv_lookback: int,
 ) -> pl.DataFrame:
     """Compute validation market state with research rows as rolling warmup."""
-    if research_execution.filter(pl.col("date") >= date(2017, 1, 1)).height:
+    if research_execution.filter(pl.col("date") >= VALIDATION_START).height:
         raise ValueError("research execution panel crosses into validation")
-    if raw_extension.filter(pl.col("date") > date(2021, 12, 31)).height:
+    if raw_extension.filter(pl.col("date") > VALIDATION_END).height:
         raise ValueError("raw execution extension crosses the sealed final test")
     validation = (
         build_execution_panel(raw_extension, adv_lookback=adv_lookback)
-        .filter(pl.col("date") >= date(2017, 1, 1))
+        .filter(pl.col("date") >= VALIDATION_START)
         .select(research_execution.columns)
     )
     combined = pl.concat((research_execution, validation), how="vertical_relaxed").sort(

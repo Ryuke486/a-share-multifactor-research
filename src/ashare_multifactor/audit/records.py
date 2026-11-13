@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import json
 from pathlib import Path
+
+
+_HEX_DIGITS = "0123456789abcdef"
 
 
 @dataclass(frozen=True)
@@ -22,6 +26,22 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(character in _HEX_DIGITS for character in value)
+
+
+def is_git_oid_hex(value: str) -> bool:
+    return len(value) == 40 and all(character in _HEX_DIGITS for character in value)
+
+
+def write_json(path: Path, payload: object) -> None:
+    """Write deterministic JSON in place; callers publish the enclosing tree atomically."""
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def file_record(path: Path, *, root: Path, role: str) -> FileRecord:

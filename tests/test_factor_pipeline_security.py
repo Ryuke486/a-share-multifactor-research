@@ -9,7 +9,10 @@ import pytest
 import polars as pl
 import yaml
 
-from factor_pipeline_fixtures import write_prepared_daily_panel
+from factor_pipeline_fixtures import (
+    write_completed_factor_research,
+    write_prepared_daily_panel,
+)
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
 from ashare_multifactor.research.factor_outputs import expected_stage_outputs
 import ashare_multifactor.research.factor_outputs as outputs_module
@@ -231,11 +234,9 @@ def test_lineage_missing_registered_factor_output_is_rejected_before_evaluation_
 
 
 def test_report_manifest_binds_research_context_artifacts_and_lineage(tmp_path: Path) -> None:
-    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    config_path, daily_root, _ = write_completed_factor_research(tmp_path)
     factor_root = daily_root.parent
     artifact_root = tmp_path / "artifacts" / "factor_research"
-
-    run_factor_pipeline(config_path, "all")
 
     report_manifest = factor_root / "report_manifest.json"
     artifact_manifest = artifact_root / "manifest.json"
@@ -252,9 +253,8 @@ def test_report_manifest_binds_research_context_artifacts_and_lineage(tmp_path: 
 
 
 def test_second_report_rejects_tampered_artifact_before_republishing(tmp_path: Path) -> None:
-    config_path, _, _ = write_prepared_daily_panel(tmp_path)
+    config_path, _, _ = write_completed_factor_research(tmp_path)
     artifact = tmp_path / "artifacts/factor_research/factor_summary.csv"
-    run_factor_pipeline(config_path, "all")
     artifact.write_bytes(artifact.read_bytes() + b"\ntampered")
     tampered = artifact.read_bytes()
 
@@ -265,11 +265,10 @@ def test_second_report_rejects_tampered_artifact_before_republishing(tmp_path: P
 
 
 def test_second_report_rejects_manifest_context_mismatch(tmp_path: Path) -> None:
-    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    config_path, daily_root, _ = write_completed_factor_research(tmp_path)
     factor_root = daily_root.parent
     artifact_manifest = tmp_path / "artifacts/factor_research/manifest.json"
     report_manifest = factor_root / "report_manifest.json"
-    run_factor_pipeline(config_path, "all")
     manifest = json.loads(report_manifest.read_text(encoding="utf-8"))
     manifest["research_identity"] = "0" * 64
     encoded = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -286,9 +285,8 @@ def test_second_report_rejects_manifest_context_mismatch(tmp_path: Path) -> None
 
 
 def test_second_report_rejects_empty_report_output_lineage(tmp_path: Path) -> None:
-    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    config_path, daily_root, _ = write_completed_factor_research(tmp_path)
     factor_root = daily_root.parent
-    run_factor_pipeline(config_path, "all")
     lineage = _read_lineage(factor_root)
     lineage["stages"]["report"]["outputs"] = []
     _write_lineage(factor_root, lineage)
@@ -301,10 +299,9 @@ def test_failed_audit_removes_current_and_downstream_completions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    config_path, daily_root, _ = write_completed_factor_research(tmp_path)
     factor_root = daily_root.parent
     artifact_root = tmp_path / "artifacts/factor_research"
-    run_factor_pipeline(config_path, "all")
 
     def fail_readiness_write(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("injected audit write failure")
@@ -327,10 +324,9 @@ def test_failed_factor_write_removes_partial_outputs_and_downstream_completions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    config_path, daily_root, _ = write_completed_factor_research(tmp_path)
     factor_root = daily_root.parent
     artifact_root = tmp_path / "artifacts/factor_research"
-    run_factor_pipeline(config_path, "all")
 
     def fail_factor_write(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("injected factor write failure")
@@ -353,10 +349,9 @@ def test_failed_evaluation_write_removes_partial_outputs_and_report_completion(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    config_path, daily_root, _ = write_completed_factor_research(tmp_path)
     factor_root = daily_root.parent
     artifact_root = tmp_path / "artifacts/factor_research"
-    run_factor_pipeline(config_path, "all")
     original_write = pipeline_module.write_parquet_atomic
     writes = 0
 
@@ -407,10 +402,9 @@ def test_report_republish_failure_removes_previously_valid_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path, daily_root, _ = write_prepared_daily_panel(tmp_path)
+    config_path, daily_root, _ = write_completed_factor_research(tmp_path)
     factor_root = daily_root.parent
     artifact_root = tmp_path / "artifacts/factor_research"
-    run_factor_pipeline(config_path, "all")
     assert artifact_root.is_dir()
 
     def fail_publish(*_args: object, **_kwargs: object) -> None:
@@ -477,3 +471,22 @@ def test_directory_publish_recovers_from_failed_rollback_rename(
     backups = list(tmp_path.glob(".published-*.backup"))
     assert len(backups) == 1
     assert (backups[0] / "state.txt").read_text(encoding="utf-8") == "old"
+
+
+def test_cached_completed_research_matches_a_fresh_all_run(tmp_path: Path) -> None:
+    fresh = tmp_path / "fresh"
+    cached = tmp_path / "cached"
+    fresh.mkdir()
+    cached.mkdir()
+    fresh_config, _, _ = write_prepared_daily_panel(fresh)
+    run_factor_pipeline(fresh_config, "all")
+
+    cached_config, _, _ = write_completed_factor_research(cached)
+
+    fresh_hashes = _tree_hashes(fresh)
+    cached_hashes = _tree_hashes(cached)
+    for config in (fresh_config, cached_config):
+        assert str(config.parent) in config.read_text(encoding="utf-8")
+    del fresh_hashes[fresh_config.name], cached_hashes[cached_config.name]
+    assert cached_hashes == fresh_hashes
+    assert str(fresh) not in cached_config.read_text(encoding="utf-8")

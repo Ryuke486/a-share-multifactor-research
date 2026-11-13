@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import atexit
 from datetime import date, timedelta
 import hashlib
 import json
 import math
 from pathlib import Path
+import shutil
+import tempfile
 
 import polars as pl
 import yaml
@@ -128,6 +131,34 @@ def write_prepared_daily_panel(tmp_path: Path) -> tuple[Path, Path, pl.DataFrame
     )
     config_path = _write_config(tmp_path, days.min(), days.max())
     return config_path, root, frame
+
+
+_COMPLETED_TEMPLATE: Path | None = None
+
+
+def write_completed_factor_research(tmp_path: Path) -> tuple[Path, Path, pl.DataFrame]:
+    """Like ``write_prepared_daily_panel`` followed by a successful ``all`` run.
+
+    The ``all`` stage renders 56 figures and dominates these tests' runtime, so it
+    runs once per session into a template tree that is then copied. The tree holds
+    no absolute paths besides the config's ``paths`` block, which is rewritten;
+    ``test_cached_completed_research_matches_a_fresh_all_run`` keeps the copy
+    byte-identical to a fresh run.
+    """
+    from ashare_multifactor.research.factor_pipeline import run_factor_pipeline
+
+    global _COMPLETED_TEMPLATE
+    if _COMPLETED_TEMPLATE is None:
+        template = Path(tempfile.mkdtemp(prefix="factor-research-template-"))
+        atexit.register(shutil.rmtree, template, ignore_errors=True)
+        template_config, _, _ = write_prepared_daily_panel(template)
+        run_factor_pipeline(template_config, "all")
+        _COMPLETED_TEMPLATE = template
+    shutil.copytree(_COMPLETED_TEMPLATE, tmp_path, symlinks=True, dirs_exist_ok=True)
+    frame = synthetic_panel()
+    days = frame.get_column("date")
+    config_path = _write_config(tmp_path, days.min(), days.max())
+    return config_path, tmp_path / "processed" / "factor_research" / "daily_panel", frame
 
 
 def file_hashes(root: Path, relative_paths: tuple[str, ...]) -> dict[str, str]:

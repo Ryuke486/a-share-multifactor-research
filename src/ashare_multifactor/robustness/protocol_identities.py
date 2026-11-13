@@ -9,7 +9,7 @@ from pathlib import Path
 import subprocess
 from typing import Any
 
-from ashare_multifactor.audit.records import sha256_file
+from ashare_multifactor.audit.records import is_git_oid_hex as _valid_git_oid, sha256_file
 
 
 _FINAL_EXECUTION_PATHS = (
@@ -264,10 +264,6 @@ def _canonical_json_bytes(payload: object) -> bytes:
         )
         + "\n"
     ).encode()
-
-
-def _valid_git_oid(value: str) -> bool:
-    return len(value) == 40 and all(character in "0123456789abcdef" for character in value)
 
 
 def _git_bytes(code_root: Path, *args: str) -> bytes:

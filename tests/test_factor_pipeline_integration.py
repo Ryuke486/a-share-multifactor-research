@@ -15,6 +15,7 @@ from factor_pipeline_fixtures import (
     SYMBOLS,
     file_hashes,
     write_raw_pair,
+    write_completed_factor_research,
     write_prepared_daily_panel,
 )
 from ashare_multifactor.cli import factors as factors_cli
@@ -183,8 +184,7 @@ def test_manifest_date_leak_is_rejected_before_parquet_scan(
 
 
 def test_replaced_factor_stage_input_is_rejected_before_read(tmp_path: Path) -> None:
-    config_path, _, _ = write_prepared_daily_panel(tmp_path)
-    run_factor_pipeline(config_path, "all")
+    config_path, _, _ = write_completed_factor_research(tmp_path)
     factor_panel = tmp_path / "processed/factor_research/factor_panel.parquet"
     factor_panel.write_bytes(factor_panel.read_bytes() + b"tampered")
 
@@ -244,8 +244,7 @@ def test_audit_uses_and_freezes_config_sibling_field_evidence(tmp_path: Path) ->
 def test_rerunning_factors_physically_invalidates_evaluation_and_report(
     tmp_path: Path,
 ) -> None:
-    config_path, _, _ = write_prepared_daily_panel(tmp_path)
-    run_factor_pipeline(config_path, "all")
+    config_path, _, _ = write_completed_factor_research(tmp_path)
     processed = tmp_path / "processed/factor_research"
     artifacts = tmp_path / "artifacts/factor_research"
     assert artifacts.is_dir()
@@ -293,8 +292,7 @@ def test_build_stage_invalidates_all_downstream_outputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config_path, _, _ = write_prepared_daily_panel(tmp_path)
-    run_factor_pipeline(config_path, "all")
+    config_path, _, _ = write_completed_factor_research(tmp_path)
     processed = tmp_path / "processed/factor_research"
 
     monkeypatch.setattr(

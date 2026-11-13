@@ -7,6 +7,7 @@ from pathlib import Path
 
 import polars as pl
 
+from ashare_multifactor.audit.records import write_json as _write_json
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.config import load_config
 from ashare_multifactor.data.field_audit import FieldReadiness
@@ -401,11 +402,4 @@ def _attach_composite_metrics(
         )
         .drop("method")
         .sort("candidate")
-    )
-
-
-def _write_json(path: Path, payload: dict[str, object]) -> None:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )

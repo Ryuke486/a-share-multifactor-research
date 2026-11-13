@@ -7,8 +7,10 @@ from typing import Any
 
 from ashare_multifactor.audit.records import (
     file_record,
+    is_sha256_hex as _valid_sha256,
     sha256_file,
     verify_file_record,
+    write_json as _write_json,
 )
 
 
@@ -174,14 +176,3 @@ def _read_json(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError(f"invalid collector readiness evidence: {path.name}")
     return payload
-
-
-def _write_json(path: Path, payload: dict[str, object]) -> None:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
-def _valid_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)

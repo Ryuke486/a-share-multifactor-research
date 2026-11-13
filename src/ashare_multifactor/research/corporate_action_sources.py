@@ -4,6 +4,8 @@ from datetime import date
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
+
 
 _FHPS_COLUMNS = {
     "代码",
@@ -40,8 +42,8 @@ def normalize_fhps_em(
         )
         .sort("effective_date", "symbol")
     )
-    outside_period = (pl.col("effective_date") < date(2005, 1, 1)) | (
-        pl.col("effective_date") > date(2016, 12, 31)
+    outside_period = (pl.col("effective_date") < RESEARCH_START) | (
+        pl.col("effective_date") > RESEARCH_END
     )
     if filter_to_research_period:
         return result.filter(~outside_period)
@@ -108,9 +110,7 @@ def normalize_cninfo_dividend(frame: pl.DataFrame, *, symbol: str) -> pl.DataFra
     }
     return (
         pl.DataFrame(rows, schema=schema)
-        .filter(
-            pl.col("effective_date").is_between(date(2005, 1, 1), date(2016, 12, 31), closed="both")
-        )
+        .filter(pl.col("effective_date").is_between(RESEARCH_START, RESEARCH_END, closed="both"))
         .sort("effective_date", "event_type")
     )
 

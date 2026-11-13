@@ -776,10 +776,3 @@ def _published(
         manifest_sha256=manifest_hash,
         directory_identity=directory_identity,
     )
-
-
-def _write_json(path: Path, payload: dict[str, object]) -> None:
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )

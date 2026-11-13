@@ -1,3 +1,10 @@
+"""Sealing and opening-token checks for the final-test protocol.
+
+Despite the ``test_`` prefix this is production code, not a pytest module: "test"
+refers to the sealed 2022-2025 final-test period. The file keeps its name because
+``protocol_identities.py`` lists this path in a frozen historical contract.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -7,6 +14,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ashare_multifactor.audit.records import (
+    is_git_oid_hex as _valid_git_oid,
+    is_sha256_hex as _valid_sha256,
+)
 from ashare_multifactor.robustness.protocol import RobustnessProtocol
 from ashare_multifactor.robustness.protocol_identities import (
     validate_domain_identity,
@@ -144,14 +155,6 @@ def seal_test_protocol(
         encoding="utf-8",
     )
     return payload
-
-
-def _valid_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
-
-
-def _valid_git_oid(value: str) -> bool:
-    return len(value) == 40 and all(character in "0123456789abcdef" for character in value)
 
 
 def verify_test_opening_token(

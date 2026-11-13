@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 from ashare_multifactor.audit.publication import PublishedRelease, publish_release
 from ashare_multifactor.combination.definitions import CANDIDATE_FACTORS
 from ashare_multifactor.combination.panel import (
@@ -484,7 +485,7 @@ def _validate_upstream(root: Path) -> None:
         .select(pl.col("date").min().alias("min"), pl.col("date").max().alias("max"))
         .collect()
     )
-    if panel["min"].item() < date(2005, 1, 1) or panel["max"].item() > date(2016, 12, 31):
+    if panel["min"].item() < RESEARCH_START or panel["max"].item() > RESEARCH_END:
         raise ValueError("stage four input leaves the research period")
 
 
@@ -518,7 +519,7 @@ def _validate_weight_outputs(
 def _validate_target_weights(targets: pl.DataFrame) -> None:
     if targets.filter(~pl.col("target_weight").is_finite() | (pl.col("target_weight") < 0)).height:
         raise ValueError("target weights must be finite and non-negative")
-    if targets.filter(~pl.col("date").is_between(date(2005, 1, 1), date(2016, 12, 31))).height:
+    if targets.filter(~pl.col("date").is_between(RESEARCH_START, RESEARCH_END)).height:
         raise ValueError("target weights leave the research period")
     sums = targets.group_by("date", "portfolio_name").agg(
         pl.col("target_weight").sum().alias("total")

@@ -6,6 +6,7 @@ from datetime import date
 import numpy as np
 import polars as pl
 
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 from ashare_multifactor.combination.definitions import REPRESENTATIVE_FACTORS
 from ashare_multifactor.combination.eligibility import candidate_registry
 
@@ -16,8 +17,8 @@ def build_composite_scores(
     *,
     methods: Sequence[str],
     minimum_families: int = 2,
-    analysis_start: date = date(2005, 1, 1),
-    analysis_end: date = date(2016, 12, 31),
+    analysis_start: date = RESEARCH_START,
+    analysis_end: date = RESEARCH_END,
 ) -> pl.DataFrame:
     required = {"date", "symbol", "factor_name", "family", "score_size_neutral"}
     missing = sorted(required - set(panel.columns))

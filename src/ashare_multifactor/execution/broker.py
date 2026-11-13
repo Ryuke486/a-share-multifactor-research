@@ -16,6 +16,8 @@ from .price_limits import limit_prices
 from .sizing import proportional_buy_quantities
 from .slippage import execution_price
 
+from ashare_multifactor.protocol_dates import RESEARCH_END
+
 
 @dataclass(frozen=True)
 class BacktestSettings:
@@ -26,7 +28,7 @@ class BacktestSettings:
     reference_participation: float = 0.01
     maximum_impact_bps: float = 50.0
     buy_lot_size: int = 100
-    analysis_end: date = date(2016, 12, 31)
+    analysis_end: date = RESEARCH_END
 
 
 def _order_id(signal_date: date, symbol: str, side: str, sequence: int) -> str:

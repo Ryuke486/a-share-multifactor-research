@@ -8,7 +8,7 @@ import math
 import polars as pl
 
 from ashare_multifactor.config import FactorResearchSettings
-from ashare_multifactor.factors.definitions import FactorDefinition
+from ashare_multifactor.factors.definitions import FactorDefinition, primary_variant
 from ashare_multifactor.research.factor_evaluation import FactorEvaluationBundle
 from ashare_multifactor.research.factor_metrics import (
     QUANTILE_SCHEMA,
@@ -297,7 +297,7 @@ def _validate_classifications(
         definition = by_name[row["factor_name"]]
         if row["family"] != definition.family:
             raise ValueError("classification family does not match factor definitions")
-        if row["primary_score_variant"] != _primary_variant(definition):
+        if row["primary_score_variant"] != primary_variant(definition):
             raise ValueError("classification primary score variant does not match definition")
         if row["primary_horizon"] != settings.primary_horizon:
             raise ValueError("classification primary horizon does not match settings")
@@ -316,9 +316,9 @@ def _validate_correlations(
     for row in frame.iter_rows(named=True):
         left = by_name[row["factor_a"]]
         right = by_name[row["factor_b"]]
-        if row["primary_variant_a"] != _primary_variant(left) or row[
+        if row["primary_variant_a"] != primary_variant(left) or row[
             "primary_variant_b"
-        ] != _primary_variant(right):
+        ] != primary_variant(right):
             raise ValueError("factor_correlations primary variants do not match definitions")
     rows = {(row["factor_a"], row["factor_b"]): row for row in frame.iter_rows(named=True)}
     for left_index, left in enumerate(definitions):
@@ -352,9 +352,9 @@ def _validate_flags(
         if left_name == right_name or pair in seen or order[left_name] >= order[right_name]:
             raise ValueError("redundancy_flags must contain unique unordered different pairs")
         seen.add(pair)
-        if row["primary_variant_a"] != _primary_variant(by_name[left_name]) or row[
+        if row["primary_variant_a"] != primary_variant(by_name[left_name]) or row[
             "primary_variant_b"
-        ] != _primary_variant(by_name[right_name]):
+        ] != primary_variant(by_name[right_name]):
             raise ValueError("redundancy_flags primary variants do not match definitions")
     correlation_rows = {
         (row["factor_a"], row["factor_b"]): row for row in correlations.iter_rows(named=True)
@@ -395,10 +395,6 @@ def _reject_duplicate_keys(frame: pl.DataFrame, keys: Sequence[str], name: str) 
 
 def _score_variants(definition: FactorDefinition) -> tuple[str, ...]:
     return ("score", "score_size_neutral") if definition.size_neutralize else ("score",)
-
-
-def _primary_variant(definition: FactorDefinition) -> str:
-    return "score_size_neutral" if definition.size_neutralize else "score"
 
 
 def _is_expected_flag(value: object, threshold: float) -> bool:

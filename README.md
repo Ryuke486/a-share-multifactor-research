@@ -48,8 +48,8 @@
 当前验证环境为 **CPython 3.14.7 / polars 1.43.2**：全部依赖（含传递依赖）锁定在 `requirements-reproducible.txt`，直接依赖版本另见 `requirements-verified.txt`，兼容范围由 `pyproject.toml` 声明（`requires-python = ">=3.12"`）。复用现有 `.venv`，新建环境时按锁定文件安装：
 
 ```bash
-/opt/homebrew/bin/python3.14 --version   # 应为 Python 3.14.7
-/opt/homebrew/bin/python3.14 -m venv .venv
+python3.14 --version   # 应为 Python 3.14.7；研究运行所用解释器为 Homebrew 的 /opt/homebrew/bin/python3.14
+python3.14 -m venv .venv
 .venv/bin/python -m pip install -r requirements-reproducible.txt
 .venv/bin/python -m pip install --no-deps -e ".[dev]"
 .venv/bin/python -m pytest -q

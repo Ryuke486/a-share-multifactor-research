@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import date
 import json
 from pathlib import Path
 from typing import Final
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import FACTOR_WARMUP_START, RESEARCH_END
 from ashare_multifactor.config import FactorResearchSettings, Period, ResearchConfig, load_config
 from ashare_multifactor.data.build import build_parquet_dataset
 from ashare_multifactor.data.field_audit import (
@@ -351,8 +351,8 @@ def _run_report(
 
 def _validate_source(factor_root: Path, settings: FactorResearchSettings) -> DailyPanelSource:
     allowed = Period(
-        max(settings.data_start, date(2003, 1, 1)),
-        min(settings.analysis_end, date(2016, 12, 31)),
+        max(settings.data_start, FACTOR_WARMUP_START),
+        min(settings.analysis_end, RESEARCH_END),
     )
     return validate_panel_source(factor_root / "daily_panel", allowed)
 

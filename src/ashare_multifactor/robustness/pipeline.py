@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import date
 import json
 from pathlib import Path
 from typing import Any
 
 import polars as pl
 
+from ashare_multifactor.protocol_dates import FINAL_TEST_END, FINAL_TEST_START, RESEARCH_END
 from ashare_multifactor.audit import reproducible_release
 from ashare_multifactor.audit.identity import code_identity  # noqa: F401
 from ashare_multifactor.audit.publication import resolve_current
@@ -71,7 +71,7 @@ from ashare_multifactor.validation.backtest_extension import run_validation_back
 from ashare_multifactor.validation.backtest_inputs import build_continuous_targets
 
 
-SEALED_TEST_START = date(2022, 1, 1)
+SEALED_TEST_START = FINAL_TEST_START
 CORE_ROBUSTNESS_FILES = (
     "robustness_results.parquet",
     "report.md",
@@ -214,8 +214,8 @@ def _successor_release_contract(
     source_contract_path = code_root / "configs/final_execution_sources.yaml"
     validate_fee_protocol(
         load_market_rules(market_rules_path),
-        date(2022, 1, 1),
-        date(2025, 12, 31),
+        FINAL_TEST_START,
+        FINAL_TEST_END,
     )
     supersession = build_stage8_supersession(
         predecessor_pointer={
@@ -306,7 +306,7 @@ def _execute_experiments(
     )
     stage_five = resolve_current(data_root / "processed/factor_combination")
     research_targets = read_bounded_parquet(
-        stage_five.datasets / "target_weights.parquet", end=date(2016, 12, 31)
+        stage_five.datasets / "target_weights.parquet", end=RESEARCH_END
     )
     previous_targets = research_targets.filter(
         (pl.col("portfolio_name") == "size_stratified_buffered")
@@ -363,12 +363,12 @@ def _execute_experiments(
     )
     historical_ic = read_bounded_parquet(
         data_root / "processed/factor_research/rank_ic.parquet",
-        end=date(2016, 12, 31),
+        end=RESEARCH_END,
     )
     validation_ic = read_bounded_parquet(validation.artifacts / "research/factor_rank_ic.parquet")
     historical_returns = read_bounded_parquet(
         data_root / "processed/factor_research/forward_returns.parquet",
-        end=date(2016, 12, 31),
+        end=RESEARCH_END,
     )
     validation_returns = read_bounded_parquet(inputs / "forward_returns.parquet")
     realization_dates = (

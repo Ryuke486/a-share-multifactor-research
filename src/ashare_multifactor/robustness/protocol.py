@@ -12,10 +12,17 @@ from typing import Any
 import yaml
 import polars as pl
 
+from ashare_multifactor.protocol_dates import (
+    FINAL_TEST_END,
+    FINAL_TEST_START,
+    RESEARCH_END,
+    RESEARCH_START,
+    VALIDATION_END,
+)
 
-ANALYSIS_START = date(2005, 1, 1)
-ANALYSIS_END = date(2021, 12, 31)
-FINAL_TEST_START = date(2022, 1, 1)
+
+ANALYSIS_START = RESEARCH_START
+ANALYSIS_END = VALIDATION_END
 FROZEN_MAIN_CANDIDATE = "rolling_ic_family_size_stratified_buffered"
 FINAL_TEST_METRICS = (
     "rank_ic",
@@ -120,9 +127,9 @@ def assert_authoritative_period_contracts(
         factor_end = factor_lineage["factor_config"]["payload"]["analysis_end"]  # type: ignore[index]
     except (KeyError, TypeError) as exc:
         raise ValueError("upstream input period contract is incomplete") from exc
-    if _as_date(stage5_end) > date(2016, 12, 31):
+    if _as_date(stage5_end) > RESEARCH_END:
         raise ValueError("Stage-5 input contract exceeds the research period")
-    if _as_date(factor_end) > date(2016, 12, 31):
+    if _as_date(factor_end) > RESEARCH_END:
         raise ValueError("factor input contract exceeds the research period")
 
 
@@ -134,7 +141,7 @@ def load_robustness_protocol(path: Path) -> RobustnessProtocol:
     sealed_start, sealed_end = map(_as_date, raw["sealed_test_period"])
     if (start, end) != (ANALYSIS_START, ANALYSIS_END):
         raise ValueError("robustness analysis period changed")
-    if sealed_start != FINAL_TEST_START or sealed_end != date(2025, 12, 31):
+    if sealed_start != FINAL_TEST_START or sealed_end != FINAL_TEST_END:
         raise ValueError("sealed final-test period changed")
     if raw["main_candidate"] != FROZEN_MAIN_CANDIDATE:
         raise ValueError("frozen validation main candidate changed")
