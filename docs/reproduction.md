@@ -37,7 +37,7 @@ python3.14 -m venv .venv   # 研究运行所用解释器：Homebrew 的 /opt/hom
 .venv/bin/python -m ashare_multifactor.cli.delivery check
 ```
 
-交付检查在无数据环境下核对三件事：仓库内 Markdown 链接是否都指向可交付文件；`README.md`、研究报告和结果字典中的关键数字是否仍是 `docs/results/v1.0-key-results.json` 所记录机器结果的精确渲染；v1.0 manifest 的交付文件哈希是否仍与其发布提交一致。加上 `--verify-sources` 会在本地进一步把记录中的 268 项数值重新读回 `processed/` 中的权威 release（缺少本地数据时该项明确跳过）。
+交付检查在无数据环境下核对三件事：仓库内 Markdown 链接是否都指向可交付文件；`README.md`、研究报告和结果字典中的关键数字是否仍是 `docs/results/v1.0-key-results.json` 所记录机器结果的精确渲染；v1.0 manifest 的交付文件哈希是否仍与其发布提交一致。加上 `--verify-sources` 会在本地进一步把记录中的 471 项数值重新读回 `processed/` 中的权威 release（缺少本地数据时该项明确跳过）。
 
 如需查看单个公开接口的命令边界：
 
@@ -67,6 +67,17 @@ Data/每天一个文件/后复权/
 完整字段、schema 变化和来源限制见[data/README.md](data/README.md)。首次全量处理约 28GB 数据前，应先在小日期范围完成字段和连接验证。
 
 ## 4. 从原始数据重建研究期
+
+### 一条命令按顺序重建
+
+下面各小节的命令也可以用一个入口按文档顺序串起来执行，任何一步失败即停止：
+
+```bash
+.venv/bin/python -m ashare_multifactor.cli.reproduce            # 只打印 9 个步骤，不运行
+.venv/bin/python -m ashare_multifactor.cli.reproduce --execute  # 实际运行
+```
+
+该入口不含任何研究逻辑，只是依次调用本节和第 5 节的阶段命令（因子面板 → 单因子研究 → 合成 → 回测 → 验证 → 稳健性 → 描述性补充 → 交付检查），不涉及 2022 年及以后的数据。`--from-step <步骤名>` 可从中间某步继续，`--run-suffix` 设置验证与稳健性重跑的 run id 后缀。完整执行会读取全部本地数据并发布新的 release，因此默认只打印计划。串联顺序与失败即停由 `tests/test_reproduce_cli.py` 覆盖；整条链在真实数据上的一次性连续执行尚未演练过，各阶段命令此前是分别运行的。
 
 ### 单因子研究
 
@@ -124,6 +135,24 @@ Data/每天一个文件/后复权/
 ```
 
 它只读取 Stage 4 产物与 Stage 5–7 的权威 release，并通过第二阶段构建器把 2017–2021 日面板重建到隔离目录 `processed/v1_supplements/build/`（不写入 `processed/validation_evaluation/daily_panel`）。重建结果与 Stage 7 执行面板中的全部收盘价逐一比较，必须完全相等；策略年化收益、每个已发布的月度 Rank IC 序列、Newey–West t 值与 BH q 值都必须精确复现，否则整步失败。输出写入 `artifacts/v1_supplements/`，其 `manifest.json` 记录全部输入与输出的 SHA-256 和代码提交。该步骤不修改任何 release、目标权重或选择结果，也不读取 2022 年及以后的数据；本机约 30 秒。
+
+报告第 3.4 节的 Fama–MacBeth 回归和第 7.1 节的 bootstrap 区间也由该步骤生成（`fama_macbeth.csv`、`bootstrap_intervals.csv`）；bootstrap 的点估计必须与已发布的年化收益和超额一致，否则整步失败。
+
+报告第 7.2 节的公开指数对比需要先把沪深 300 与中证 500 的日收盘下载到本地缓存一次（之后补充步骤只读缓存、不再联网）：
+
+```bash
+.venv/bin/python -m ashare_multifactor.cli.supplements --download-index-benchmarks
+```
+
+该命令通过 BaoStock 的 `query_history_k_data_plus` 取 2006-01-01 至 2021-12-31 的日线，不请求 2022 年及以后的数据。BaoStock 的访问规则（2026-11-13 查阅于 <https://www.baostock.com/blacklist>）为每日 API 请求不超过 5 万次、不得并发连接；本命令只建立一个连接，顺序查询两只指数，连同登录、翻页和登出合计 6 次请求。缓存写入 `artifacts/v1_supplements_source_cache/baostock_index/`，旁边的 `index_daily.metadata.json` 记录查询范围、取数时间和文件哈希；缓存缺失或与元数据不符时补充步骤会直接失败。
+
+报告第 9 节“只看验证期”的稳健性对照表来自一个单独的可选步骤，因为它需要把 Stage 8 的实验逐个重跑（每个约 1 分钟，合计约 25 分钟）：
+
+```bash
+.venv/bin/python -m ashare_multifactor.cli.supplements --robustness-subperiod
+```
+
+它通过未改动的 Stage 8 代码重跑预注册实验，要求每个实验的全区间指标与已发布的 Stage 8 release 完全一致，然后只在 2017–2021 切片上重算同一组指标并套用冻结的容差。输出写入 `artifacts/v1_robustness_subperiod/`，不写任何 release。
 
 注意：重建的 parquet 与 Stage 7 当时被清理掉的日面板内容一致，但文件字节会因写入库版本不同而不同，因此不能用 Stage 7 血缘中的旧文件哈希核对，只能做上述内容级核对。
 

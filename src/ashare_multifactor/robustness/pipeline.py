@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -249,7 +250,15 @@ def _execute_experiments(
     data_root: Path,
     validation: object,
     protocol: RobustnessProtocol,
+    *,
+    on_result: Callable[[str, dict[str, pl.DataFrame]], None] | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, object]]]:
+    def summarize(experiment_id: str, result: dict[str, pl.DataFrame]) -> dict[str, Any]:
+        # Optional read-only tap for descriptive supplements; summaries are unchanged.
+        if on_result is not None:
+            on_result(experiment_id, result)
+        return _wide_result(experiment_id, result)
+
     config = load_config(code_root / "configs/research_protocol.yaml")
     formal = config.formal_backtest
     combination = config.factor_combination
@@ -295,7 +304,7 @@ def _execute_experiments(
                 execution, targets, actions, scenario.fees, scenario.settings, events
             )
             selected = select_backtest_scenario(rerun, scenario.result_scenario)
-        results.append(_wide_result(scenario.experiment_id, selected))
+        results.append(summarize(scenario.experiment_id, selected))
 
     scores = read_bounded_parquet(inputs / "composite_scores.parquet")
     features = read_bounded_parquet(inputs / "factor_features.parquet")
@@ -316,7 +325,7 @@ def _execute_experiments(
     portfolio_variants = build_portfolio_variants(protocol)
     for variant in portfolio_variants:
         if variant.experiment_id == "portfolio_baseline":
-            results.append(_wide_result(variant.experiment_id, baseline_result))
+            results.append(summarize(variant.experiment_id, baseline_result))
             continue
         try:
             built = build_variant_targets(
@@ -329,7 +338,7 @@ def _execute_experiments(
             )
             continuous = _continuous_variant(research_targets, built.targets, protocol)
             rerun = run_validation_backtest(execution, continuous, actions, fees, settings, events)
-            results.append(_wide_result(variant.experiment_id, rerun))
+            results.append(summarize(variant.experiment_id, rerun))
         except ExpectedExperimentUnavailability as exc:
             results.append(_failed_result(variant.experiment_id, str(exc)))
 
@@ -356,7 +365,7 @@ def _execute_experiments(
         )
         continuous = _continuous_variant(research_targets, built.targets, protocol)
         rerun = run_validation_backtest(execution, continuous, actions, fees, settings, events)
-        results.append(_wide_result(experiment.experiment_id, rerun))
+        results.append(summarize(experiment.experiment_id, rerun))
 
     # Static classification metadata has no observations or date column.
     classifications = pl.read_parquet(
@@ -414,7 +423,7 @@ def _execute_experiments(
         )
         continuous = _continuous_variant(research_targets, built.targets, protocol)
         rerun = run_validation_backtest(execution, continuous, actions, fees, settings, events)
-        results.append(_wide_result(experiment.experiment_id, rerun))
+        results.append(summarize(experiment.experiment_id, rerun))
 
     results.extend(_regime_results(baseline_result, execution, panel))
     return results, fatal

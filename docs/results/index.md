@@ -99,14 +99,15 @@
 | Stage 6 | `processed/formal_backtest/CURRENT.json` | 订单、成交、持仓、三账本、NAV、成本与对账 |
 | Stage 7 | `processed/validation_evaluation/CURRENT.json` | 三个冻结候选的验证指标与选择决定 |
 | Stage 8 | `processed/robustness/CURRENT.json` | 稳健性实验、协议门禁与证据工作流审计 |
-| 描述性补充 | `artifacts/v1_supplements/manifest.json` | 股票池基准对比、自然年收益、多空两条腿分解 |
+| 描述性补充 | `artifacts/v1_supplements/manifest.json` | 股票池基准对比、自然年收益、多空两条腿分解、可成交口径 IC、Newey–West 滞后、Fama–MacBeth 回归、bootstrap 区间、公开指数对比 |
+| 稳健性验证期对照 | `artifacts/v1_robustness_subperiod/manifest.json` | Stage 8 实验只在 2017–2021 切片上的指标与判定 |
 | Stage 9 | `processed/final_test/CURRENT.json` | v1.0 中必须不存在 |
 
 报告数字的字段级映射见[结果字典](../result_dictionary.md)。各 release 的 run id、manifest 哈希和交付文件哈希见[v1.0 manifest](../../releases/v1.0.0-research-validation.json)。
 
 ## 机器可读关键结果记录
 
-[v1.0-key-results.json](v1.0-key-results.json) 把交付文档中引用的 268 项关键数字绑定到权威 release、artifact 路径和 artifact 哈希：每一条记录数值、来源、被引用的文档以及引用字面量。它由 `ashare-delivery record-results` 从本地 release 生成，不手工填写。
+[v1.0-key-results.json](v1.0-key-results.json) 把交付文档中引用的 471 项关键数字绑定到权威 release、artifact 路径和 artifact 哈希：每一条记录数值、来源、被引用的文档以及引用字面量。它由 `ashare-delivery record-results` 从本地 release 生成，不手工填写。
 
 - `ashare-delivery check` 验证文档中的数字仍是记录值的精确渲染，并且仍出现在要求的文档中；
 - `ashare-delivery check --verify-sources` 在保留 `processed/` 的机器上把记录数值重新读回 release，并核对 artifact 字节未变；

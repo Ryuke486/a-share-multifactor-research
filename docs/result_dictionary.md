@@ -133,6 +133,19 @@ Stage 8 run id 为 `a1076c2_stage8_robustness_szse_statistics_successor`，manif
 | 同上 | `information_ratio` | 日超额收益均值 × 252 ÷ 跟踪误差；`tracking_error` 为日超额收益标准差 × √252 |
 | 同上 | `beta` / `correlation` | 策略日收益对基准日收益的 beta 与相关系数 |
 | 同上 | `cost_mode` | `net` 为完整成本 NAV，`zero_cost` 为同一执行路径的零成本影子 NAV |
+| `fama_macbeth.csv` | `specification` | `candidates` 为 6 个 candidate 因子同时回归，`all_registered` 为全部 14 个预注册因子 |
+| 同上 | `mean_coefficient` | 月度截面回归系数的均值：其他回归因子不变时，该因子得分高一个截面标准差对应的 20 日未来收益（小数，报告中乘 100 写作 %/月） |
+| 同上 | `t_published_lag` / `t_automatic_lag` | 系数序列的 Newey–West t 值，滞后分别为 0 和 Newey–West（1994）自动滞后 |
+| 同上 | `mean_n_obs` / `mean_r_squared` | 每月进入回归的股票数均值与截面 R² 均值 |
+| `bootstrap_intervals.csv` | `annual_return` / `annual_relative_return` / `sharpe` | 点估计，定义与 `relative_performance.csv` 相同；必须与已发布值一致，否则补充步骤失败 |
+| 同上 | `*_low` / `*_high` | 循环分块 bootstrap 的 2.5% 与 97.5% 分位数：策略与基准日收益成对重抽，`block_days`、`replications`、`seed` 列记录固定参数 |
+| 同上 | `relative_non_positive_share` | 重抽样本中几何超额年化不为正的占比 |
+| `index_benchmarks.csv` | `benchmark` | `csi300` 为沪深 300、`csi500` 为中证 500（BaoStock 日收盘点位，价格指数、不含分红），`equal_weight` 为同一窗口的股票池等权基准 |
+| 同上 | `period` | `research_2006_2016` 从 2005 年最后一个交易日收盘算起（BaoStock 指数数据始于 2006 年）；`validation_2017_2021` 与其余表格窗口相同，且必须复现已发布的策略年化与等权超额 |
+| 同上 | 其余字段 | 定义与 `relative_performance.csv` 相同 |
+| `artifacts/v1_robustness_subperiod/validation_slice.csv` | `annual_return` / `maximum_drawdown` / `turnover` | Stage 8 各实验只在 2017–2021 切片上的年化收益、最大回撤和年化换手；由 `ashare_multifactor.cli.supplements --robustness-subperiod` 重跑未改动的 Stage 8 代码得到，年数口径与 Stage 7 一致 |
+| 同上 | `*_delta` | 相对该类别基线实验在同一切片上的差值 |
+| 同上 | `slice_verdict` / `full_period_verdict` | 套用冻结容差后在验证期切片上的判定，以及 Stage 8 release 中原有的全区间判定 |
 | `calendar_year_returns.csv` | `strategy_net` 等 | 选定方案与两个基准的自然年收益，以上一年最后一个交易日为基点 |
 | `leg_decomposition.csv` | `long_leg` / `short_leg` | 多头腿 = 最高五分组 − 股票池均值；空头腿 = 股票池均值 − 最低五分组；按月计算后取均值，单位为月收益小数 |
 | 同上 | `long_leg_t` / `short_leg_t` | Newey–West t 值，滞后阶数与因子评价相同（20 日标签为 0） |

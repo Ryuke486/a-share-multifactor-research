@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "release_id": "v1.0.0-research-validation",
-  "generated_on": "2026-10-05",
+  "generated_on": null,
   "documents": [
     "README.md",
     "reports/research_report.md",
@@ -46,6 +46,11 @@
       "name": "v1_supplements",
       "kind": "file",
       "root": "artifacts/v1_supplements"
+    },
+    {
+      "name": "v1_robustness_subperiod",
+      "kind": "file",
+      "root": "artifacts/v1_robustness_subperiod"
     }
   ],
   "results": [
@@ -103,7 +108,13 @@
         "README.md",
         "reports/research_report.md"
       ],
-      "citations": [],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "500",
+          "kind": "number"
+        }
+      ],
       "phrases": [
         {
           "document": "README.md",
@@ -125,7 +136,13 @@
         "README.md",
         "reports/research_report.md"
       ],
-      "citations": [],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "300",
+          "kind": "number"
+        }
+      ],
       "phrases": [
         {
           "document": "README.md",
@@ -326,6 +343,11 @@
           "kind": "number"
         },
         {
+          "document": "reports/research_report.md",
+          "literal": "17.6",
+          "kind": "number"
+        },
+        {
           "document": "docs/result_dictionary.md",
           "literal": "0.17603097829253445",
           "kind": "number"
@@ -391,6 +413,11 @@
         {
           "document": "reports/research_report.md",
           "literal": "0.7079",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.708",
           "kind": "number"
         },
         {
@@ -894,7 +921,17 @@
       "citations": [
         {
           "document": "reports/research_report.md",
+          "literal": "-0.102",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
           "literal": "-10.24",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-10.2",
           "kind": "number"
         },
         {
@@ -943,6 +980,11 @@
         {
           "document": "reports/research_report.md",
           "literal": "84.88",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.849",
           "kind": "number"
         },
         {
@@ -1081,6 +1123,11 @@
         {
           "document": "reports/research_report.md",
           "literal": "-53.78",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-53.8",
           "kind": "number"
         },
         {
@@ -1287,6 +1334,11 @@
       "citations": [
         {
           "document": "reports/research_report.md",
+          "literal": "-2.77",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
           "literal": "-2.7656",
           "kind": "number"
         },
@@ -1441,6 +1493,11 @@
         {
           "document": "reports/research_report.md",
           "literal": "15.24",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "15.2",
           "kind": "number"
         }
       ],
@@ -1712,6 +1769,11 @@
           "document": "reports/research_report.md",
           "literal": "-0.0326",
           "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-3.26",
+          "kind": "number"
         }
       ],
       "phrases": []
@@ -1838,6 +1900,11 @@
           "document": "reports/research_report.md",
           "literal": "0.787",
           "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "78.7",
+          "kind": "number"
         }
       ],
       "phrases": []
@@ -1963,6 +2030,11 @@
         {
           "document": "reports/research_report.md",
           "literal": "-13.10",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-13.1",
           "kind": "number"
         }
       ],
@@ -2145,6 +2217,11 @@
         "reports/research_report.md"
       ],
       "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.189",
+          "kind": "number"
+        },
         {
           "document": "reports/research_report.md",
           "literal": "18.89",
@@ -2768,6 +2845,11 @@
         "reports/research_report.md"
       ],
       "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.55",
+          "kind": "number"
+        },
         {
           "document": "reports/research_report.md",
           "literal": "0.0255",
@@ -3414,6 +3496,11 @@
           "document": "reports/research_report.md",
           "literal": "99.09",
           "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "99.1",
+          "kind": "number"
         }
       ],
       "phrases": []
@@ -3576,6 +3663,11 @@
           "document": "reports/research_report.md",
           "literal": "99.11",
           "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "99.1",
+          "kind": "number"
         }
       ],
       "phrases": []
@@ -3737,6 +3829,11 @@
         {
           "document": "reports/research_report.md",
           "literal": "94.21",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.942",
           "kind": "number"
         }
       ],
@@ -3977,6 +4074,11 @@
           "document": "reports/research_report.md",
           "literal": "100",
           "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.00",
+          "kind": "number"
         }
       ],
       "phrases": []
@@ -4139,6 +4241,11 @@
           "document": "reports/research_report.md",
           "literal": "111.91",
           "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.12",
+          "kind": "number"
         }
       ],
       "phrases": []
@@ -4197,6 +4304,11 @@
         {
           "document": "reports/research_report.md",
           "literal": "100",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.00",
           "kind": "number"
         }
       ],
@@ -5364,6 +5476,3730 @@
         {
           "document": "reports/research_report.md",
           "literal": "-0.478",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.mean_n_obs",
+      "value": 998.7132867132867,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "999",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.mean_r_squared",
+      "value": 0.06131387230838485,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.13",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.all_registered.mean_n_obs",
+      "value": 883.972027972028,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "884",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.amihud_20.mean_coefficient",
+      "value": 0.0020072525051244494,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.201",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.amihud_20.t_published_lag",
+      "value": 2.5456798830506173,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.55",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.amihud_20.t_automatic_lag",
+      "value": 2.1648404759269835,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.16",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.reversal_20.mean_coefficient",
+      "value": 0.0018656161925960002,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.187",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.reversal_20.t_published_lag",
+      "value": 1.242406805090977,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.24",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.reversal_20.t_automatic_lag",
+      "value": 1.2230902752068764,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.22",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.reversal_5.mean_coefficient",
+      "value": 0.005000939969633051,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.500",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.reversal_5.t_published_lag",
+      "value": 5.1998000591824125,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "5.20",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.reversal_5.t_automatic_lag",
+      "value": 4.751570500712875,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "4.75",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.turnover_20.mean_coefficient",
+      "value": 0.005912331554674661,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.591",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.turnover_20.t_published_lag",
+      "value": 6.135704261835684,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.14",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.turnover_20.t_automatic_lag",
+      "value": 5.349202399628129,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "5.35",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.volatility_20.mean_coefficient",
+      "value": 0.0010184605273559503,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.102",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.volatility_20.t_published_lag",
+      "value": 0.9249521788957222,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.925",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.volatility_20.t_automatic_lag",
+      "value": 0.8562655790337754,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.856",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.volatility_60.mean_coefficient",
+      "value": -0.001542815742571674,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.154",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.volatility_60.t_published_lag",
+      "value": -1.057339835256401,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.06",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.candidates.volatility_60.t_automatic_lag",
+      "value": -1.0348632019107038,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.03",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.all_registered.turnover_20.t_published_lag",
+      "value": 6.191683064303783,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.19",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.all_registered.reversal_5.t_published_lag",
+      "value": 6.286772654279855,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.29",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.mean_n_obs",
+      "value": 999.8644067796611,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "1000",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.mean_r_squared",
+      "value": 0.05888628454161862,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "5.89",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.all_registered.mean_n_obs",
+      "value": 905.457627118644,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "905",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.amihud_20.mean_coefficient",
+      "value": -0.004154851818912563,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.415",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.amihud_20.t_published_lag",
+      "value": -3.0062873543276605,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-3.01",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.amihud_20.t_automatic_lag",
+      "value": -2.901015592569676,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-2.90",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.reversal_20.mean_coefficient",
+      "value": 0.00043449125676102955,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0434",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.reversal_20.t_published_lag",
+      "value": 0.18888583557519825,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.189",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "18.89",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.reversal_20.t_automatic_lag",
+      "value": 0.1942944236664099,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.194",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.reversal_5.mean_coefficient",
+      "value": 0.0016023378028424712,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.160",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.reversal_5.t_published_lag",
+      "value": 0.7579717417852029,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.758",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.reversal_5.t_automatic_lag",
+      "value": 0.8345963006817471,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.835",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.turnover_20.mean_coefficient",
+      "value": 0.009182390584258723,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.918",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.turnover_20.t_published_lag",
+      "value": 5.461918577409283,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "5.46",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.turnover_20.t_automatic_lag",
+      "value": 6.720302707961187,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.72",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.volatility_20.mean_coefficient",
+      "value": -0.0007346257148030643,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.0735",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.volatility_20.t_published_lag",
+      "value": -0.32407479036554215,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.324",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.volatility_20.t_automatic_lag",
+      "value": -0.29665312056872994,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.297",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.volatility_60.mean_coefficient",
+      "value": -0.00022761289088292497,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.0228",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.volatility_60.t_published_lag",
+      "value": -0.1024607169596321,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.102",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-10.2",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.candidates.volatility_60.t_automatic_lag",
+      "value": -0.10738585041653086,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.107",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-10.7",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.all_registered.turnover_20.t_published_lag",
+      "value": 6.782040116042268,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.78",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.validation_2017_2021.all_registered.reversal_5.t_published_lag",
+      "value": 1.113623194055184,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.11",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.all_registered.momentum_60.mean_coefficient",
+      "value": 0.0018109377301942346,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.181",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.fama_macbeth.research_2005_2016.all_registered.momentum_60.t_published_lag",
+      "value": 1.1231927739623153,
+      "source": "v1_supplements",
+      "artifact": "fama_macbeth.csv",
+      "artifact_sha256": "51fd38d7eba3616d789d93e0e3f8d6683f454119669d8a20fd4dbcc6dd48b1ea",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.12",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.net.annual_return_low",
+      "value": -0.03182378121708765,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-3.18",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.net.annual_return_high",
+      "value": 0.42709105174504847,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "42.7",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.net.annual_relative_return_low",
+      "value": -0.03361982037156772,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-3.36",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.net.annual_relative_return_high",
+      "value": 0.07936720188449278,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "7.94",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.net.relative_non_positive_share",
+      "value": 0.2344,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "23.4",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.zero_cost.annual_return_low",
+      "value": 0.032788160739455716,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "3.28",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.zero_cost.annual_return_high",
+      "value": 0.5218444149063917,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "52.2",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.zero_cost.annual_relative_return_low",
+      "value": 0.03066756786983586,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "3.07",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.zero_cost.annual_relative_return_high",
+      "value": 0.15162496691277438,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "15.2",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.zero_cost.relative_non_positive_share",
+      "value": 0.0015,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.150",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.net.annual_return_low",
+      "value": -0.24070608783268918,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-24.1",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.net.annual_return_high",
+      "value": 0.11370167504952508,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "11.4",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.net.annual_relative_return_low",
+      "value": -0.1333662334818062,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-13.3",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.net.annual_relative_return_high",
+      "value": 0.005841897444979009,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.584",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.net.relative_non_positive_share",
+      "value": 0.9652,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "96.5",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.annual_return_low",
+      "value": -0.19858526186270772,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-19.9",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.annual_return_high",
+      "value": 0.17513523499175968,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "17.5",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.annual_relative_return_low",
+      "value": -0.08451781297421973,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-8.45",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.annual_relative_return_high",
+      "value": 0.0618416575415848,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.18",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.relative_non_positive_share",
+      "value": 0.6379,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "63.8",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.net.annual_return_low",
+      "value": -0.2638770376378704,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-26.4",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.net.annual_return_high",
+      "value": 0.1000129577462756,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "10.0",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.net.annual_relative_return_low",
+      "value": -0.1466274918818539,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-14.7",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.net.annual_relative_return_high",
+      "value": -0.01836782311703887,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.84",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.net.relative_non_positive_share",
+      "value": 0.9914,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "99.1",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.zero_cost.annual_return_low",
+      "value": -0.2186215186566908,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-21.9",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.zero_cost.annual_return_high",
+      "value": 0.1686283193790072,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "16.9",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.zero_cost.annual_relative_return_low",
+      "value": -0.09392334288549176,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-9.39",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.zero_cost.annual_relative_return_high",
+      "value": 0.042324781925741566,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "4.23",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.family_equal_top100_equal.zero_cost.relative_non_positive_share",
+      "value": 0.7868,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.787",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "78.7",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.annual_return_low",
+      "value": -0.22751472554083574,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-22.8",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.annual_return_high",
+      "value": 0.13469634845176365,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "13.5",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.annual_relative_return_low",
+      "value": -0.11540364816153931,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-11.5",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.annual_relative_return_high",
+      "value": 0.022357860708190694,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.24",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.relative_non_positive_share",
+      "value": 0.9156,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "91.6",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.annual_return_low",
+      "value": -0.18506593007609468,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-18.5",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.annual_return_high",
+      "value": 0.19671842492098388,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "19.7",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.annual_relative_return_low",
+      "value": -0.06602235471507538,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-6.60",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.annual_relative_return_high",
+      "value": 0.07829193734681768,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "7.83",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.relative_non_positive_share",
+      "value": 0.4553,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "45.5",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.net.sharpe",
+      "value": 0.7078534734714144,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.7079",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.708",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.net.sharpe_low",
+      "value": 0.05067287248959265,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0507",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.bootstrap.research_2005_2016.research_path.net.sharpe_high",
+      "value": 1.409922050214121,
+      "source": "v1_supplements",
+      "artifact": "bootstrap_intervals.csv",
+      "artifact_sha256": "91e1e1d5d52db7d397bc00ca523e60bbb8bb129a7b46eb8d9b3fca62da94e59e",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.41",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_baseline.annual_return",
+      "value": -0.06708285725032914,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-6.71",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_baseline.maximum_drawdown",
+      "value": -0.5378298720534029,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-53.78",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-53.8",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_baseline.turnover",
+      "value": 8.615855988700583,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "8.62",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_buffer_high.full_period_annual_return_delta",
+      "value": 0.000840375008655414,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0840",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_buffer_high.annual_return_delta",
+      "value": 0.0024305495957199774,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.243",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_buffer_high.maximum_drawdown_delta",
+      "value": 0.0028271282089112892,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.283",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_buffer_high.turnover_delta",
+      "value": -0.6437530218947094,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.644",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_buffer_low.full_period_annual_return_delta",
+      "value": -0.004810014975140886,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.481",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_buffer_low.annual_return_delta",
+      "value": -0.013825891438821292,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.38",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_buffer_low.maximum_drawdown_delta",
+      "value": -0.02046651449582626,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-2.05",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_buffer_low.turnover_delta",
+      "value": 0.7551491853821393,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.755",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_rebalance_bimonthly.full_period_annual_return_delta",
+      "value": 0.016470420734407076,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.65",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_rebalance_bimonthly.annual_return_delta",
+      "value": 0.04845550087001338,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "4.85",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_rebalance_bimonthly.maximum_drawdown_delta",
+      "value": 0.04481757425534527,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "4.48",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_rebalance_bimonthly.turnover_delta",
+      "value": -3.7852911559899765,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-3.79",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_size_high.full_period_annual_return_delta",
+      "value": 0.00025687933008011754,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0257",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_size_high.annual_return_delta",
+      "value": 0.0007424777693358919,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0742",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_size_high.maximum_drawdown_delta",
+      "value": 0.0032017367969308097,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.320",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_size_high.turnover_delta",
+      "value": 0.021643482792278235,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.16",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0216",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_size_low.full_period_annual_return_delta",
+      "value": -0.0019056875838019405,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.191",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_size_low.annual_return_delta",
+      "value": -0.005495140449560454,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.550",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_size_low.maximum_drawdown_delta",
+      "value": -0.013668139326147521,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.37",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_size_low.turnover_delta",
+      "value": -0.09879271516918564,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.0988",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_universe_low.full_period_annual_return_delta",
+      "value": 0.009566429385743591,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.957",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_universe_low.annual_return_delta",
+      "value": 0.02793315363955029,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "2.79",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_universe_low.maximum_drawdown_delta",
+      "value": 0.04549635280846709,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "4.55",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.portfolio_universe_low.turnover_delta",
+      "value": -0.8989184861217936,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.899",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_liquidity.full_period_annual_return_delta",
+      "value": -0.0024892205190873984,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.249",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_liquidity.annual_return_delta",
+      "value": -0.007173204283218548,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.717",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_liquidity.maximum_drawdown_delta",
+      "value": -0.009014350141587357,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.901",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_liquidity.turnover_delta",
+      "value": -0.38901792592565165,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.389",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_low_volatility.full_period_annual_return_delta",
+      "value": -0.01164307462392511,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.16",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_low_volatility.annual_return_delta",
+      "value": -0.03321719391497213,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-3.32",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_low_volatility.maximum_drawdown_delta",
+      "value": -0.0064859045737587495,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.649",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_low_volatility.turnover_delta",
+      "value": 1.146257775844127,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.15",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_reversal.full_period_annual_return_delta",
+      "value": 0.0019171406504117083,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.192",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_reversal.annual_return_delta",
+      "value": 0.005551323248641937,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.555",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_reversal.maximum_drawdown_delta",
+      "value": 0.044630375135919165,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "4.46",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.factor_ablation_reversal.turnover_delta",
+      "value": -1.1432388238214237,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.14",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.rolling_window_high.full_period_annual_return_delta",
+      "value": -0.0005388249686117952,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.0539",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.rolling_window_high.annual_return_delta",
+      "value": -0.001556052037164135,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.156",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.rolling_window_high.maximum_drawdown_delta",
+      "value": 0.0013149423019140905,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.131",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.rolling_window_high.turnover_delta",
+      "value": 0.04253376708093093,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0425",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.rolling_window_low.full_period_annual_return_delta",
+      "value": -0.000180447266287187,
+      "source": "stage8_robustness",
+      "artifact": "datasets/robustness_results.parquet",
+      "artifact_sha256": "5786403bf8c7ebb3a00249f4b096fe0fa7ccba5a0f43cbb72c7238cfac497ca9",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.0180",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.rolling_window_low.annual_return_delta",
+      "value": -0.0005213110357128459,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.0521",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.rolling_window_low.maximum_drawdown_delta",
+      "value": -0.003396748749363132,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.340",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.rolling_window_low.turnover_delta",
+      "value": 0.021862627073462093,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.0219",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "robustness_subperiod.execution_impact_high.annual_return_delta",
+      "value": -0.018423387775441058,
+      "source": "v1_robustness_subperiod",
+      "artifact": "validation_slice.csv",
+      "artifact_sha256": "144854191a040ebf1ac7e39ab20eca8392f6061e901d98e9d829c1c6caeff3f3",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.84",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi300.strategy_annual_return",
+      "value": 0.20146601113568208,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.201",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "20.1",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi300.annual_relative_return",
+      "value": 0.06982409240041787,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.98",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi300.information_ratio",
+      "value": 0.5213322366215998,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.521",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi300.beta",
+      "value": 0.9239512369458934,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.924",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi500.annual_relative_return",
+      "value": 0.003064798267681468,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.306",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi500.information_ratio",
+      "value": -0.08116136113476163,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.0812",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi500.beta",
+      "value": 0.8831367644746568,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.883",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.zero_cost.csi300.strategy_annual_return",
+      "value": 0.2810568744134545,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "28.1",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.zero_cost.csi300.annual_relative_return",
+      "value": 0.14069436445166184,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "14.1",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.zero_cost.csi300.information_ratio",
+      "value": 1.00305610017221,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "100",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "1.00",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.zero_cost.csi300.beta",
+      "value": 0.9258847643425272,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.926",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.zero_cost.csi500.annual_relative_return",
+      "value": 0.06951261491644867,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "6.95",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.zero_cost.csi500.information_ratio",
+      "value": 0.7257386508322224,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.726",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.zero_cost.csi500.beta",
+      "value": 0.8846423311352117,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.885",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.net.csi300.strategy_annual_return",
+      "value": -0.08384776449189923,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-8.38",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.net.csi300.annual_relative_return",
+      "value": -0.15441047973932776,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.154",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-15.4",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.net.csi300.information_ratio",
+      "value": -1.2930058472794301,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.29",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.net.csi300.beta",
+      "value": 0.8393967479960506,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.839",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.net.csi500.annual_relative_return",
+      "value": -0.11293653191853337,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-11.3",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.net.csi500.information_ratio",
+      "value": -1.5153570007523902,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.52",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.net.csi500.beta",
+      "value": 0.8921072631126162,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.892",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.csi300.strategy_annual_return",
+      "value": -0.032577787843006356,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.0326",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-3.26",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.csi300.annual_relative_return",
+      "value": -0.10708935419050525,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.107",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-10.7",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.csi300.information_ratio",
+      "value": -0.8674857138366743,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.867",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.csi300.beta",
+      "value": 0.8448820930046463,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.845",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.csi500.annual_relative_return",
+      "value": -0.06329442929418128,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-6.33",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.csi500.information_ratio",
+      "value": -0.8440952478303961,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.844",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_size_stratified_buffered.zero_cost.csi500.beta",
+      "value": 0.8974290661762057,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.897",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.net.csi300.strategy_annual_return",
+      "value": -0.10242196415281513,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.102",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-10.24",
+          "kind": "number"
+        },
+        {
+          "document": "reports/research_report.md",
+          "literal": "-10.2",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.net.csi300.annual_relative_return",
+      "value": -0.17155408095729463,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-17.2",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.net.csi300.information_ratio",
+      "value": -1.3464143112588078,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.35",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.net.csi300.beta",
+      "value": 0.8690277172969904,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.869",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.net.csi500.annual_relative_return",
+      "value": -0.1309209818051963,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-13.1",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.net.csi500.information_ratio",
+      "value": -1.7324631395159746,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.73",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.net.csi500.beta",
+      "value": 0.9417386809924886,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.942",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.zero_cost.csi300.strategy_annual_return",
+      "value": -0.046905392949222025,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-4.69",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.zero_cost.csi300.annual_relative_return",
+      "value": -0.12031343667231031,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-12.0",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.zero_cost.csi300.information_ratio",
+      "value": -0.9044028517003866,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.904",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.zero_cost.csi300.beta",
+      "value": 0.8749382992092428,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.875",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.zero_cost.csi500.annual_relative_return",
+      "value": -0.0771671183323438,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-7.72",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.zero_cost.csi500.information_ratio",
+      "value": -0.9955024530596205,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.996",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.family_equal_top100_equal.zero_cost.csi500.beta",
+      "value": 0.9479447030300364,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.948",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi300.strategy_annual_return",
+      "value": -0.06708285725032914,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-6.71",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi300.annual_relative_return",
+      "value": -0.13893681791526225,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-13.9",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi300.information_ratio",
+      "value": -1.1477668489083859,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.15",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi300.beta",
+      "value": 0.8443870709731804,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.844",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi500.annual_relative_return",
+      "value": -0.0967039275724626,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-9.67",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi500.information_ratio",
+      "value": -1.2997722082701624,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.30",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi500.beta",
+      "value": 0.8982341507169032,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.898",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.csi300.strategy_annual_return",
+      "value": -0.015490800267445093,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.55",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.csi300.annual_relative_return",
+      "value": -0.09131841889534031,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-9.13",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.csi300.information_ratio",
+      "value": -0.727430630355549,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.727",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.csi300.beta",
+      "value": 0.8491996529754275,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.849",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.csi500.annual_relative_return",
+      "value": -0.04674997099306055,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-4.67",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.csi500.information_ratio",
+      "value": -0.6258918179572771,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-0.626",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.zero_cost.csi500.beta",
+      "value": 0.9028100113322013,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.903",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi300.benchmark_annual_return",
+      "value": 0.12305005997751706,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "12.3",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi500.benchmark_annual_return",
+      "value": 0.19779501106074537,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "19.8",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.equal_weight.benchmark_annual_return",
+      "value": 0.17804610085998962,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "17.8",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi300.benchmark_annual_return",
+      "value": 0.08344795383187331,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "8.34",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.csi500.benchmark_annual_return",
+      "value": 0.032792205375729244,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "3.28",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.validation_2017_2021.rolling_ic_family_size_stratified_buffered.net.equal_weight.benchmark_annual_return",
+      "value": -0.019666091643659955,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "-1.97",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi300.correlation",
+      "value": 0.8928601814041311,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.893",
+          "kind": "number"
+        }
+      ],
+      "phrases": []
+    },
+    {
+      "key": "supplement.index.research_2006_2016.research_path.net.csi500.correlation",
+      "value": 0.970390378992353,
+      "source": "v1_supplements",
+      "artifact": "index_benchmarks.csv",
+      "artifact_sha256": "e76924e89070c73c98f4a391cf15e894820bffbf9f56c83473745ecccc43bfc1",
+      "required_documents": [
+        "reports/research_report.md"
+      ],
+      "citations": [
+        {
+          "document": "reports/research_report.md",
+          "literal": "0.970",
           "kind": "number"
         }
       ],

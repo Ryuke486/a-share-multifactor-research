@@ -80,6 +80,7 @@ Data/每天一个文件/后复权/
 ## 交付索引
 
 - [最终研究报告](reports/research_report.md)
+- [14 张单因子卡片](docs/factor_cards/README.md)
 - [复现说明](docs/reproduction.md)
 - [结果字典](docs/result_dictionary.md)
 - [关键图表与机器结果索引](docs/results/index.md)

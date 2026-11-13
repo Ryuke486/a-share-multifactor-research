@@ -16,6 +16,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import polars as pl
 
 from ashare_multifactor.audit.publication import PublishedRelease, resolve_current
@@ -32,6 +33,8 @@ from ashare_multifactor.supplements.benchmark import (
     relative_performance,
     universe_benchmark_index,
 )
+from ashare_multifactor.supplements.bootstrap import block_bootstrap_intervals
+from ashare_multifactor.supplements.fama_macbeth_pipeline import build_fama_macbeth_table
 from ashare_multifactor.supplements.figure import plot_benchmark_comparison
 from ashare_multifactor.supplements.figure_data import (
     correlation_matrix,
@@ -41,6 +44,8 @@ from ashare_multifactor.supplements.figure_data import (
     rolling_mean_ic,
 )
 from ashare_multifactor.supplements.ic_pipeline import build_ic_supplements
+from ashare_multifactor.supplements.index_benchmark import CACHE_PATH as INDEX_CACHE_PATH
+from ashare_multifactor.supplements.index_benchmark import index_levels, read_index_cache
 from ashare_multifactor.supplements.legs import quantile_leg_decomposition
 from ashare_multifactor.supplements.report_figures import (
     plot_correlation_heatmap,
@@ -88,6 +93,10 @@ QUINTILE_PANELS = (
     "volatility_60",
 )
 _TOLERANCE = 1e-12
+# Fixed before any interval was computed: monthly blocks, and a seed so reruns match.
+BOOTSTRAP_BLOCK_DAYS = 21
+BOOTSTRAP_REPLICATIONS = 10_000
+BOOTSTRAP_SEED = 20_050_101
 
 
 def run_supplements(config_path: Path, *, root: Path = Path(".")) -> Path:
@@ -122,8 +131,11 @@ def run_supplements(config_path: Path, *, root: Path = Path(".")) -> Path:
 
     selection = json.loads((stage7.artifacts / "research/selection_decision.json").read_text())
     selected = str(selection["selected_candidate"])
-    relative = _relative_table(navs, index, stage6, stage7, inputs)
+    relative, intervals = _relative_table(navs, index, stage6, stage7, inputs)
     calendar = _calendar_years(navs[selected], index)
+    public_frame, _ = read_index_cache(root / INDEX_CACHE_PATH)
+    _record(root / INDEX_CACHE_PATH, inputs, root)
+    index_table = _index_benchmark_table(navs, index, public_frame, relative)
     quantiles, variants = _quantile_frames(root, stage5, stage7, inputs)
     legs = _leg_table(quantiles, variants)
     for path in (
@@ -150,6 +162,9 @@ def run_supplements(config_path: Path, *, root: Path = Path(".")) -> Path:
     legs.write_csv(output / "leg_decomposition.csv")
     executable_ic.write_csv(output / "executable_ic.csv")
     newey_west_lags.write_csv(output / "newey_west_lags.csv")
+    intervals.write_csv(output / "bootstrap_intervals.csv")
+    index_table.write_csv(output / "index_benchmarks.csv")
+    build_fama_macbeth_table(root, stage5, stage7).write_csv(output / "fama_macbeth.csv")
     plot_benchmark_comparison(levels, output / "figures" / FIGURE_NAME, split=VALIDATION_START)
     _write_report_figures(
         root, output, stage5, stage6, stage7, levels, _quintile_excess_table(quantiles), inputs
@@ -284,7 +299,7 @@ def _relative_table(
     stage6: PublishedRelease,
     stage7: PublishedRelease,
     inputs: dict[str, str],
-) -> pl.DataFrame:
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     summary_path = stage6.artifacts / "summary.json"
     inputs[f"stage6:{stage6.run_id}/artifacts/summary.json"] = _sha256(summary_path)
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
@@ -299,6 +314,7 @@ def _relative_table(
             raise ValueError(f"{candidate} does not share the frozen research-period path")
 
     rows: list[dict[str, Any]] = []
+    interval_rows: list[dict[str, Any]] = []
     research_index = _slice(index, ANALYSIS_START, RESEARCH_END)
     research_years = (reference["date"][-1] - reference["date"][0]).days / 365.25
     rows.extend(
@@ -310,6 +326,7 @@ def _relative_table(
             start_levels=(initial, initial, 1.0, 1.0),
             years=research_years,
             published_net=float(summary["annual_return"]),
+            intervals=interval_rows,
         )
     )
     validation_years = (ANALYSIS_END - VALIDATION_START).days / 365.25
@@ -331,9 +348,10 @@ def _relative_table(
                 ),
                 years=validation_years,
                 published_net=float(expected),
+                intervals=interval_rows,
             )
         )
-    return pl.DataFrame(rows)
+    return pl.DataFrame(rows), pl.DataFrame(interval_rows)
 
 
 def _period_rows(
@@ -345,6 +363,7 @@ def _period_rows(
     start_levels: tuple[float, float, float, float],
     years: float,
     published_net: float,
+    intervals: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     if nav.get_column("date").to_list() != index.get_column("date").to_list():
         raise ValueError("strategy and benchmark dates are misaligned")
@@ -382,7 +401,136 @@ def _period_rows(
                     **metrics,
                 }
             )
+            if intervals is not None:
+                intervals.append(
+                    {
+                        "period": period,
+                        "portfolio": portfolio,
+                        "cost_mode": cost_mode,
+                        "benchmark": benchmark_name,
+                        **_bootstrap_row(strategy_levels, benchmark_levels, years, metrics),
+                    }
+                )
     return rows
+
+
+def _bootstrap_row(
+    strategy_levels: list[float],
+    benchmark_levels: list[float],
+    years: float,
+    metrics: dict[str, float],
+) -> dict[str, float | int]:
+    """Block-bootstrap intervals around figures that must equal the published ones."""
+    strategy = np.asarray(strategy_levels, dtype=float)
+    benchmark = np.asarray(benchmark_levels, dtype=float)
+    result = block_bootstrap_intervals(
+        strategy[1:] / strategy[:-1] - 1.0,
+        benchmark[1:] / benchmark[:-1] - 1.0,
+        years=years,
+        block=BOOTSTRAP_BLOCK_DAYS,
+        replications=BOOTSTRAP_REPLICATIONS,
+        seed=BOOTSTRAP_SEED,
+    )
+    for name, reference in (
+        ("annual_return", "strategy_annual_return"),
+        ("annual_relative_return", "annual_relative_return"),
+    ):
+        if abs(result[name] - metrics[reference]) > 1e-9:
+            raise ValueError(f"bootstrap point estimate differs from the published {reference}")
+    return {
+        "block_days": BOOTSTRAP_BLOCK_DAYS,
+        "replications": BOOTSTRAP_REPLICATIONS,
+        "seed": BOOTSTRAP_SEED,
+        **result,
+    }
+
+
+def _index_benchmark_table(
+    navs: dict[str, pl.DataFrame],
+    universe: pl.DataFrame,
+    public_frame: pl.DataFrame,
+    relative: pl.DataFrame,
+) -> pl.DataFrame:
+    """Strategies against the CSI 300 and CSI 500 price indices from the last 2005 close."""
+    reference = navs[CANDIDATES[0]]
+    first_index_day = public_frame.get_column("date").min()
+    origin = reference.filter(pl.col("date") < first_index_day).get_column("date").max()
+    calendar = reference.filter(pl.col("date") >= origin).get_column("date").to_list()
+    public = index_levels(public_frame, trading_dates=calendar)
+    levels = public.join(
+        universe.select("date", "equal_weight"), on="date", how="left", validate="1:1"
+    )
+    boundary = reference.filter(pl.col("date") <= RESEARCH_END).get_column("date").max()
+    windows = (
+        (
+            "research_2006_2016",
+            origin,
+            boundary,
+            (boundary - origin).days / 365.25,
+            ("research_path",),
+        ),
+        (
+            "validation_2017_2021",
+            boundary,
+            ANALYSIS_END,
+            (ANALYSIS_END - VALIDATION_START).days / 365.25,
+            CANDIDATES,
+        ),
+    )
+    rows: list[dict[str, Any]] = []
+    for period, start, end, years, portfolios in windows:
+        benchmark = _slice(levels, start, end)
+        for portfolio in portfolios:
+            nav = _slice(
+                navs[CANDIDATES[0] if portfolio == "research_path" else portfolio], start, end
+            )
+            if nav.get_column("date").to_list() != benchmark.get_column("date").to_list():
+                raise ValueError("strategy and public index dates are misaligned")
+            for cost_mode, column in (("net", "nav"), ("zero_cost", "zero_cost_nav")):
+                for name in ("csi300", "csi500", "equal_weight"):
+                    metrics = relative_performance(
+                        strategy_levels=nav.get_column(column).to_list(),
+                        benchmark_levels=benchmark.get_column(name).to_list(),
+                        years=years,
+                    )
+                    rows.append(
+                        {
+                            "period": period,
+                            "portfolio": portfolio,
+                            "cost_mode": cost_mode,
+                            "benchmark": name,
+                            "start_date": start,
+                            "end_date": nav.item(-1, "date"),
+                            "years": years,
+                            **metrics,
+                        }
+                    )
+    table = pl.DataFrame(rows)
+    _assert_index_table_matches_published(table, relative)
+    return table
+
+
+def _assert_index_table_matches_published(table: pl.DataFrame, relative: pl.DataFrame) -> None:
+    """Validation rows reuse the published window, so their returns must agree exactly."""
+    keys = ["period", "portfolio", "cost_mode", "benchmark"]
+    joined = table.filter(
+        (pl.col("period") == "validation_2017_2021") & (pl.col("benchmark") == "equal_weight")
+    ).join(
+        relative.select(
+            *keys,
+            pl.col("strategy_annual_return").alias("published_strategy"),
+            pl.col("annual_relative_return").alias("published_relative"),
+        ),
+        on=keys,
+        how="left",
+    )
+    differing = joined.filter(
+        pl.col("published_strategy").is_null()
+        | ((pl.col("strategy_annual_return") - pl.col("published_strategy")).abs() > _TOLERANCE)
+        | ((pl.col("annual_relative_return") - pl.col("published_relative")).abs() > _TOLERANCE)
+    )
+    if differing.height:
+        raise ValueError("index benchmark table does not reproduce the published validation rows")
 
 
 def _slice(frame: pl.DataFrame, start: date, end: date) -> pl.DataFrame:

@@ -57,6 +57,7 @@ V1_SOURCES = (
     SourceSpec("stage7_validation_evaluation", "release", "processed/validation_evaluation"),
     SourceSpec("stage8_robustness", "release", "processed/robustness"),
     SourceSpec("v1_supplements", "file", "artifacts/v1_supplements"),
+    SourceSpec("v1_robustness_subperiod", "file", "artifacts/v1_robustness_subperiod"),
 )
 
 _STAGE7_CANDIDATES = (
@@ -411,6 +412,9 @@ def _supplement_specs() -> list[KeyResultSpec]:
                     )
                 )
     specs.extend(_factor_statistic_specs(report))
+    specs.extend(_inference_specs(report))
+    specs.extend(_robustness_subperiod_specs(report))
+    specs.extend(_index_benchmark_specs(report))
     return [
         replace(spec, required_documents=("README.md", *spec.required_documents))
         if spec.key in _SUPPLEMENT_README_KEYS
@@ -529,4 +533,209 @@ def _factor_statistic_specs(report: tuple[str, ...]) -> list[KeyResultSpec]:
             required_documents=report,
         )
     )
+    return specs
+
+
+_CANDIDATE_FACTORS = (
+    "amihud_20",
+    "reversal_20",
+    "reversal_5",
+    "turnover_20",
+    "volatility_20",
+    "volatility_60",
+)
+_BOOTSTRAP_PORTFOLIOS = (
+    ("research_2005_2016", "research_path"),
+    ("validation_2017_2021", "family_equal_size_stratified_buffered"),
+    ("validation_2017_2021", "family_equal_top100_equal"),
+    ("validation_2017_2021", "rolling_ic_family_size_stratified_buffered"),
+)
+
+
+def _inference_specs(report: tuple[str, ...]) -> list[KeyResultSpec]:
+    """Fama-MacBeth premia and block-bootstrap intervals quoted in the report."""
+    specs: list[KeyResultSpec] = []
+
+    def add(key: str, artifact: str, field: str, where: tuple[tuple[str, Any], ...]) -> None:
+        specs.append(
+            KeyResultSpec(
+                key,
+                "v1_supplements",
+                ResultSelect(artifact, kind="csv", field=field, where=where),
+                required_documents=report,
+            )
+        )
+
+    periods = ("research_2005_2016", "validation_2017_2021")
+    for period in periods:
+        for specification in ("candidates", "all_registered"):
+            first = "amihud_20"
+            where = (("period", period), ("specification", specification), ("factor_name", first))
+            for field in ("mean_n_obs", "mean_r_squared"):
+                if specification == "all_registered" and field == "mean_r_squared":
+                    continue
+                add(
+                    f"supplement.fama_macbeth.{period}.{specification}.{field}",
+                    "fama_macbeth.csv",
+                    field,
+                    where,
+                )
+        for name in _CANDIDATE_FACTORS:
+            where = (("period", period), ("specification", "candidates"), ("factor_name", name))
+            for field in ("mean_coefficient", "t_published_lag", "t_automatic_lag"):
+                add(
+                    f"supplement.fama_macbeth.{period}.candidates.{name}.{field}",
+                    "fama_macbeth.csv",
+                    field,
+                    where,
+                )
+        for name in ("turnover_20", "reversal_5"):
+            add(
+                f"supplement.fama_macbeth.{period}.all_registered.{name}.t_published_lag",
+                "fama_macbeth.csv",
+                "t_published_lag",
+                (("period", period), ("specification", "all_registered"), ("factor_name", name)),
+            )
+    for field in ("mean_coefficient", "t_published_lag"):
+        add(
+            f"supplement.fama_macbeth.research_2005_2016.all_registered.momentum_60.{field}",
+            "fama_macbeth.csv",
+            field,
+            (
+                ("period", "research_2005_2016"),
+                ("specification", "all_registered"),
+                ("factor_name", "momentum_60"),
+            ),
+        )
+
+    interval_fields = (
+        "annual_return_low",
+        "annual_return_high",
+        "annual_relative_return_low",
+        "annual_relative_return_high",
+        "relative_non_positive_share",
+    )
+    for period, portfolio in _BOOTSTRAP_PORTFOLIOS:
+        for cost_mode in ("net", "zero_cost"):
+            where = (
+                ("period", period),
+                ("portfolio", portfolio),
+                ("cost_mode", cost_mode),
+                ("benchmark", "equal_weight"),
+            )
+            for field in interval_fields:
+                add(
+                    f"supplement.bootstrap.{period}.{portfolio}.{cost_mode}.{field}",
+                    "bootstrap_intervals.csv",
+                    field,
+                    where,
+                )
+    research_net = (
+        ("period", "research_2005_2016"),
+        ("portfolio", "research_path"),
+        ("cost_mode", "net"),
+        ("benchmark", "equal_weight"),
+    )
+    for field in ("sharpe", "sharpe_low", "sharpe_high"):
+        add(
+            f"supplement.bootstrap.research_2005_2016.research_path.net.{field}",
+            "bootstrap_intervals.csv",
+            field,
+            research_net,
+        )
+    return specs
+
+
+_TARGET_CHANGING_EXPERIMENTS = (
+    "portfolio_buffer_high",
+    "portfolio_buffer_low",
+    "portfolio_rebalance_bimonthly",
+    "portfolio_size_high",
+    "portfolio_size_low",
+    "portfolio_universe_low",
+    "factor_ablation_liquidity",
+    "factor_ablation_low_volatility",
+    "factor_ablation_reversal",
+    "rolling_window_high",
+    "rolling_window_low",
+)
+
+
+def _robustness_subperiod_specs(report: tuple[str, ...]) -> list[KeyResultSpec]:
+    """Stage 8 experiments re-measured on the 2017-2021 slice (report section 9.1)."""
+    specs: list[KeyResultSpec] = []
+
+    def slice_value(experiment: str, field: str) -> None:
+        specs.append(
+            KeyResultSpec(
+                f"robustness_subperiod.{experiment}.{field}",
+                "v1_robustness_subperiod",
+                ResultSelect(
+                    "validation_slice.csv",
+                    kind="csv",
+                    field=field,
+                    where=(("experiment_id", experiment),),
+                ),
+                required_documents=report,
+            )
+        )
+
+    for field in ("annual_return", "maximum_drawdown", "turnover"):
+        slice_value("portfolio_baseline", field)
+    for experiment in _TARGET_CHANGING_EXPERIMENTS:
+        specs.append(
+            KeyResultSpec(
+                f"robustness_subperiod.{experiment}.full_period_annual_return_delta",
+                "stage8_robustness",
+                ResultSelect(
+                    "datasets/robustness_results.parquet",
+                    kind="parquet",
+                    field="baseline_delta",
+                    where=(("experiment_id", experiment), ("metric", "annual_return")),
+                ),
+                required_documents=report,
+            )
+        )
+        for field in ("annual_return_delta", "maximum_drawdown_delta", "turnover_delta"):
+            slice_value(experiment, field)
+    slice_value("execution_impact_high", "annual_return_delta")
+    return specs
+
+
+def _index_benchmark_specs(report: tuple[str, ...]) -> list[KeyResultSpec]:
+    """CSI 300 / CSI 500 price-index comparison (report section 7.2)."""
+    specs: list[KeyResultSpec] = []
+
+    def add(period: str, portfolio: str, cost_mode: str, benchmark: str, field: str) -> None:
+        specs.append(
+            KeyResultSpec(
+                f"supplement.index.{period}.{portfolio}.{cost_mode}.{benchmark}.{field}",
+                "v1_supplements",
+                ResultSelect(
+                    "index_benchmarks.csv",
+                    kind="csv",
+                    field=field,
+                    where=(
+                        ("period", period),
+                        ("portfolio", portfolio),
+                        ("cost_mode", cost_mode),
+                        ("benchmark", benchmark),
+                    ),
+                ),
+                required_documents=report,
+            )
+        )
+
+    portfolios = (("research_2006_2016", "research_path"), *_BOOTSTRAP_PORTFOLIOS[1:])
+    for period, portfolio in portfolios:
+        for cost_mode in ("net", "zero_cost"):
+            add(period, portfolio, cost_mode, "csi300", "strategy_annual_return")
+            for benchmark in ("csi300", "csi500"):
+                for field in ("annual_relative_return", "information_ratio", "beta"):
+                    add(period, portfolio, cost_mode, benchmark, field)
+    for period, portfolio in (portfolios[0], portfolios[-1]):
+        for benchmark in ("csi300", "csi500", "equal_weight"):
+            add(period, portfolio, "net", benchmark, "benchmark_annual_return")
+    for benchmark in ("csi300", "csi500"):
+        add("research_2006_2016", "research_path", "net", benchmark, "correlation")
     return specs
