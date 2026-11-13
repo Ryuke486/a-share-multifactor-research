@@ -1,15 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import re
 import shutil
-from typing import Callable, Mapping, Protocol
 import uuid
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Protocol
 
-from ashare_multifactor.audit.records import sha256_file as _sha256
 from ashare_multifactor.audit.publication import publish_release
+from ashare_multifactor.audit.records import sha256_file as _sha256
 
 
 def _stage7_core_paths() -> tuple[str, ...]:

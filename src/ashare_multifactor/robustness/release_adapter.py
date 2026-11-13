@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import shutil
-from typing import Mapping
+from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 
-from ashare_multifactor.audit.reproducible_release import _ReleasePreparation
 from ashare_multifactor.audit.records import sha256_file
+from ashare_multifactor.audit.reproducible_release import _ReleasePreparation
 from ashare_multifactor.robustness import pipeline
 from ashare_multifactor.robustness.successor_seal import (
     Stage8Supersession,

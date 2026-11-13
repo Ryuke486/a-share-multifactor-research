@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from importlib.metadata import version
-from pathlib import Path
 import platform
 import subprocess
+from importlib.metadata import version
+from pathlib import Path
 
 from ashare_multifactor.audit.records import file_record
 

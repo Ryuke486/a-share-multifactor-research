@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-
 import polars as pl
 
+from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
+from ashare_multifactor.execution.fees import FeeSchedule
 from ashare_multifactor.protocol_dates import (
     FACTOR_WARMUP_START,
     FINAL_TEST_START,
     RESEARCH_START,
     VALIDATION_START,
 )
-from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
-from ashare_multifactor.execution.fees import FeeSchedule
 from ashare_multifactor.validation.protocol import assert_validation_read_allowed
-
 
 SEALED_TEST_START = FINAL_TEST_START
 

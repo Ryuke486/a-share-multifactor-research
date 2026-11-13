@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from collections import Counter
 import hashlib
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import polars as pl
-
 
 _CERTIFIED_RUN_IDS = (
     "stage7_controlled_65b19e1_1",

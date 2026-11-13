@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
-import math
 
 import numpy as np
 import polars as pl
 from scipy import stats
 
-from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.factors.definitions import FactorDefinition
-
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 
 MINIMUM_CROSS_SECTION = 20
 SUBPERIODS = (

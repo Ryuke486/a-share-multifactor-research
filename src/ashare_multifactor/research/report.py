@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
-from typing import Mapping
 
 import polars as pl
 from matplotlib.backends.backend_agg import FigureCanvasAgg

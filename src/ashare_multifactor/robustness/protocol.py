@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date
-import hashlib
-import json
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-import yaml
 import polars as pl
+import yaml
 
 from ashare_multifactor.protocol_dates import (
     FINAL_TEST_END,
@@ -19,7 +19,6 @@ from ashare_multifactor.protocol_dates import (
     RESEARCH_START,
     VALIDATION_END,
 )
-
 
 ANALYSIS_START = RESEARCH_START
 ANALYSIS_END = VALIDATION_END

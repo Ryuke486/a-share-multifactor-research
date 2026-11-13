@@ -4,8 +4,8 @@ from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
-import pytest
 import polars as pl
+import pytest
 
 from ashare_multifactor.config import (
     FactorResearchSettings,
@@ -14,7 +14,6 @@ from ashare_multifactor.config import (
     Period,
     ResearchConfig,
 )
-
 
 RAW_COLUMNS = (
     "日期",

@@ -1,6 +1,6 @@
+import math
 from dataclasses import replace
 from datetime import date
-import math
 
 import polars as pl
 import pytest
@@ -9,7 +9,6 @@ from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.factors.definitions import FactorDefinition
 from ashare_multifactor.research.factor_evaluation import evaluate_factors
 from ashare_multifactor.research.factor_statistics import benjamini_hochberg
-
 
 ALPHA = FactorDefinition("alpha", "test", (), 0, 1)
 SIZE = FactorDefinition("size_control", "size", (), 0, -1, size_neutralize=False)

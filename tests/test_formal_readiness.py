@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 
 import polars as pl
-
 import pytest
 
 from ashare_multifactor.research.formal_backtest_pipeline import (

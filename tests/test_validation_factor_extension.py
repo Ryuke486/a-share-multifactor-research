@@ -3,9 +3,8 @@ from datetime import date
 from pathlib import Path
 
 import polars as pl
-from polars.testing import assert_frame_equal
-
 from factor_pipeline_fixtures import synthetic_panel
+from polars.testing import assert_frame_equal
 from test_combination_core import _classifications
 
 from ashare_multifactor.config import load_config

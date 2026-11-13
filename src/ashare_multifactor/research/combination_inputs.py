@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from pathlib import Path
 
 from ashare_multifactor.audit.records import FileRecord, verify_file_record
 from ashare_multifactor.research.factor_lineage import validate_file_records
-
 
 CORE_INPUTS = (
     "factor_panel.parquet",

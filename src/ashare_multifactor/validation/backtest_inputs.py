@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-
 import polars as pl
 
-from ashare_multifactor.protocol_dates import VALIDATION_END, VALIDATION_START
 from ashare_multifactor.execution.market_state import build_execution_panel
-
+from ashare_multifactor.protocol_dates import VALIDATION_END, VALIDATION_START
 
 _RESEARCH_PORTFOLIO = {
     "family_equal_size_stratified_buffered": "size_stratified_buffered",

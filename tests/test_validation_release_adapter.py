@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
-from types import SimpleNamespace
 import hashlib
 import json
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from ashare_multifactor.audit import reproducible_release as lifecycle
-from ashare_multifactor.validation import pipeline
-from ashare_multifactor.validation import release_adapter
-
+from ashare_multifactor.validation import pipeline, release_adapter
 
 FIXED_CODE: dict[str, object] = {
     "commit": "a" * 40,

@@ -17,9 +17,10 @@ import hashlib
 import json
 import re
 import subprocess
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 from urllib.parse import unquote
 
 import polars as pl

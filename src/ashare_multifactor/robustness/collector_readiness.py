@@ -1,18 +1,21 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 from typing import Any
 
 from ashare_multifactor.audit.records import (
     file_record,
-    is_sha256_hex as _valid_sha256,
     sha256_file,
     verify_file_record,
+)
+from ashare_multifactor.audit.records import (
+    is_sha256_hex as _valid_sha256,
+)
+from ashare_multifactor.audit.records import (
     write_json as _write_json,
 )
-
 
 _PERFORMANCE_LIMIT_SECONDS = 36 * 60 * 60
 _VALIDATION_PERIOD = ["2017-01-01", "2021-12-31"]

@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import date
+
 import polars as pl
 import pytest
 from scipy import stats
@@ -7,7 +8,6 @@ from scipy import stats
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.factors.definitions import FactorDefinition
 from ashare_multifactor.research.factor_redundancy import analyze_factor_redundancy
-
 
 NEUTRAL = FactorDefinition("neutral", "test", (), 0, 1)
 PLAIN = FactorDefinition("plain", "test", (), 0, 1, size_neutralize=False)

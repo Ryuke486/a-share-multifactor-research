@@ -1,10 +1,9 @@
-from datetime import date
 import json
+from datetime import date
 from pathlib import Path
 
 import polars as pl
 import pytest
-
 from test_build import _config, _write_pair
 
 from ashare_multifactor.validation.data_extension import build_validation_daily_panel

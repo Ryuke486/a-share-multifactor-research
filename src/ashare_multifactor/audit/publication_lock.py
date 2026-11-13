@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import fcntl
 import os
-from typing import Iterator
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 
 @contextmanager
@@ -34,7 +34,7 @@ def _publication_lock_at(parent_fd: int, name: str, operation: int) -> Iterator[
 
 
 def _open_or_create_lock_at(parent_fd: int, name: str) -> int:
-    flags = os.O_RDWR | getattr(os, "O_NOFOLLOW")
+    flags = os.O_RDWR | os.O_NOFOLLOW
     try:
         return os.open(
             name,

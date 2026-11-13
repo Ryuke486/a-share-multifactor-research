@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from datetime import date
-import math
 
 import numpy as np
 import polars as pl
-
 
 TRADING_DAYS_PER_YEAR = 252
 

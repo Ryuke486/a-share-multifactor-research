@@ -4,13 +4,11 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-
 from task6r_revision_waiver import (
     Task6RWaiverError,
     build_external_source_revision_waiver,
     map_verified_baostock_identity,
 )
-
 
 OLD_HASH = "f" * 64
 NEW_HASH = "4" * 64
@@ -287,6 +285,7 @@ def _task6s_receipt():
 
 def test_task6s_delivered_receipt_has_its_own_mapping_gate():
     from copy import deepcopy
+
     from task6r_revision_waiver import map_task6s_baostock_identity
 
     waiver = _task6s_receipt()

@@ -10,10 +10,11 @@ from ashare_multifactor.research.factor_evaluation import (
     FactorEvaluationBundle,
     evaluate_factors,
 )
-from ashare_multifactor.research.factor_redundancy import FactorRedundancyBundle
-from ashare_multifactor.research.factor_redundancy import analyze_factor_redundancy
+from ashare_multifactor.research.factor_redundancy import (
+    FactorRedundancyBundle,
+    analyze_factor_redundancy,
+)
 from ashare_multifactor.research.factor_selection import classify_factors
-
 
 SUMMARY_SCHEMA = {
     "factor_name": pl.String,

@@ -13,7 +13,6 @@ from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDef
 from ashare_multifactor.factors.panel import build_monthly_factor_panel
 from ashare_multifactor.research.factor_preprocessing import preprocess_factor_panel
 
-
 RAW_PANEL_SCHEMA = {
     "date": pl.Date,
     "symbol": pl.String,

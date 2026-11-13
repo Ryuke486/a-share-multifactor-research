@@ -11,7 +11,6 @@ from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.data.field_audit import FieldReadiness
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 
-
 _RAW_COLUMNS = ("date", "symbol", "factor_name", "family", "raw_value")
 _OUTPUT_COLUMNS = (
     *_RAW_COLUMNS,

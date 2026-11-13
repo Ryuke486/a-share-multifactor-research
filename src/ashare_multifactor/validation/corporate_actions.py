@@ -4,9 +4,8 @@ from pathlib import Path
 
 import polars as pl
 
-from ashare_multifactor.protocol_dates import FINAL_TEST_START, VALIDATION_END, VALIDATION_START
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
-
+from ashare_multifactor.protocol_dates import FINAL_TEST_START, VALIDATION_END, VALIDATION_START
 
 VALIDATION_YEARS = range(VALIDATION_START.year, VALIDATION_END.year + 1)
 _RAW_DATE_COLUMNS = (

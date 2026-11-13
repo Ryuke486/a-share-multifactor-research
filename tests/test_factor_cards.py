@@ -1,12 +1,10 @@
+import inspect
 from dataclasses import replace
 from datetime import date
-import inspect
 from pathlib import Path
 
-from matplotlib import image as mpimg
 import polars as pl
 import pytest
-
 from factor_card_fixtures import (
     SUMMARY_SCHEMA,
     complete_empty_card_inputs,
@@ -15,9 +13,10 @@ from factor_card_fixtures import (
     set_correlation_pair,
     set_redundancy_flag,
 )
+from matplotlib import image as mpimg
+
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 from ashare_multifactor.research.factor_cards import write_factor_cards
-
 
 NEUTRAL = FactorDefinition("neutral", "test", (), 0, 1)
 

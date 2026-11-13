@@ -10,7 +10,6 @@ from polars.testing import assert_frame_equal
 from ashare_multifactor.data.field_audit import audit_factor_fields
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, factor_source_columns
 
-
 VALUE_FACTORS = ("ep_ttm", "bp", "sp_ttm")
 LIQUIDITY_FACTORS = ("turnover_20", "amihud_20")
 SIZE_FACTORS = ("log_market_cap",)
@@ -379,4 +378,4 @@ def test_runtime_source_columns_are_derived_from_the_registry(
 ) -> None:
     module = importlib.import_module(f"ashare_multifactor.factors.{module_name}")
 
-    assert module._SOURCE_COLUMNS == factor_source_columns(factor_names)
+    assert factor_source_columns(factor_names) == module._SOURCE_COLUMNS

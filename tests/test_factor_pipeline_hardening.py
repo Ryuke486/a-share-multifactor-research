@@ -1,27 +1,27 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import json
-from pathlib import Path
 import shutil
+from dataclasses import replace
+from pathlib import Path
 
 import polars as pl
 import pytest
-
 from factor_pipeline_fixtures import (
     write_completed_factor_research,
     write_prepared_daily_panel,
 )
+
+import ashare_multifactor.research.factor_lineage as lineage_module
+import ashare_multifactor.research.factor_pipeline as pipeline_module
 from ashare_multifactor.factors.definitions import (
     FACTOR_DEFINITIONS,
     FactorDefinition,
 )
-import ashare_multifactor.research.factor_lineage as lineage_module
 from ashare_multifactor.research.factor_outputs import (
     expected_stage_outputs,
     write_monthly_raw,
 )
-import ashare_multifactor.research.factor_pipeline as pipeline_module
 from ashare_multifactor.research.factor_pipeline import run_factor_pipeline
 from ashare_multifactor.research.factor_workspace import clone_stage_root
 

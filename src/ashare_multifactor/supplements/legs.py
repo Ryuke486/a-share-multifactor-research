@@ -6,7 +6,6 @@ import polars as pl
 
 from ashare_multifactor.research.factor_statistics import newey_west_mean_test
 
-
 _FORWARD_HORIZON = 20
 
 

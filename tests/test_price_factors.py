@@ -10,7 +10,6 @@ from polars.testing import assert_frame_equal
 from ashare_multifactor.factors import low_volatility, momentum, reversal
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
 
-
 PRICE_FACTOR_COLUMNS = (
     "momentum_60",
     "momentum_120",

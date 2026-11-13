@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 import math
+from collections.abc import Sequence
 
 import polars as pl
 
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.factors.definitions import FactorDefinition
-
 
 _SUMMARY_COLUMNS = (
     "factor_name",

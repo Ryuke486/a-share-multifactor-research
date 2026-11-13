@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import polars as pl
 
-
 _TRADE_OBSERVATION_COLUMNS = ("close_adj", "volume", "amount")
 
 

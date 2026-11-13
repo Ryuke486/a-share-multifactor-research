@@ -1,6 +1,6 @@
-from dataclasses import dataclass
-from decimal import Decimal, ROUND_HALF_UP
 import math
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 
 
 @dataclass(frozen=True)

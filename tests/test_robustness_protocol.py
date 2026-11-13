@@ -1,12 +1,12 @@
 from datetime import date
 from pathlib import Path
 
-import pytest
 import polars as pl
+import pytest
 
 from ashare_multifactor.robustness.protocol import (
-    assert_robustness_read_allowed,
     assert_authoritative_period_contracts,
+    assert_robustness_read_allowed,
     load_robustness_protocol,
     read_bounded_parquet,
 )

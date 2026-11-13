@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Final
 
-
 CANDIDATE_FACTORS: Final = {
     "reversal": ("reversal_5", "reversal_20"),
     "liquidity": ("turnover_20", "amihud_20"),

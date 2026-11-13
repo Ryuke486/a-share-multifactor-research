@@ -16,7 +16,6 @@ from ashare_multifactor.factors.size import compute_size_factor
 from ashare_multifactor.factors.value import compute_value_factors
 from ashare_multifactor.research.research_universe import build_research_universe
 
-
 _FAMILY_COMPUTERS: dict[str, Callable[[pl.DataFrame], pl.DataFrame]] = {
     "value": compute_value_factors,
     "momentum": compute_momentum_factors,

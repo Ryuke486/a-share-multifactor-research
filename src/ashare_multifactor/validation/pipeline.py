@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
-from pathlib import Path
 import shutil
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 import polars as pl
 
-from ashare_multifactor.protocol_dates import FINAL_TEST_START, VALIDATION_END, VALIDATION_START
 from ashare_multifactor.audit import reproducible_release
-from ashare_multifactor.audit.identity import (  # noqa: F401
+from ashare_multifactor.audit.identity import (
     code_identity,
 )
 from ashare_multifactor.audit.publication import (
@@ -21,10 +20,10 @@ from ashare_multifactor.audit.publication import (
 from ashare_multifactor.audit.records import file_record, sha256_file
 from ashare_multifactor.config import Period, load_config  # noqa: F401
 from ashare_multifactor.data.manifest import validate_panel_source
+from ashare_multifactor.protocol_dates import FINAL_TEST_START, VALIDATION_END, VALIDATION_START
 from ashare_multifactor.research.combination_inputs import validate_stage_five_inputs
 from ashare_multifactor.research.factor_lineage import validate_file_records
 from ashare_multifactor.validation.protocol import assert_stage_six_release_allowed
-
 
 SEALED_TEST_START = FINAL_TEST_START
 DATE_COLUMNS = {
@@ -485,7 +484,7 @@ def _validation_lineage(
         source_cache / "cninfo_official_pdfs/000979_c0f86b35.pdf",
     )
     lineage = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "period": ["2017-01-01", "2021-12-31"],
         "sealed_final_test_start": "2022-01-01",
         "candidates": list(candidates),

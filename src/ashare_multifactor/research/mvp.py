@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
-from typing import Mapping
 
 import polars as pl
 
@@ -27,18 +27,31 @@ from ashare_multifactor.research.momentum import add_momentum_and_forward_return
 from ashare_multifactor.research.pipeline_audit import PipelineRecorder, publish_data_audit
 from ashare_multifactor.research.pipeline_io import (
     date_range as _date_range,
+)
+from ashare_multifactor.research.pipeline_io import (
     frame_stats as _stats,
+)
+from ashare_multifactor.research.pipeline_io import (
     manual_stats as _manual_stats,
+)
+from ashare_multifactor.research.pipeline_io import (
     read_daily_panel,
+)
+from ashare_multifactor.research.pipeline_io import (
     read_intermediate as _read_intermediate,
+)
+from ashare_multifactor.research.pipeline_io import (
     read_json as _read_json,
+)
+from ashare_multifactor.research.pipeline_io import (
     write_frame as _write_frame,
+)
+from ashare_multifactor.research.pipeline_io import (
     write_json as _write_json,
 )
 from ashare_multifactor.research.portfolio import build_target_weights
 from ashare_multifactor.research.report import write_mvp_report
 from ashare_multifactor.research.universe import build_universe
-
 
 STAGES = ("build", "signals", "targets", "backtest", "report", "all")
 LOGGER = logging.getLogger(__name__)

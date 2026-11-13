@@ -1,5 +1,5 @@
-from datetime import date, timedelta
 import math
+from datetime import date, timedelta
 
 import polars as pl
 import pytest

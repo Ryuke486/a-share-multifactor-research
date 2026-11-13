@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
-from typing import Mapping
 
 from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.data.manifest import DailyPanelSource, validate_panel_source
 from ashare_multifactor.research.pipeline_io import read_json, write_json
-
 
 STAGE_ORDER = ("signals", "targets", "backtest", "report")
 PROCESSED_STAGE_ARTIFACTS = {

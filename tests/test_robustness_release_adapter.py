@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from datetime import date
 import hashlib
 import json
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,7 +11,6 @@ import pytest
 
 from ashare_multifactor.audit import reproducible_release as lifecycle
 from ashare_multifactor.robustness import pipeline, release_adapter
-
 
 FIXED_CODE: dict[str, object] = {
     "commit": "a" * 40,

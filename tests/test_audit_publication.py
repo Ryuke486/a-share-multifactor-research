@@ -1,22 +1,22 @@
 import hashlib
-from importlib.metadata import version
 import json
-from pathlib import Path
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from importlib.metadata import version
+from pathlib import Path
 from threading import Event, get_ident
 
 import pytest
 
+from ashare_multifactor.audit import publication as publication_module
+from ashare_multifactor.audit.identity import code_identity
 from ashare_multifactor.audit.publication import (
     publish_release,
     resolve_current,
     resolve_release,
     restore_current,
 )
-from ashare_multifactor.audit import publication as publication_module
-from ashare_multifactor.audit.identity import code_identity
 
 
 def _staged(tmp_path: Path) -> tuple[Path, Path]:

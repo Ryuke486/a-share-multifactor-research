@@ -7,7 +7,6 @@ from collections.abc import Mapping, Sequence
 import numpy as np
 import polars as pl
 
-
 COST_COMPONENTS = ("commission", "stamp_duty", "transfer_fee", "slippage_cost", "impact_cost")
 
 

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
 
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.research.lineage import config_snapshot, load_data_manifest
 from ashare_multifactor.research.pipeline_io import read_json, read_json_value, write_json
-
 
 LOGGER = logging.getLogger(__name__)
 _OPERATION_STAGE = {

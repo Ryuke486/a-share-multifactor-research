@@ -1,24 +1,23 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from contextlib import contextmanager
 import hashlib
 import json
 import os
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Mapping
 from uuid import uuid4
 
+from ashare_multifactor.audit.publication_lock import (
+    publication_read_lock_at,
+    publication_write_lock_at,
+)
 from ashare_multifactor.audit.secure_tree import (
     atomic_rename_no_replace_at,
     read_frozen_tree_at,
     write_frozen_tree_at,
 )
-from ashare_multifactor.audit.publication_lock import (
-    publication_read_lock_at,
-    publication_write_lock_at,
-)
-
 
 _CURRENT_PUBLICATION_LOCK = ".CURRENT.publication.lock"
 
@@ -113,11 +112,11 @@ def publish_release(
     root.mkdir(parents=True, exist_ok=True)
     root_parent_fd = os.open(
         root.parent,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
     )
     root_fd = os.open(
         root.name,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=root_parent_fd,
     )
     root_identity = _descriptor_identity(root_fd)
@@ -132,7 +131,7 @@ def publish_release(
     temporary = releases / f".{run_id}.tmp"
     releases_fd = os.open(
         "releases",
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=root_fd,
     )
     releases_identity = _descriptor_identity(releases_fd)
@@ -154,7 +153,7 @@ def publish_release(
         )
         temporary_fd = os.open(
             temporary.name,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=releases_fd,
         )
         temporary_identity = _descriptor_identity(temporary_fd)
@@ -265,7 +264,7 @@ def publish_release_at(
         )
         temporary_fd = os.open(
             temporary_name,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=releases_fd,
         )
         temporary_identity = _descriptor_identity(temporary_fd)
@@ -307,7 +306,7 @@ def resolve_release_package_at(
 ) -> tuple[PublishedRelease, dict[str, bytes], dict[str, object]]:
     release_fd = os.open(
         run_id,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=releases_fd,
     )
     try:
@@ -330,7 +329,7 @@ def restore_current_at(
 ) -> None:
     release_fd = os.open(
         release.run_id,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=releases_fd,
     )
     try:
@@ -364,7 +363,7 @@ def _freeze_staged_release(
     ):
         descriptor = os.open(
             path,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         )
         try:
             frozen = read_frozen_tree_at(descriptor, label=f"staged {prefix}")
@@ -424,7 +423,7 @@ def _materialize_current_locked_at(
     temporary = f".CURRENT.{uuid4().hex}.tmp"
     descriptor = os.open(
         temporary,
-        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW"),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
         0o600,
         dir_fd=root_fd,
     )
@@ -456,7 +455,7 @@ def _materialize_current_locked_at(
             )
         current_fd = os.open(
             "CURRENT.json",
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_NOFOLLOW,
             dir_fd=root_fd,
         )
         try:
@@ -524,14 +523,12 @@ def resolve_current(root: Path) -> PublishedRelease:
 
 @contextmanager
 def opened_verified_current(root: Path) -> Iterator[HeldPublishedRelease]:
-    root_parent_fd = os.open(
-        root.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW")
-    )
+    root_parent_fd = os.open(root.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     root_fd: int | None = None
     try:
         root_fd = os.open(
             root.name,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=root_parent_fd,
         )
         with opened_verified_current_at(
@@ -578,7 +575,7 @@ def _opened_verified_current_locked(
 ) -> Iterator[HeldPublishedRelease]:
     releases_fd = os.open(
         "releases",
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=root_fd,
     )
     current_fd: int | None = None
@@ -586,7 +583,7 @@ def _opened_verified_current_locked(
     try:
         current_fd = os.open(
             "CURRENT.json",
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_NOFOLLOW,
             dir_fd=root_fd,
         )
         root_identity = _descriptor_identity(root_fd)
@@ -599,7 +596,7 @@ def _opened_verified_current_locked(
         run_id = str(pointer["run_id"])
         release_fd = os.open(
             run_id,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=releases_fd,
         )
         release_identity = _descriptor_identity(release_fd)
@@ -635,15 +632,15 @@ def _opened_verified_current_locked(
 
 def resolve_release(root: Path, run_id: str) -> PublishedRelease:
     """Resolve and fully verify one release without consulting CURRENT."""
-    root_fd = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"))
+    root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     releases_fd = os.open(
         "releases",
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=root_fd,
     )
     release_fd = os.open(
         run_id,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=releases_fd,
     )
     try:
@@ -661,21 +658,21 @@ def restore_current(root: Path, release: PublishedRelease) -> None:
     """Atomically create CURRENT for one already verified orphan release."""
     root_parent_fd = os.open(
         root.parent,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
     )
     root_fd = os.open(
         root.name,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=root_parent_fd,
     )
     releases_fd = os.open(
         "releases",
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=root_fd,
     )
     release_fd = os.open(
         release.run_id,
-        os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
         dir_fd=releases_fd,
     )
     try:

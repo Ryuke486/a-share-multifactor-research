@@ -7,15 +7,17 @@ refers to the sealed 2022-2025 final-test period. The file keeps its name becaus
 
 from __future__ import annotations
 
-from collections.abc import Callable
 import hashlib
 import hmac
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from ashare_multifactor.audit.records import (
     is_git_oid_hex as _valid_git_oid,
+)
+from ashare_multifactor.audit.records import (
     is_sha256_hex as _valid_sha256,
 )
 from ashare_multifactor.robustness.protocol import RobustnessProtocol

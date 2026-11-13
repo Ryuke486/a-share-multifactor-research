@@ -1,21 +1,21 @@
-from datetime import date
 import json
+import sys
+from datetime import date
 from pathlib import Path
 
 import polars as pl
 import pytest
-import sys
 
-from ashare_multifactor.research.combination_evaluation import evaluate_combinations
+from ashare_multifactor.cli import combinations as combinations_cli
 from ashare_multifactor.config import load_config
+from ashare_multifactor.research.combination_evaluation import evaluate_combinations
+from ashare_multifactor.research.combination_inputs import validate_stage_five_inputs
+from ashare_multifactor.research.combination_lineage import build_legacy_lineage
 from ashare_multifactor.research.combination_pipeline import (
     UPSTREAM_FILES,
     _realization_dates,
     _validate_upstream,
 )
-from ashare_multifactor.research.combination_inputs import validate_stage_five_inputs
-from ashare_multifactor.research.combination_lineage import build_legacy_lineage
-from ashare_multifactor.cli import combinations as combinations_cli
 
 
 def test_combination_evaluation_computes_rank_ic_with_current_polars() -> None:

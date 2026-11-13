@@ -8,7 +8,6 @@ from ashare_multifactor.factors.definitions import factor_source_columns
 from ashare_multifactor.factors.transforms import safe_return
 from ashare_multifactor.research.trade_observations import is_valid_trade_observation
 
-
 _KEY_COLUMNS = ("date", "symbol")
 _FACTOR_NAMES = ("momentum_60", "momentum_120", "momentum_12_1")
 _SOURCE_COLUMNS = factor_source_columns(_FACTOR_NAMES)

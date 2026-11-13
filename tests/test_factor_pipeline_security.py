@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 import shutil
+from pathlib import Path
 
-import pytest
 import polars as pl
+import pytest
 import yaml
-
 from factor_pipeline_fixtures import (
     write_completed_factor_research,
     write_prepared_daily_panel,
 )
-from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
-from ashare_multifactor.research.factor_outputs import expected_stage_outputs
+
 import ashare_multifactor.research.factor_outputs as outputs_module
 import ashare_multifactor.research.factor_pipeline as pipeline_module
+from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
+from ashare_multifactor.research.factor_outputs import expected_stage_outputs
 from ashare_multifactor.research.factor_pipeline import run_factor_pipeline
 
 

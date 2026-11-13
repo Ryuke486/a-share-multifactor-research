@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import shutil
+from pathlib import Path
 from uuid import uuid4
 
 import polars as pl
@@ -21,7 +21,6 @@ from ashare_multifactor.research.factor_lineage import (
     validate_file_records,
 )
 from ashare_multifactor.research.factor_redundancy import FactorRedundancyBundle
-
 
 FACTOR_OUTPUT_NAMES = (
     "monthly_raw",

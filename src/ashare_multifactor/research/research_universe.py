@@ -6,7 +6,6 @@ from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.data.security import filter_supported_markets
 from ashare_multifactor.research.trade_observations import is_valid_trade_observation
 
-
 _RAW_PRICE_COLUMNS = ("open_raw", "high_raw", "low_raw", "close_raw")
 
 

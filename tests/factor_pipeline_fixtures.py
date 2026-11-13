@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import atexit
-from datetime import date, timedelta
 import hashlib
 import json
 import math
-from pathlib import Path
 import shutil
 import tempfile
+from datetime import date, timedelta
+from pathlib import Path
 
 import polars as pl
 import yaml
-
 
 OBSERVATIONS = 420
 SYMBOLS = 25

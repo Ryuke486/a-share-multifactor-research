@@ -41,3 +41,16 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B", "UP", "C4", "SIM", "RUF"]
+ignore = [
+  "RUF001", "RUF002", "RUF003",  # Chinese punctuation in strings, docstrings and comments is intended
+  "RUF043",  # pytest.raises(match=...) patterns are plain substrings here
+  "RUF005",  # tuple concatenation reads better than unpacking in the spec tables
+  "B905",    # zip() strictness is decided per call site, not globally
+  "B007", "RUF059", "RUF046",  # harmless unused loop/unpack names and explicit int() casts
+  "SIM105", "SIM108", "SIM117",  # explicit try/except, if/else and nested with are kept for clarity
+  "RUF022",  # __all__ of the release lifecycle is ordered by workflow, pinned by a test
+  "UP042",   # str-mixin enums are part of serialized contracts
+]

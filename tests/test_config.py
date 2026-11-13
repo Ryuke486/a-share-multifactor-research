@@ -2,12 +2,11 @@ from dataclasses import FrozenInstanceError
 from datetime import date
 from pathlib import Path
 
-import pytest
 import polars as pl
+import pytest
 
 from ashare_multifactor.config import load_config
 from ashare_multifactor.data.security import assert_supported_markets
-
 
 BASE_CONFIG = """
 paths:
@@ -115,7 +114,7 @@ def test_mvp_integer_settings_must_be_positive(
     config = tmp_path / "bad.yaml"
     config.write_text(
         BASE_CONFIG.replace(
-            f"{field}: {dict(universe_size=200, momentum_lookback=60, forward_horizon=20, portfolio_size=20)[field]}",
+            f"{field}: { {'universe_size': 200, 'momentum_lookback': 60, 'forward_horizon': 20, 'portfolio_size': 20}[field] }",
             f"{field}: {invalid_value}",
         ),
         encoding="utf-8",

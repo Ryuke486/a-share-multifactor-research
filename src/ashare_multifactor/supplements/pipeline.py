@@ -8,26 +8,26 @@ root and checked against the prices stored in the Stage 7 release.
 
 from __future__ import annotations
 
-from dataclasses import replace
-from datetime import date
 import json
-from pathlib import Path
 import shutil
 import subprocess
+from dataclasses import replace
+from datetime import date
+from pathlib import Path
 from typing import Any
 
 import polars as pl
 
+from ashare_multifactor.audit.publication import PublishedRelease, resolve_current
+from ashare_multifactor.audit.records import sha256_file as _sha256
+from ashare_multifactor.config import ResearchConfig, load_config
+from ashare_multifactor.data.build import build_parquet_dataset
 from ashare_multifactor.protocol_dates import (
     RESEARCH_END,
     RESEARCH_START,
     VALIDATION_END,
     VALIDATION_START,
 )
-from ashare_multifactor.audit.records import sha256_file as _sha256
-from ashare_multifactor.audit.publication import PublishedRelease, resolve_current
-from ashare_multifactor.config import ResearchConfig, load_config
-from ashare_multifactor.data.build import build_parquet_dataset
 from ashare_multifactor.supplements.benchmark import (
     relative_performance,
     universe_benchmark_index,
@@ -50,7 +50,6 @@ from ashare_multifactor.supplements.report_figures import (
     plot_rolling_ic,
 )
 from ashare_multifactor.validation.protocol import assert_validation_read_allowed
-
 
 ANALYSIS_START = RESEARCH_START
 ANALYSIS_END = VALIDATION_END

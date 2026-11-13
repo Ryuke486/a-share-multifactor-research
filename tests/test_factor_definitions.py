@@ -4,7 +4,6 @@ import pytest
 
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 
-
 EXPECTED_DEFINITIONS = (
     ("ep_ttm", "value", ("pe_ttm",), 0, 1, True, True),
     ("bp", "value", ("pb",), 0, 1, True, True),
@@ -139,7 +138,7 @@ def test_registry_freezes_complete_preregistered_metadata_matrix() -> None:
 
     assert actual == EXPECTED_DEFINITIONS
     assert all(isinstance(definition.lookback, int) for definition in FACTOR_DEFINITIONS)
-    assert set(definition.direction for definition in FACTOR_DEFINITIONS) <= {-1, 1}
+    assert {definition.direction for definition in FACTOR_DEFINITIONS} <= {-1, 1}
 
 
 def test_valuation_requires_verified_point_in_time_evidence() -> None:

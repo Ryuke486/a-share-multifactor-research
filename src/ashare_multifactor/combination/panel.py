@@ -6,9 +6,9 @@ from datetime import date
 import numpy as np
 import polars as pl
 
-from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 from ashare_multifactor.combination.definitions import REPRESENTATIVE_FACTORS
 from ashare_multifactor.combination.eligibility import candidate_registry
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 
 
 def build_composite_scores(

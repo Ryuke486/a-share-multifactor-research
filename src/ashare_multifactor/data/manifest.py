@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path, PurePosixPath
-import stat
-from typing import Mapping
 
 import polars as pl
 

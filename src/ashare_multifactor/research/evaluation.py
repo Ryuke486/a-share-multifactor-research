@@ -3,7 +3,6 @@ from __future__ import annotations
 import polars as pl
 from scipy.stats import spearmanr
 
-
 _MIN_IC_STOCKS = 20
 _RANK_IC_SCHEMA = {
     "date": pl.Date,

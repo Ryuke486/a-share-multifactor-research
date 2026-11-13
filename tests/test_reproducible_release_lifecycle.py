@@ -10,7 +10,6 @@ from ashare_multifactor.audit import reproducible_release as lifecycle
 from ashare_multifactor.robustness import pipeline as robustness_pipeline
 from ashare_multifactor.validation import pipeline as validation_pipeline
 
-
 FIXED_CODE = {"commit": "a" * 40, "dirty": False, "tree": "b" * 40}
 FIXED_INPUTS = {"frozen": {"sha256": "c" * 64, "size": 7}}
 

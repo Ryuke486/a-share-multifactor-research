@@ -18,7 +18,6 @@ from ashare_multifactor.validation.corporate_actions import (
 )
 from ashare_multifactor.validation.portfolio_extension import build_validation_targets
 
-
 RULES = Path(__file__).parents[1] / "configs/market_rules.yaml"
 
 

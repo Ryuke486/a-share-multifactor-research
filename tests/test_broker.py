@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 import polars as pl
 
@@ -6,8 +7,6 @@ from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.execution.fees import load_market_rules
 from ashare_multifactor.research.formal_backtest_metrics import backtest_summary
-from pathlib import Path
-
 
 RULES = Path(__file__).parents[1] / "configs" / "market_rules.yaml"
 

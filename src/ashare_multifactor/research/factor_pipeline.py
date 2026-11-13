@@ -8,7 +8,6 @@ from typing import Final
 
 import polars as pl
 
-from ashare_multifactor.protocol_dates import FACTOR_WARMUP_START, RESEARCH_END
 from ashare_multifactor.config import FactorResearchSettings, Period, ResearchConfig, load_config
 from ashare_multifactor.data.build import build_parquet_dataset
 from ashare_multifactor.data.field_audit import (
@@ -19,6 +18,7 @@ from ashare_multifactor.data.field_audit import (
 from ashare_multifactor.data.manifest import DailyPanelSource, validate_panel_source
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
 from ashare_multifactor.factors.panel import build_monthly_factor_panel
+from ashare_multifactor.protocol_dates import FACTOR_WARMUP_START, RESEARCH_END
 from ashare_multifactor.research.factor_evaluation import (
     FactorEvaluationBundle,
     evaluate_factors,
@@ -54,10 +54,11 @@ from ashare_multifactor.research.factor_workspace import (
     cleanup_orphan_stage_roots,
     clone_stage_root,
     discard_stage_root,
+)
+from ashare_multifactor.research.factor_workspace import (
     publish_stage_root as _publish_stage_root,
 )
 from ashare_multifactor.research.labels import add_forward_returns
-
 
 STAGES: Final = ("build", "audit", "factors", "evaluate", "report", "all")
 _AUDIT_INPUT_COLUMNS = tuple(

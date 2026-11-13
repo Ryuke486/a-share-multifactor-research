@@ -11,7 +11,6 @@ import pytest
 from ashare_multifactor.config import Period
 from ashare_multifactor.data.manifest import validate_panel_source
 
-
 ALLOWED = Period(date(2003, 1, 1), date(2016, 12, 31))
 
 

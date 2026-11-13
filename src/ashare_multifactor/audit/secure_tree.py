@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import ctypes
 import errno
 import os
-from pathlib import PurePosixPath
 import stat
 import sys
-from typing import Iterator, Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
+from pathlib import PurePosixPath
 
 
 def write_frozen_tree_at(
@@ -197,7 +197,7 @@ def _write_file_at(
     resumable: bool,
     label: str,
 ) -> None:
-    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW")
+    flags = os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW
     flags |= 0 if resumable else os.O_EXCL
     descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
     try:
@@ -243,7 +243,7 @@ def _read_level(directory_fd: int, *, prefix: str, label: str) -> dict[str, byte
             raise ValueError(f"{label} contains a non-regular file")
         descriptor = os.open(
             name,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_NOFOLLOW,
             dir_fd=directory_fd,
         )
         try:
@@ -290,12 +290,12 @@ def _copy_level(source_fd: int, destination_fd: int, *, label: str) -> None:
             raise ValueError(f"{label} contains a non-regular file")
         source_file = os.open(
             name,
-            os.O_RDONLY | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_NOFOLLOW,
             dir_fd=source_fd,
         )
         destination_file = os.open(
             name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW"),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
             0o600,
             dir_fd=destination_fd,
         )
@@ -341,7 +341,7 @@ def _opened_directory_at(parent_fd: int, name: str, *, label: str) -> Iterator[i
     try:
         descriptor = os.open(
             name,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             dir_fd=parent_fd,
         )
     except OSError as error:

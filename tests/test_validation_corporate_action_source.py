@@ -1,21 +1,20 @@
-from datetime import date
 import json
+from datetime import date
 from pathlib import Path
 
 import polars as pl
 import pytest
 
+from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.validation.corporate_action_source import (
     collect_baostock_rows,
     load_official_action_corrections,
     load_official_payment_date_overrides,
     load_official_security_events,
-    migrate_legacy_query_coverage,
     merge_baostock_caches,
+    migrate_legacy_query_coverage,
     write_baostock_cache,
 )
-from ashare_multifactor.audit.records import sha256_file
-
 
 FIELDS = [
     "code",

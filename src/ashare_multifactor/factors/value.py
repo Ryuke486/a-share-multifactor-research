@@ -7,7 +7,6 @@ import polars as pl
 from ashare_multifactor.factors.definitions import factor_source_columns
 from ashare_multifactor.factors.transforms import prepare_factor_inputs, safe_positive_reciprocal
 
-
 _FACTOR_NAMES = ("ep_ttm", "bp", "sp_ttm")
 _SOURCE_COLUMNS = factor_source_columns(_FACTOR_NAMES)
 

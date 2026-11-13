@@ -23,7 +23,6 @@ import pytest
 
 import ashare_multifactor
 
-
 CODE_ROOT = Path(ashare_multifactor.__file__).resolve().parents[2]
 SOURCE_ROOT = CODE_ROOT / "src/ashare_multifactor"
 FINAL_TEST_PREFIX = "ashare_multifactor.final_test"

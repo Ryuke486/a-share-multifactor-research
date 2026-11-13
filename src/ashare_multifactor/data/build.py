@@ -8,8 +8,8 @@ import shutil
 from dataclasses import asdict, dataclass
 from datetime import date
 from pathlib import Path
-from uuid import uuid4
 from typing import Protocol
+from uuid import uuid4
 
 import polars as pl
 

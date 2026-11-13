@@ -14,7 +14,6 @@ from ashare_multifactor.config import Period, load_config
 from ashare_multifactor.research.mvp import main, run_mvp
 from ashare_multifactor.research.report import write_mvp_report
 
-
 RAW_COLUMNS = (
     "日期",
     "代码",
@@ -240,7 +239,7 @@ def test_all_pipeline_writes_auditable_outputs_and_stages_resume(
 
     artifact_root = tmp_path / "artifacts/mvp"
     processed_root = tmp_path / "processed/mvp"
-    assert EXPECTED_ARTIFACTS <= {path.name for path in artifact_root.iterdir()}
+    assert {path.name for path in artifact_root.iterdir()} >= EXPECTED_ARTIFACTS
     assert (processed_root / "signals.parquet").exists()
     assert (processed_root / "monthly_signals.parquet").exists()
     lineage = json.loads((processed_root / "lineage.json").read_text(encoding="utf-8"))

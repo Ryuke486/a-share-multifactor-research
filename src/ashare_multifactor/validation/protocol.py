@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import date
-import json
 from pathlib import Path
 
 from ashare_multifactor.protocol_dates import FACTOR_WARMUP_START, FINAL_TEST_START
-
 
 EARLIEST_ALLOWED_DATE = FACTOR_WARMUP_START
 APPROVED_STAGE_SIX_RELEASE = "b995878_stage6_authoritative"

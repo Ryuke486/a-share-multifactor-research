@@ -1,14 +1,14 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import gc
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import polars as pl
 
-from ashare_multifactor.audit.records import write_json as _write_json
 from ashare_multifactor.audit.publication import resolve_current
+from ashare_multifactor.audit.records import write_json as _write_json
 from ashare_multifactor.config import load_config
 from ashare_multifactor.data.field_audit import FieldReadiness
 from ashare_multifactor.data.security import assert_supported_markets
@@ -42,7 +42,6 @@ from ashare_multifactor.validation.metrics import validation_portfolio_metrics
 from ashare_multifactor.validation.portfolio_extension import build_validation_targets
 from ashare_multifactor.validation.report import render_validation_report
 from ashare_multifactor.validation.selection import select_validation_candidate
-
 
 _CANDIDATE_SPEC = {
     "family_equal_size_stratified_buffered": (

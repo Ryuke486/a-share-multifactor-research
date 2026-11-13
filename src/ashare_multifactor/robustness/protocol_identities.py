@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import hashlib
 import json
-from pathlib import Path
 import subprocess
+from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
-from ashare_multifactor.audit.records import is_git_oid_hex as _valid_git_oid, sha256_file
-
+from ashare_multifactor.audit.records import is_git_oid_hex as _valid_git_oid
+from ashare_multifactor.audit.records import sha256_file
 
 _FINAL_EXECUTION_PATHS = (
     "configs/final_execution_sources.yaml",

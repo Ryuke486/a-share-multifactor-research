@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 import math
-from pathlib import Path
 import re
+from collections.abc import Sequence
+from pathlib import Path
 
 import polars as pl
 

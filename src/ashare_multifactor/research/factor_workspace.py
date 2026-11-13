@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 import shutil
 import stat
-from typing import Iterable
+from collections.abc import Iterable
+from pathlib import Path
 from uuid import uuid4
 
 from ashare_multifactor.research.factor_outputs import replace_directory

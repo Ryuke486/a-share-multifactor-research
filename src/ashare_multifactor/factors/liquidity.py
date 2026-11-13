@@ -8,7 +8,6 @@ from ashare_multifactor.factors.definitions import factor_source_columns
 from ashare_multifactor.factors.transforms import prepare_factor_inputs, safe_return
 from ashare_multifactor.research.trade_observations import is_valid_trade_observation
 
-
 _FACTOR_NAMES = ("turnover_20", "amihud_20")
 _SOURCE_COLUMNS = factor_source_columns(_FACTOR_NAMES)
 _WINDOW_SIZE = 20

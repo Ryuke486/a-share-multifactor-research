@@ -7,7 +7,6 @@ import polars as pl
 from ashare_multifactor.factors.definitions import factor_source_columns
 from ashare_multifactor.factors.transforms import prepare_factor_inputs, safe_positive_log
 
-
 _FACTOR_NAMES = ("log_market_cap",)
 _SOURCE_COLUMNS = factor_source_columns(_FACTOR_NAMES)
 

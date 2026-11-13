@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
-from datetime import date
 import hashlib
 import json
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict
+from datetime import date
 from pathlib import Path, PurePosixPath
-from typing import Iterable, Mapping
 
 import yaml
 
@@ -15,7 +15,6 @@ from ashare_multifactor.audit.records import sha256_file as _sha256
 from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.data.manifest import DailyPanelSource
 from ashare_multifactor.factors.definitions import FactorDefinition
-
 
 LINEAGE_VERSION = 2
 

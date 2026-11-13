@@ -14,7 +14,6 @@ from ashare_multifactor.factors.transforms import (
 )
 from ashare_multifactor.research.trade_observations import is_valid_trade_observation
 
-
 _KEY_COLUMNS = ("date", "symbol")
 _FACTOR_NAMES = ("volatility_20", "volatility_60", "downside_volatility_60")
 _SOURCE_COLUMNS = factor_source_columns(_FACTOR_NAMES)

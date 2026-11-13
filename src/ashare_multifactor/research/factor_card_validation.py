@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 import math
+from collections.abc import Mapping, Sequence
 
 import polars as pl
 
@@ -13,12 +13,11 @@ from ashare_multifactor.research.factor_evaluation import FactorEvaluationBundle
 from ashare_multifactor.research.factor_metrics import (
     QUANTILE_SCHEMA,
     RANK_IC_SCHEMA,
-    SUBPERIODS,
     SUBPERIOD_SCHEMA,
+    SUBPERIODS,
     TURNOVER_SCHEMA,
 )
 from ashare_multifactor.research.factor_redundancy import FactorRedundancyBundle
-
 
 _SUMMARY_SCHEMA = {
     "factor_name": pl.String,

@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
 import json
-from pathlib import Path
 import shutil
+from datetime import date
+from pathlib import Path
 from uuid import uuid4
 
 import polars as pl
 
-from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 from ashare_multifactor.audit.publication import PublishedRelease, publish_release
 from ashare_multifactor.combination.definitions import CANDIDATE_FACTORS
 from ashare_multifactor.combination.panel import (
@@ -24,6 +23,7 @@ from ashare_multifactor.portfolio.diagnostics import (
 )
 from ashare_multifactor.portfolio.ranking import top_n_equal
 from ashare_multifactor.portfolio.size_stratified import size_stratified_buffered
+from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 from ashare_multifactor.research.combination_evaluation import evaluate_combinations
 from ashare_multifactor.research.combination_inputs import (
     StageFiveInputs,
@@ -32,17 +32,16 @@ from ashare_multifactor.research.combination_inputs import (
 from ashare_multifactor.research.combination_lineage import (
     build_combination_lineage,
 )
-from ashare_multifactor.research.combination_paths import combination_paths
 from ashare_multifactor.research.combination_outputs import (
     build_output_file_manifest,
     stage_five_dataset_entries,
 )
+from ashare_multifactor.research.combination_paths import combination_paths
 from ashare_multifactor.research.combination_report import (
     render_combination_report,
     write_combination_figure,
 )
 from ashare_multifactor.research.factor_outputs import write_json_atomic, write_parquet_atomic
-
 
 UPSTREAM_FILES = (
     "factor_panel.parquet",

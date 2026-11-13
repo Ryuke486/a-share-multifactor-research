@@ -6,7 +6,6 @@ import polars as pl
 
 from ashare_multifactor.protocol_dates import RESEARCH_END, RESEARCH_START
 
-
 _FHPS_COLUMNS = {
     "代码",
     "送转股份-送转总比例",

@@ -6,9 +6,8 @@ from typing import Any
 
 import polars as pl
 
-from ashare_multifactor.protocol_dates import FINAL_TEST_END, FINAL_TEST_START, RESEARCH_END
 from ashare_multifactor.audit import reproducible_release
-from ashare_multifactor.audit.identity import code_identity  # noqa: F401
+from ashare_multifactor.audit.identity import code_identity
 from ashare_multifactor.audit.publication import resolve_current
 from ashare_multifactor.audit.records import sha256_file
 from ashare_multifactor.combination.definitions import CANDIDATE_FACTORS
@@ -19,13 +18,14 @@ from ashare_multifactor.data.security import assert_supported_markets
 from ashare_multifactor.execution.broker import BacktestSettings
 from ashare_multifactor.execution.fee_protocol import validate_fee_protocol
 from ashare_multifactor.execution.fees import load_market_rules
+from ashare_multifactor.protocol_dates import FINAL_TEST_END, FINAL_TEST_START, RESEARCH_END
+from ashare_multifactor.robustness.collector_readiness import (
+    verify_collector_readiness_audit,
+)
 from ashare_multifactor.robustness.execution_sensitivity import (
     build_execution_scenarios,
     select_backtest_scenario,
     summarize_execution_result,
-)
-from ashare_multifactor.robustness.collector_readiness import (
-    verify_collector_readiness_audit,
 )
 from ashare_multifactor.robustness.factor_ablation import build_ablation_scores
 from ashare_multifactor.robustness.portfolio_sensitivity import (
@@ -49,14 +49,12 @@ from ashare_multifactor.robustness.regime_analysis import (
 )
 from ashare_multifactor.robustness.release_context import (
     assert_validation_market_scope as _assert_validation_market_scope,  # noqa: F401
+)
+from ashare_multifactor.robustness.release_context import (
     resolve_robustness_data_root,  # noqa: F401 - adapter compatibility surface
 )
 from ashare_multifactor.robustness.report import (  # noqa: F401
     render_robustness_report,
-)
-from ashare_multifactor.robustness.summary import (
-    assess_test_protocol_gate,  # noqa: F401 - compatibility patch surface
-    build_robustness_long_table,  # noqa: F401 - compatibility patch surface
 )
 from ashare_multifactor.robustness.successor_seal import (
     Stage8Supersession,  # noqa: F401 - compatibility patch surface
@@ -64,12 +62,15 @@ from ashare_multifactor.robustness.successor_seal import (
     build_stage8_supersession,
     verify_action_coverage_audit,
 )
+from ashare_multifactor.robustness.summary import (
+    assess_test_protocol_gate,  # noqa: F401 - compatibility patch surface
+    build_robustness_long_table,  # noqa: F401 - compatibility patch surface
+)
 from ashare_multifactor.robustness.test_protocol import (  # noqa: F401
     seal_test_protocol,
 )
 from ashare_multifactor.validation.backtest_extension import run_validation_backtest
 from ashare_multifactor.validation.backtest_inputs import build_continuous_targets
-
 
 SEALED_TEST_START = FINAL_TEST_START
 CORE_ROBUSTNESS_FILES = (

@@ -4,15 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import Sequence
 
 import polars as pl
 
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS, FactorDefinition
-
 
 _NON_NUMERIC_FIELDS = frozenset({"industry", "is_st"})
 _PROTOCOL_NOTE = "Field is accepted for use by the frozen stage-four research protocol."

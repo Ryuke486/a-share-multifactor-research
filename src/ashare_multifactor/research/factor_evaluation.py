@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
-import math
 
 import numpy as np
 import polars as pl
@@ -22,7 +22,6 @@ from ashare_multifactor.research.factor_statistics import (
     benjamini_hochberg,
     newey_west_mean_test,
 )
-
 
 _BASE_SCHEMA = {
     "date": pl.Date,

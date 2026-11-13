@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Iterable
 from datetime import date
-import json
 from pathlib import Path
 
 import polars as pl
@@ -13,7 +13,6 @@ from ashare_multifactor.validation.corporate_actions import (
     VALIDATION_YEARS,
     assert_baostock_query_scope,
 )
-
 
 QueryDividend = Callable[[str, int, str], tuple[list[str], list[list[str]]]]
 _DATE_FIELDS = {
@@ -69,7 +68,7 @@ def _collect_baostock_rows_with_coverage(
                 }
             )
     fields = known_fields or []
-    schema = {field: pl.String for field in fields}
+    schema = dict.fromkeys(fields, pl.String)
     schema.update({"query_year": pl.Int64, "query_year_type": pl.String})
     return (
         pl.DataFrame(records, schema=schema, strict=False),

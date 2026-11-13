@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import polars as pl
 
-
 FROZEN_CANDIDATE_FAMILIES = frozenset({"liquidity", "reversal", "low_volatility"})
 
 

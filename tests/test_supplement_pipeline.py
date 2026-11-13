@@ -22,7 +22,7 @@ def _index() -> pl.DataFrame:
 
 
 def test_period_rows_refuse_a_strategy_path_that_misses_its_published_return() -> None:
-    kwargs = dict(start_levels=(100.0, 100.0, 1.0, 1.0), years=1.0)
+    kwargs = {"start_levels": (100.0, 100.0, 1.0, 1.0), "years": 1.0}
 
     rows = _period_rows("validation", "c", _nav(), _index(), published_net=0.04, **kwargs)
     assert len(rows) == 4

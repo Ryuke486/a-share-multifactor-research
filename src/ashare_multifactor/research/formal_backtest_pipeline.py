@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import json
-from pathlib import Path
 import uuid
+from datetime import UTC, datetime
+from pathlib import Path
 
 import polars as pl
 
@@ -275,7 +275,7 @@ def run_formal_pipeline(
         _readiness_markdown(runtime_readiness), encoding="utf-8"
     )
     lineage = {
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "stage_five": {
             "run_id": inputs.stage_five.run_id,
             "manifest_sha256": inputs.stage_five.manifest_sha256,

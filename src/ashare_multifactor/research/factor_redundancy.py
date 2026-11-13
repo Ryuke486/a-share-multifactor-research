@@ -15,7 +15,6 @@ from ashare_multifactor.config import FactorResearchSettings
 from ashare_multifactor.factors.definitions import FactorDefinition, primary_variant
 from ashare_multifactor.research.factor_metrics import MINIMUM_CROSS_SECTION
 
-
 _REQUIRED_SCHEMA = {
     "date": pl.Date,
     "symbol": pl.String,

@@ -7,7 +7,6 @@ from ashare_multifactor.execution.broker import BacktestSettings, run_backtest
 from ashare_multifactor.execution.corporate_actions import normalize_corporate_actions
 from ashare_multifactor.execution.fees import load_market_rules
 
-
 RULES = Path(__file__).parents[1] / "configs" / "market_rules.yaml"
 SETTINGS = BacktestSettings(
     initial_cash=100_000.0,

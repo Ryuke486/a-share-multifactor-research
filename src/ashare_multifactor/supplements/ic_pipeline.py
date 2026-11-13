@@ -14,13 +14,13 @@ from typing import Any
 
 import polars as pl
 
+from ashare_multifactor.audit.publication import PublishedRelease
 from ashare_multifactor.protocol_dates import (
     RESEARCH_END,
     RESEARCH_START,
     VALIDATION_END,
     VALIDATION_START,
 )
-from ashare_multifactor.audit.publication import PublishedRelease
 from ashare_multifactor.supplements.ic_labels import executable_forward_returns
 from ashare_multifactor.supplements.ic_statistics import (
     automatic_lag,
@@ -28,7 +28,6 @@ from ashare_multifactor.supplements.ic_statistics import (
     ic_summary,
     monthly_rank_ic,
 )
-
 
 HORIZONS = (5, 20)
 PRIMARY_HORIZON = 20

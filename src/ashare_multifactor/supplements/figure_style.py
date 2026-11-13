@@ -10,9 +10,8 @@ from __future__ import annotations
 import matplotlib
 
 matplotlib.use("Agg")
-from matplotlib.axes import Axes  # noqa: E402
-from matplotlib.figure import Figure  # noqa: E402
-
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 
 SURFACE = "#fcfcfb"
 PRIMARY_INK = "#0b0b0b"

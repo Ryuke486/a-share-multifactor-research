@@ -1,26 +1,26 @@
 from __future__ import annotations
 
-from datetime import date
-from pathlib import Path
 import json
 import shutil
 import tomllib
+from datetime import date
+from pathlib import Path
 
 import polars as pl
 import pytest
 import yaml
-
 from factor_pipeline_fixtures import (
     OBSERVATIONS,
     SYMBOLS,
     file_hashes,
-    write_raw_pair,
     write_completed_factor_research,
     write_prepared_daily_panel,
+    write_raw_pair,
 )
+
+import ashare_multifactor.research.factor_pipeline as pipeline_module
 from ashare_multifactor.cli import factors as factors_cli
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
-import ashare_multifactor.research.factor_pipeline as pipeline_module
 from ashare_multifactor.research.factor_pipeline import STAGES, run_factor_pipeline
 
 

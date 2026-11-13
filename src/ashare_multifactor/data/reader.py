@@ -5,7 +5,6 @@ import polars as pl
 from ashare_multifactor.data.discovery import DailyFilePair
 from ashare_multifactor.data.schema import CANONICAL_COLUMNS
 
-
 RAW_RENAME = {
     "日期": "date",
     "代码": "symbol",

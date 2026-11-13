@@ -4,8 +4,8 @@ from pathlib import Path
 import polars as pl
 
 from ashare_multifactor.config import load_config
-from ashare_multifactor.validation.selection import select_validation_candidate
 from ashare_multifactor.validation.metrics import validation_portfolio_metrics
+from ashare_multifactor.validation.selection import select_validation_candidate
 
 
 def _metrics(

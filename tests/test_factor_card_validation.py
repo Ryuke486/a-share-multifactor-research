@@ -4,13 +4,13 @@ from pathlib import Path
 
 import polars as pl
 import pytest
-
 from factor_card_fixtures import (
     complete_empty_card_inputs,
     factor_settings,
     set_correlation_pair,
     set_redundancy_flag,
 )
+
 from ashare_multifactor.factors.definitions import FACTOR_DEFINITIONS
 from ashare_multifactor.research.factor_card_validation import validate_factor_card_inputs
 from ashare_multifactor.research.factor_cards import write_factor_cards

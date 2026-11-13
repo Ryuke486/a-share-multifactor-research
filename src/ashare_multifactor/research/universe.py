@@ -5,7 +5,6 @@ import polars as pl
 from ashare_multifactor.config import ResearchConfig
 from ashare_multifactor.data.security import filter_supported_markets
 
-
 _MIN_HISTORY_OBSERVATIONS = 252
 _LIQUIDITY_LOOKBACK = 20
 _RAW_PRICE_COLUMNS = ("open_raw", "high_raw", "low_raw", "close_raw")

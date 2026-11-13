@@ -9,12 +9,12 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-from matplotlib.colors import LinearSegmentedColormap  # noqa: E402
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import polars as pl  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import polars as pl
+from matplotlib.colors import LinearSegmentedColormap
 
-from ashare_multifactor.supplements.figure_style import (  # noqa: E402
+from ashare_multifactor.supplements.figure_style import (
     BASELINE,
     DIVERGING,
     MUTED_INK,

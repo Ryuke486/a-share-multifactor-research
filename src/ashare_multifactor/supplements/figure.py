@@ -8,18 +8,27 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import polars as pl  # noqa: E402
+import matplotlib.pyplot as plt
+import polars as pl
 
-from ashare_multifactor.supplements.figure_style import (  # noqa: E402
+from ashare_multifactor.supplements.figure_style import (
     GRID as _GRID,
+)
+from ashare_multifactor.supplements.figure_style import (
     MUTED_INK as _MUTED_INK,
+)
+from ashare_multifactor.supplements.figure_style import (
     PRIMARY_INK as _PRIMARY_INK,
+)
+from ashare_multifactor.supplements.figure_style import (
     SECONDARY_INK as _SECONDARY_INK,
+)
+from ashare_multifactor.supplements.figure_style import (
     SERIES,
+)
+from ashare_multifactor.supplements.figure_style import (
     SURFACE as _SURFACE,
 )
-
 
 # categorical slots 1-3 of the validated default palette; the zero-cost line is the
 # same strategy, so it keeps slot 1 and differs by dash pattern

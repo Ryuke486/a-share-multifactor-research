@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
 import json
-from pathlib import Path
 import resource
 import shutil
 import time
+from collections.abc import Iterator, Mapping
+from dataclasses import dataclass
+from pathlib import Path
 
 from ashare_multifactor.audit.reproducible_release import _ReleasePreparation
 from ashare_multifactor.validation import full_run, pipeline

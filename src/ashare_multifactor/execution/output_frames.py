@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import polars as pl
 
-
 SCHEMAS: dict[str, dict[str, pl.DataType]] = {
     "orders": {
         "order_id": pl.String,

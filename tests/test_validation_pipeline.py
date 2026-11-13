@@ -4,11 +4,12 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from ashare_multifactor.audit.publication import publish_release
 from ashare_multifactor.validation.pipeline import (
     CORE_VALIDATION_FILES,
+    assert_validation_outputs_sealed,
     assert_validation_runtime_gates,
     assert_validation_upstream_releases,
-    assert_validation_outputs_sealed,
     certify_full_validation_runs,
     compare_validation_outputs,
     finalize_validation_run,
@@ -17,7 +18,6 @@ from ashare_multifactor.validation.pipeline import (
     run_validation_release,
     validate_run_id,
 )
-from ashare_multifactor.audit.publication import publish_release
 from ashare_multifactor.validation.report import render_validation_report
 
 

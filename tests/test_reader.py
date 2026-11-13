@@ -7,7 +7,6 @@ import pytest
 from ashare_multifactor.data.discovery import DailyFilePair
 from ashare_multifactor.data.schema import CANONICAL_COLUMNS
 
-
 RAW_COLUMNS = (
     "日期",
     "代码",

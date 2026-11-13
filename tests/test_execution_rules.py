@@ -6,7 +6,6 @@ import pytest
 from ashare_multifactor.execution.fees import FeeSchedule, load_market_rules
 from ashare_multifactor.execution.price_limits import limit_prices
 
-
 RULES = Path(__file__).parents[1] / "configs" / "market_rules.yaml"
 
 
