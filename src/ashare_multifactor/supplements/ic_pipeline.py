@@ -124,21 +124,29 @@ def _scores(
         [
             factors(
                 root / "processed/factor_research/factor_panel.parquet",
-                research, research_start, research_end,
+                research,
+                research_start,
+                research_end,
             ),
             factors(
                 stage7.datasets / "inputs/factor_panel.parquet",
-                validation, validation_start, validation_end,
+                validation,
+                validation_start,
+                validation_end,
             ),
             composites(
                 stage5.datasets / "composite_scores.parquet",
                 root / "processed/factor_research/forward_returns.parquet",
-                research, research_start, research_end,
+                research,
+                research_start,
+                research_end,
             ),
             composites(
                 stage7.datasets / "inputs/composite_scores.parquet",
                 stage7.datasets / "inputs/forward_returns.parquet",
-                validation, validation_start, validation_end,
+                validation,
+                validation_start,
+                validation_end,
             ),
         ]
     )
@@ -202,7 +210,9 @@ def _executable_table(frame: pl.DataFrame, published: pl.DataFrame) -> pl.DataFr
     groups = frame.partition_by(["period", "object_type", "object_name"], as_dict=True)
     for (period, object_type, object_name), group in sorted(groups.items()):
         minimum = (
-            FACTOR_MINIMUM_CROSS_SECTION if object_type == "factor" else COMPOSITE_MINIMUM_CROSS_SECTION
+            FACTOR_MINIMUM_CROSS_SECTION
+            if object_type == "factor"
+            else COMPOSITE_MINIMUM_CROSS_SECTION
         )
         for horizon in HORIZONS:
             close, executable = f"forward_return_{horizon}", f"executable_return_{horizon}"
@@ -211,7 +221,9 @@ def _executable_table(frame: pl.DataFrame, published: pl.DataFrame) -> pl.DataFr
             common = group.filter(pl.col(close).is_finite() & pl.col(executable).is_finite())
             lag = _published_lag(horizon)
             close_ic = monthly_rank_ic(common, score="score_value", label=close, minimum=minimum)
-            open_ic = monthly_rank_ic(common, score="score_value", label=executable, minimum=minimum)
+            open_ic = monthly_rank_ic(
+                common, score="score_value", label=executable, minimum=minimum
+            )
             close_summary = ic_summary(close_ic.get_column("rank_ic").to_list(), lag=lag)
             open_summary = ic_summary(open_ic.get_column("rank_ic").to_list(), lag=lag)
             rows.append(
@@ -220,7 +232,8 @@ def _executable_table(frame: pl.DataFrame, published: pl.DataFrame) -> pl.DataFr
                     "object_type": object_type,
                     "object_name": object_name,
                     "horizon": horizon,
-                    "label_coverage": common.height / group.filter(pl.col(close).is_finite()).height,
+                    "label_coverage": common.height
+                    / group.filter(pl.col(close).is_finite()).height,
                     "months": open_summary["n"],
                     "close_mean_ic": close_summary["mean"],
                     "close_icir": close_summary["icir"],
@@ -268,7 +281,9 @@ def _lag_table(
 ) -> pl.DataFrame:
     summaries = {
         "research_2005_2016": pl.read_csv(root / "artifacts/factor_research/factor_summary.csv"),
-        "validation_2017_2021": pl.read_parquet(stage7.artifacts / "research/factor_summary.parquet"),
+        "validation_2017_2021": pl.read_parquet(
+            stage7.artifacts / "research/factor_summary.parquet"
+        ),
     }
     variants = pl.read_csv(root / "artifacts/factor_research/factor_classifications.csv").select(
         "factor_name", pl.col("primary_score_variant").alias("score_variant")
@@ -289,14 +304,17 @@ def _lag_table(
         auto = automatic_lag(months)
         at_published = benjamini_hochberg_with_lag(factor_series, lag=lag)
         at_auto = benjamini_hochberg_with_lag(factor_series, lag=auto)
-        reference = summaries[period].join(variants, on=["factor_name", "score_variant"]).filter(
-            pl.col("horizon") == PRIMARY_HORIZON
+        reference = (
+            summaries[period]
+            .join(variants, on=["factor_name", "score_variant"])
+            .filter(pl.col("horizon") == PRIMARY_HORIZON)
         )
         for row in reference.iter_rows(named=True):
             name = row["factor_name"]
-            if abs(at_published[name]["t"] - row["nw_t"]) > _IC_TOLERANCE or abs(
-                at_published[name]["q"] - row["bh_q"]
-            ) > _IC_TOLERANCE:
+            if (
+                abs(at_published[name]["t"] - row["nw_t"]) > _IC_TOLERANCE
+                or abs(at_published[name]["q"] - row["bh_q"]) > _IC_TOLERANCE
+            ):
                 raise ValueError(f"{period} {name}: published NW t or BH q does not reproduce")
         for name, values in sorted(series.items()):
             is_factor = name in factor_series
@@ -315,9 +333,7 @@ def _lag_table(
                     "t_automatic_lag": alternative["t"],
                     "q_published_lag": base.get("q"),
                     "q_automatic_lag": alternative.get("q"),
-                    "fdr_pass_published_lag": (
-                        base["q"] <= fdr_threshold if is_factor else None
-                    ),
+                    "fdr_pass_published_lag": (base["q"] <= fdr_threshold if is_factor else None),
                     "fdr_pass_automatic_lag": (
                         alternative["q"] <= fdr_threshold if is_factor else None
                     ),

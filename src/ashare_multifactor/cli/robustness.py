@@ -24,9 +24,7 @@ def main() -> None:
         result = execute_robustness_run(args.root, run_id=args.run_id)
         print(result)
     elif args.command == "reproduce":
-        result = execute_robustness_reproducibility(
-            args.root, run_id_prefix=args.run_id
-        )
+        result = execute_robustness_reproducibility(args.root, run_id_prefix=args.run_id)
         print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     else:
         if not args.run_id:

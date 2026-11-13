@@ -81,12 +81,8 @@ def test_portfolio_diagnostics_accept_empty_initial_portfolio() -> None:
 
 
 def test_compare_portfolios_computes_overlap_and_turnover_difference() -> None:
-    baseline = pl.DataFrame(
-        {"symbol": ["A", "B"], "target_weight": [0.5, 0.5]}
-    )
-    primary = pl.DataFrame(
-        {"symbol": ["A", "C"], "target_weight": [0.5, 0.5]}
-    )
+    baseline = pl.DataFrame({"symbol": ["A", "B"], "target_weight": [0.5, 0.5]})
+    primary = pl.DataFrame({"symbol": ["A", "C"], "target_weight": [0.5, 0.5]})
 
     result = compare_portfolios(
         baseline,

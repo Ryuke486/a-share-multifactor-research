@@ -241,11 +241,7 @@ def _validate_mvp(settings: MvpSettings) -> None:
 
 
 def _is_finite_number(value: object) -> bool:
-    return (
-        not isinstance(value, bool)
-        and isinstance(value, (int, float))
-        and math.isfinite(value)
-    )
+    return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
 
 
 def _validate_factor_research(
@@ -308,9 +304,7 @@ def _validate_stage_five(
 ) -> None:
     if not research.contains(Period(combination.analysis_start, combination.analysis_end)):
         raise ValueError("factor combination must stay inside the research period")
-    allowed = {
-        "candidate_equal", "family_equal", "representative_equal", "rolling_ic_family"
-    }
+    allowed = {"candidate_equal", "family_equal", "representative_equal", "rolling_ic_family"}
     if not combination.methods or set(combination.methods) != allowed:
         raise ValueError("factor_combination.methods must match the frozen methods")
     if combination.primary_method not in combination.methods:
@@ -366,7 +360,8 @@ def load_config(path: Path) -> ResearchConfig:
         ),
         portfolio_construction=(
             PortfolioConstructionSettings(**portfolio_construction)
-            if portfolio_construction is not None else None
+            if portfolio_construction is not None
+            else None
         ),
         formal_backtest=(
             FormalBacktestSettings(

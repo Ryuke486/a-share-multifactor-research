@@ -50,32 +50,21 @@ def shadow_nav_audit(
             pl.col("share_multiplier").fill_null(1.0),
         )
         .with_columns(
-            (pl.col("close_adj") / pl.col("lag_close_adj") - 1.0).alias(
-                "adjusted_return"
-            ),
+            (pl.col("close_adj") / pl.col("lag_close_adj") - 1.0).alias("adjusted_return"),
             (
-                (
-                    pl.col("close_raw") * pl.col("share_multiplier")
-                    + pl.col("cash_per_share")
-                )
+                (pl.col("close_raw") * pl.col("share_multiplier") + pl.col("cash_per_share"))
                 / pl.col("lag_close_raw")
                 - 1.0
             ).alias("raw_economic_return"),
         )
         .with_columns(
-            (pl.col("adjusted_return") - pl.col("raw_economic_return")).alias(
-                "return_difference"
-            )
+            (pl.col("adjusted_return") - pl.col("raw_economic_return")).alias("return_difference")
         )
     )
     market_dates = execution_panel["date"].unique().sort().to_list()
-    next_dates = pl.DataFrame(
-        {"position_date": market_dates[:-1], "date": market_dates[1:]}
-    )
+    next_dates = pl.DataFrame({"position_date": market_dates[:-1], "date": market_dates[1:]})
     prior_positions = (
-        positions.select(
-            pl.col("date").alias("position_date"), "symbol", "market_value"
-        )
+        positions.select(pl.col("date").alias("position_date"), "symbol", "market_value")
         .join(next_dates, on="position_date", how="inner")
         .drop("position_date")
         if nav is not None
@@ -89,12 +78,12 @@ def shadow_nav_audit(
     daily = (
         held.group_by("date")
         .agg(
-            (pl.col("return_difference") * pl.col("market_value")).sum().alias(
-                "weighted_difference"
-            ),
-            (pl.col("return_difference").abs() * pl.col("market_value")).sum().alias(
-                "weighted_absolute_difference"
-            ),
+            (pl.col("return_difference") * pl.col("market_value"))
+            .sum()
+            .alias("weighted_difference"),
+            (pl.col("return_difference").abs() * pl.col("market_value"))
+            .sum()
+            .alias("weighted_absolute_difference"),
             pl.col("market_value").sum().alias("holdings_value"),
             pl.len().alias("held_observations"),
         )
@@ -102,9 +91,9 @@ def shadow_nav_audit(
             (pl.col("weighted_difference") / pl.col("holdings_value")).alias(
                 "portfolio_return_difference"
             ),
-            (
-                pl.col("weighted_absolute_difference") / pl.col("holdings_value")
-            ).alias("portfolio_absolute_difference"),
+            (pl.col("weighted_absolute_difference") / pl.col("holdings_value")).alias(
+                "portfolio_absolute_difference"
+            ),
         )
         .sort("date")
     )

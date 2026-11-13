@@ -283,9 +283,7 @@ def _copy_level(source_fd: int, destination_fd: int, *, label: str) -> None:
         if stat.S_ISDIR(metadata.st_mode):
             os.mkdir(name, mode=0o700, dir_fd=destination_fd)
             with _opened_directory_at(source_fd, name, label=label) as child_source:
-                with _opened_directory_at(
-                    destination_fd, name, label=label
-                ) as child_destination:
+                with _opened_directory_at(destination_fd, name, label=label) as child_destination:
                     _copy_level(child_source, child_destination, label=label)
             continue
         if not stat.S_ISREG(metadata.st_mode):
@@ -297,10 +295,7 @@ def _copy_level(source_fd: int, destination_fd: int, *, label: str) -> None:
         )
         destination_file = os.open(
             name,
-            os.O_WRONLY
-            | os.O_CREAT
-            | os.O_EXCL
-            | getattr(os, "O_NOFOLLOW"),
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW"),
             0o600,
             dir_fd=destination_fd,
         )
@@ -346,9 +341,7 @@ def _opened_directory_at(parent_fd: int, name: str, *, label: str) -> Iterator[i
     try:
         descriptor = os.open(
             name,
-            os.O_RDONLY
-            | getattr(os, "O_DIRECTORY")
-            | getattr(os, "O_NOFOLLOW"),
+            os.O_RDONLY | getattr(os, "O_DIRECTORY") | getattr(os, "O_NOFOLLOW"),
             dir_fd=parent_fd,
         )
     except OSError as error:

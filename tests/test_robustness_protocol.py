@@ -21,9 +21,7 @@ def test_official_protocol_is_frozen_and_deterministic() -> None:
     assert first.analysis_end == date(2021, 12, 31)
     assert first.experiments == second.experiments
     assert first.protocol_sha256 == second.protocol_sha256
-    assert len({item.experiment_id for item in first.experiments}) == len(
-        first.experiments
-    )
+    assert len({item.experiment_id for item in first.experiments}) == len(first.experiments)
     assert {item.category for item in first.experiments} == {
         "execution",
         "portfolio",
@@ -58,9 +56,7 @@ def test_official_protocol_is_frozen_and_deterministic() -> None:
 
 def test_protocol_rejects_duplicate_ids_and_main_candidate_changes(tmp_path: Path) -> None:
     config = Path("configs/robustness_protocol.yaml").read_text(encoding="utf-8")
-    duplicate = config.replace(
-        "execution_zero_cost:", "execution_full_cost:", 1
-    )
+    duplicate = config.replace("execution_zero_cost:", "execution_full_cost:", 1)
     path = tmp_path / "duplicate.yaml"
     path.write_text(duplicate, encoding="utf-8")
     with pytest.raises(ValueError, match="duplicate experiment ID"):
@@ -93,9 +89,7 @@ def test_read_gate_rejects_final_test_before_scanning() -> None:
         scanned = True
 
     with pytest.raises(ValueError, match="final test period is sealed"):
-        assert_robustness_read_allowed(
-            date(2005, 1, 1), date(2022, 1, 1), before_read=scanner
-        )
+        assert_robustness_read_allowed(date(2005, 1, 1), date(2022, 1, 1), before_read=scanner)
     assert scanned is False
 
 
@@ -106,9 +100,7 @@ def test_read_gate_rejects_final_test_before_scanning() -> None:
         (date(2021, 12, 31), date(2021, 1, 1)),
     ],
 )
-def test_read_gate_rejects_dates_outside_robustness_sample(
-    start: date, end: date
-) -> None:
+def test_read_gate_rejects_dates_outside_robustness_sample(start: date, end: date) -> None:
     with pytest.raises(ValueError):
         assert_robustness_read_allowed(start, end)
 

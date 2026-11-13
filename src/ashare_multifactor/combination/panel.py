@@ -38,8 +38,7 @@ def build_composite_scores(
     candidate_rows = panel.filter(pl.col("factor_name").is_in(candidates))
     actual = candidate_rows.select("factor_name", "family").unique()
     if actual.filter(
-        pl.col("family")
-        != pl.col("factor_name").replace_strict(expected_families)
+        pl.col("family") != pl.col("factor_name").replace_strict(expected_families)
     ).height:
         raise ValueError("factor panel families do not match the frozen registry")
     eligible = panel.filter(pl.col("factor_name").is_in(candidates)).filter(
@@ -67,20 +66,26 @@ def build_rolling_composite_scores(
         how="inner",
         validate="m:1",
     )
-    family_scores = weighted.sort(
-        "date", "symbol", "family", "factor_name"
-    ).group_by("date", "symbol", "family", maintain_order=True).agg(
-        (pl.col("score_size_neutral") * pl.col("factor_weight")).sum()
-        .truediv(pl.col("factor_weight").sum())
-        .alias("family_score"),
-        pl.len().alias("factor_count"),
+    family_scores = (
+        weighted.sort("date", "symbol", "family", "factor_name")
+        .group_by("date", "symbol", "family", maintain_order=True)
+        .agg(
+            (pl.col("score_size_neutral") * pl.col("factor_weight"))
+            .sum()
+            .truediv(pl.col("factor_weight").sum())
+            .alias("family_score"),
+            pl.len().alias("factor_count"),
+        )
     )
-    scores = family_scores.group_by("date", "symbol", maintain_order=True).agg(
-        pl.col("family_score").mean().alias("raw_score"),
-        pl.len().alias("family_count"),
-        pl.col("factor_count").sum().alias("factor_count"),
-    ).filter(pl.col("family_count") >= minimum_families).with_columns(
-        pl.lit("rolling_ic_family").alias("method")
+    scores = (
+        family_scores.group_by("date", "symbol", maintain_order=True)
+        .agg(
+            pl.col("family_score").mean().alias("raw_score"),
+            pl.len().alias("family_count"),
+            pl.col("factor_count").sum().alias("factor_count"),
+        )
+        .filter(pl.col("family_count") >= minimum_families)
+        .with_columns(pl.lit("rolling_ic_family").alias("method"))
     )
     return _deterministic_standardize(scores)
 
@@ -90,27 +95,34 @@ def _static_method(panel: pl.DataFrame, method: str, minimum_families: int) -> p
         panel = panel.filter(pl.col("factor_name").is_in(REPRESENTATIVE_FACTORS))
     elif method not in {"candidate_equal", "family_equal"}:
         raise ValueError(f"unsupported static combination method: {method}")
-    family_scores = panel.sort(
-        "date", "symbol", "family", "factor_name"
-    ).group_by("date", "symbol", "family", maintain_order=True).agg(
-        pl.col("score_size_neutral").mean().alias("family_score"),
-        pl.len().alias("factor_count"),
+    family_scores = (
+        panel.sort("date", "symbol", "family", "factor_name")
+        .group_by("date", "symbol", "family", maintain_order=True)
+        .agg(
+            pl.col("score_size_neutral").mean().alias("family_score"),
+            pl.len().alias("factor_count"),
+        )
     )
     score_expression = (
         pl.col("family_score").mean()
         if method != "candidate_equal"
-        else (pl.col("family_score") * pl.col("factor_count")).sum()
-        / pl.col("factor_count").sum()
+        else (pl.col("family_score") * pl.col("factor_count")).sum() / pl.col("factor_count").sum()
     )
-    scores = family_scores.group_by("date", "symbol", maintain_order=True).agg(
-        score_expression.alias("raw_score"),
-        pl.len().alias("family_count"),
-        pl.col("factor_count").sum().alias("factor_count"),
-    ).filter(pl.col("family_count") >= minimum_families)
+    scores = (
+        family_scores.group_by("date", "symbol", maintain_order=True)
+        .agg(
+            score_expression.alias("raw_score"),
+            pl.len().alias("family_count"),
+            pl.col("factor_count").sum().alias("factor_count"),
+        )
+        .filter(pl.col("family_count") >= minimum_families)
+    )
     scores = scores.with_columns(pl.lit(method).alias("method"))
     return scores.with_columns(
-        ((pl.col("raw_score") - pl.col("raw_score").mean().over("date", "method"))
-         / pl.col("raw_score").std(ddof=0).over("date", "method"))
+        (
+            (pl.col("raw_score") - pl.col("raw_score").mean().over("date", "method"))
+            / pl.col("raw_score").std(ddof=0).over("date", "method")
+        )
         .fill_nan(0.0)
         .alias("score")
     ).select("date", "symbol", "method", "score", "raw_score", "family_count", "factor_count")

@@ -40,10 +40,13 @@ def test_long_table_keeps_sensitive_failed_and_missing_experiments() -> None:
 
     table = build_robustness_long_table(results, protocol)
 
-    assert table.filter(
-        (pl.col("experiment_id") == "execution_slippage_high")
-        & (pl.col("interpretation") == "sensitive")
-    ).height == 2
+    assert (
+        table.filter(
+            (pl.col("experiment_id") == "execution_slippage_high")
+            & (pl.col("interpretation") == "sensitive")
+        ).height
+        == 2
+    )
     failed = table.filter(pl.col("experiment_id") == "portfolio_universe_high")
     assert failed.item(0, "interpretation") == "failed"
     assert "requested universe" in failed.item(0, "reason")
@@ -107,9 +110,7 @@ def test_long_table_infers_late_failure_reason_after_one_hundred_metric_rows() -
     table = build_robustness_long_table(results, protocol)
 
     assert (
-        table.filter(pl.col("experiment_id") == "portfolio_universe_high").item(
-            0, "reason"
-        )
+        table.filter(pl.col("experiment_id") == "portfolio_universe_high").item(0, "reason")
         == "requested universe exceeds frozen upstream"
     )
 

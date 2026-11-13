@@ -58,9 +58,7 @@ class _CompatibilityProfile:
 _STAGE7_V1 = _CompatibilityProfile(
     name="stage7_v1",
     run_root=Path("artifacts/validation_evaluation/full_runs"),
-    certificate_path=Path(
-        "processed/validation_evaluation/full_reproducibility.json"
-    ),
+    certificate_path=Path("processed/validation_evaluation/full_reproducibility.json"),
     core_paths_source=_stage7_core_paths,
     include_resource_usage=True,
     strict_tree=True,
@@ -154,15 +152,11 @@ class _Adapter(Protocol):
 
 
 def _json_bytes(payload: object) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode()
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
 
 def _validate_run_id(profile: _CompatibilityProfile, run_id: str) -> None:
-    if profile.safe_run_id and re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", run_id
-    ) is None:
+    if profile.safe_run_id and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", run_id) is None:
         raise ValueError("validation run ID must be a safe slug")
 
 
@@ -187,15 +181,9 @@ def _validate_run_outputs(
         profile,
         require_manifest=require_manifest,
     )
-    missing = [
-        relative
-        for relative in profile.core_paths
-        if not (run_root / relative).is_file()
-    ]
+    missing = [relative for relative in profile.core_paths if not (run_root / relative).is_file()]
     if missing:
-        raise FileNotFoundError(
-            profile.incomplete_error_prefix + ", ".join(missing)
-        )
+        raise FileNotFoundError(profile.incomplete_error_prefix + ", ".join(missing))
 
 
 def _validate_run_tree(
@@ -210,9 +198,7 @@ def _validate_run_tree(
         if any(path.is_symlink() for path in run_root.rglob("*")):
             raise ValueError("validation run must not contain symlinks")
     actual = {
-        path.relative_to(run_root).as_posix()
-        for path in run_root.rglob("*")
-        if path.is_file()
+        path.relative_to(run_root).as_posix() for path in run_root.rglob("*") if path.is_file()
     }
     if profile.strict_tree:
         allowed = set(profile.core_paths)
@@ -220,10 +206,7 @@ def _validate_run_tree(
             allowed.add("run_manifest.json")
         unexpected = sorted(actual - allowed)
         if unexpected:
-            raise ValueError(
-                "validation run contains unexpected files: "
-                + ", ".join(unexpected)
-            )
+            raise ValueError("validation run contains unexpected files: " + ", ".join(unexpected))
     return actual
 
 
@@ -336,19 +319,11 @@ def _verify_manifest(
         assert profile.manifest_incomplete_error_prefix is not None
         assert profile.manifest_hash_error_prefix is not None
         if manifest.get("core_file_count") != len(profile.core_paths):
-            raise ValueError(
-                profile.manifest_incomplete_error_prefix + run_root.name
-            )
-        recorded = {
-            item["path"]: item["sha256"]
-            for item in manifest.get("files", [])
-        }
+            raise ValueError(profile.manifest_incomplete_error_prefix + run_root.name)
+        recorded = {item["path"]: item["sha256"] for item in manifest.get("files", [])}
         for relative in profile.core_paths:
             if recorded.get(relative) != _sha256(run_root / relative):
-                raise ValueError(
-                    profile.manifest_hash_error_prefix
-                    + f"{run_root.name}/{relative}"
-                )
+                raise ValueError(profile.manifest_hash_error_prefix + f"{run_root.name}/{relative}")
     return manifest
 
 
@@ -368,9 +343,7 @@ def _compare_core_outputs(
         first_hash = _sha256(left)
         second_hash = _sha256(right)
         if first_hash != second_hash:
-            raise ValueError(
-                f"{profile.output_difference_label} runs differ: {relative}"
-            )
+            raise ValueError(f"{profile.output_difference_label} runs differ: {relative}")
         hashes[relative] = second_hash
     return hashes
 
@@ -438,9 +411,7 @@ def _certify_runs(
             "code": common["code"],
             "inputs": common["inputs"],
             "core_hashes": common["core_hashes"],
-            "run_manifest_sha256": [
-                _sha256(root / "run_manifest.json") for root in roots
-            ],
+            "run_manifest_sha256": [_sha256(root / "run_manifest.json") for root in roots],
         }
     else:
         result = common
@@ -554,10 +525,7 @@ def _verify_compatibility_source(
         raise ValueError(profile.source_code_error)
     if manifest.get("inputs") != certificate.get("inputs"):
         raise ValueError(profile.source_input_error)
-    manifest_hashes = {
-        item["path"]: item["sha256"]
-        for item in manifest.get("files", [])
-    }
+    manifest_hashes = {item["path"]: item["sha256"] for item in manifest.get("files", [])}
     expected = certificate.get("core_hashes", {})
     for relative in profile.core_paths:
         actual = _sha256(source / relative)
@@ -568,11 +536,7 @@ def _verify_compatibility_source(
         ):
             raise ValueError(
                 profile.source_hash_error_prefix
-                + (
-                    relative
-                    if not profile.verify_manifest_hashes
-                    else f"{run_id}/{relative}"
-                )
+                + (relative if not profile.verify_manifest_hashes else f"{run_id}/{relative}")
             )
 
 
@@ -594,11 +558,7 @@ def release(
     recorded = (
         dict(certificate)
         if certificate is not None
-        else json.loads(
-            (binding.data_root / profile.certificate_path).read_text(
-                encoding="utf-8"
-            )
-        )
+        else json.loads((binding.data_root / profile.certificate_path).read_text(encoding="utf-8"))
     )
     rebuilt = _certify_runs(
         profile,
@@ -634,9 +594,7 @@ def release(
         staged_artifacts=prepared.staged_artifacts,
         lineage=dict(prepared.lineage),
         manifest_metadata=(
-            dict(prepared.manifest_metadata)
-            if prepared.manifest_metadata is not None
-            else None
+            dict(prepared.manifest_metadata) if prepared.manifest_metadata is not None else None
         ),
         **dict(prepared.publish_kwargs or {}),
     )

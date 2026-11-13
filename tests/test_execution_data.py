@@ -69,9 +69,12 @@ def test_adv_window_uses_market_days_including_missing_security_rows() -> None:
 
     panel = build_execution_panel(frame, adv_lookback=20)
 
-    assert panel.filter(
-        (pl.col("symbol") == "000002") & (pl.col("date") == market_dates[-1])
-    ).item(0, "adv20") is None
+    assert (
+        panel.filter((pl.col("symbol") == "000002") & (pl.col("date") == market_dates[-1])).item(
+            0, "adv20"
+        )
+        is None
+    )
 
 
 def test_corporate_actions_apply_once_on_effective_date() -> None:

@@ -92,9 +92,7 @@ def test_validation_runtime_gates_require_ready_shadow_and_stale_audits(
     candidate = "family_equal_size_stratified_buffered"
     artifacts = tmp_path / "backtests" / candidate / "artifacts"
     artifacts.mkdir(parents=True)
-    (artifacts / "shadow_nav_audit.json").write_text(
-        '{"status": "ready"}\n', encoding="utf-8"
-    )
+    (artifacts / "shadow_nav_audit.json").write_text('{"status": "ready"}\n', encoding="utf-8")
     (artifacts / "stale_audit.json").write_text(
         '{"status": "ready", "unexplained_symbols": 0}\n', encoding="utf-8"
     )
@@ -113,9 +111,7 @@ def test_validation_release_path_enforces_approved_stage_six_pointer(
 ) -> None:
     formal = tmp_path / "processed/formal_backtest"
     formal.mkdir(parents=True)
-    (formal / "CURRENT.json").write_text(
-        '{"run_id": "unapproved"}\n', encoding="utf-8"
-    )
+    (formal / "CURRENT.json").write_text('{"run_id": "unapproved"}\n', encoding="utf-8")
 
     with pytest.raises(ValueError, match="unapproved stage six release"):
         assert_validation_upstream_releases(tmp_path)
@@ -170,9 +166,7 @@ def test_finalize_validation_run_records_every_full_pipeline_core_file(
         path = run / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.suffix == ".parquet":
-            pl.DataFrame(
-                {"date": [date(2021, 12, 31)], "value": [1.0]}
-            ).write_parquet(path)
+            pl.DataFrame({"date": [date(2021, 12, 31)], "value": [1.0]}).write_parquet(path)
         else:
             path.write_text("deterministic\n", encoding="utf-8")
 
@@ -219,9 +213,7 @@ def test_full_pipeline_certification_requires_all_core_hashes_and_marks_dirty_ru
             path = run / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             if path.suffix == ".parquet":
-                pl.DataFrame(
-                    {"date": [date(2021, 12, 31)], "value": [1.0]}
-                ).write_parquet(path)
+                pl.DataFrame({"date": [date(2021, 12, 31)], "value": [1.0]}).write_parquet(path)
             else:
                 path.write_text("deterministic\n", encoding="utf-8")
         finalize_validation_run(

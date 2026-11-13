@@ -6,9 +6,11 @@ import polars as pl
 def top_n_equal(panel: pl.DataFrame, *, portfolio_size: int, portfolio_name: str) -> pl.DataFrame:
     if panel.get_column("symbol").n_unique() != panel.height:
         raise ValueError("duplicate securities are not allowed")
-    selected = panel.filter(pl.col("score").is_finite()).sort(
-        "score", "symbol", descending=[True, False]
-    ).head(portfolio_size)
+    selected = (
+        panel.filter(pl.col("score").is_finite())
+        .sort("score", "symbol", descending=[True, False])
+        .head(portfolio_size)
+    )
     if selected.is_empty():
         raise ValueError("portfolio has no eligible securities")
     return selected.with_row_index("selection_rank", offset=1).with_columns(

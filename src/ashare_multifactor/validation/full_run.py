@@ -65,7 +65,9 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
     formal = config.formal_backtest
     validation = config.validation_evaluation
     if any(item is None for item in (factor, combination, portfolio, formal, validation)):
-        raise ValueError("stage seven requires factor, combination, portfolio, and backtest settings")
+        raise ValueError(
+            "stage seven requires factor, combination, portfolio, and backtest settings"
+        )
     datasets = run_root / "datasets"
     artifacts = run_root / "artifacts"
     datasets.mkdir(parents=True)
@@ -94,13 +96,9 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         factor_settings,
     )
     factor_evaluation.rank_ic.write_parquet(artifacts / "factor_rank_ic.parquet")
-    factor_evaluation.quantile_returns.write_parquet(
-        artifacts / "factor_quantile_returns.parquet"
-    )
+    factor_evaluation.quantile_returns.write_parquet(artifacts / "factor_quantile_returns.parquet")
     factor_evaluation.factor_summary.write_parquet(artifacts / "factor_summary.parquet")
-    factor_evaluation.factor_turnover.write_parquet(
-        artifacts / "factor_turnover.parquet"
-    )
+    factor_evaluation.factor_turnover.write_parquet(artifacts / "factor_turnover.parquet")
 
     research = data_root / "processed/factor_research"
     historical_returns = pl.read_parquet(research / "forward_returns.parquet")
@@ -109,9 +107,7 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         config.supported_markets,
         label="Stage-7 handoff Stage-4 forward returns",
     )
-    all_returns = pl.concat(
-        (historical_returns, extension.forward_returns), how="vertical_relaxed"
-    )
+    all_returns = pl.concat((historical_returns, extension.forward_returns), how="vertical_relaxed")
     combinations = build_validation_combinations(
         extension.panel,
         pl.read_parquet(research / "factor_classifications.parquet"),
@@ -133,12 +129,8 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         subperiod_boundaries=(("2017-2021", 2017, 2021),),
     )
     composite_evaluation.ic.write_parquet(artifacts / "composite_rank_ic.parquet")
-    composite_evaluation.quantiles.write_parquet(
-        artifacts / "composite_quantile_returns.parquet"
-    )
-    composite_evaluation.subperiods.write_parquet(
-        artifacts / "composite_subperiods.parquet"
-    )
+    composite_evaluation.quantiles.write_parquet(artifacts / "composite_quantile_returns.parquet")
+    composite_evaluation.subperiods.write_parquet(artifacts / "composite_subperiods.parquet")
     composite_evaluation.summary.write_parquet(artifacts / "composite_summary.parquet")
     composite_summary = composite_evaluation.summary
 
@@ -151,9 +143,7 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         (pl.col("portfolio_name") == "size_stratified_buffered")
         & (pl.col("date") == pl.col("date").max())
     )
-    log_size = extension.features.filter(
-        pl.col("factor_name") == "log_market_cap"
-    ).select(
+    log_size = extension.features.filter(pl.col("factor_name") == "log_market_cap").select(
         "date",
         "symbol",
         pl.col("raw_value").alias("log_market_cap"),
@@ -174,13 +164,9 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
             buffer_rank=portfolio.buffer_rank,
         )
         targets = built.targets.with_columns(pl.lit(candidate).alias("candidate"))
-        diagnostics = built.diagnostics.with_columns(
-            pl.lit(candidate).alias("candidate")
-        )
+        diagnostics = built.diagnostics.with_columns(pl.lit(candidate).alias("candidate"))
         targets.write_parquet(datasets / f"target_weights_{candidate}.parquet")
-        diagnostics.write_parquet(
-            artifacts / f"target_diagnostics_{candidate}.parquet"
-        )
+        diagnostics.write_parquet(artifacts / f"target_diagnostics_{candidate}.parquet")
         target_frames.append(targets)
         diagnostic_frames.append(diagnostics)
     validation_targets = pl.concat(target_frames).sort("candidate", "date", "symbol")
@@ -230,9 +216,7 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
     )
     symbols = sorted(
         event_symbols
-        | set().union(
-            *(set(frame.get_column("symbol")) for frame in continuous.values())
-        )
+        | set().union(*(set(frame.get_column("symbol")) for frame in continuous.values()))
     )
     raw_extension = daily.filter(
         (pl.col("date") >= pl.date(2016, 11, 1)) & pl.col("symbol").is_in(symbols)
@@ -264,8 +248,7 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
     )
     actions = load_validation_corporate_actions(
         research_actions,
-        source_cache
-        / "baostock_dividend/baostock_dividends_execution_union.parquet",
+        source_cache / "baostock_dividend/baostock_dividends_execution_union.parquet",
         symbols=symbols,
         payment_date_overrides=payments,
         action_corrections=corrections,
@@ -273,12 +256,8 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
     assert_supported_markets(
         validation_targets, config.supported_markets, label="Stage-7 target weights"
     )
-    assert_supported_markets(
-        execution, config.supported_markets, label="Stage-7 execution panel"
-    )
-    assert_supported_markets(
-        actions, config.supported_markets, label="Stage-7 corporate actions"
-    )
+    assert_supported_markets(execution, config.supported_markets, label="Stage-7 execution panel")
+    assert_supported_markets(actions, config.supported_markets, label="Stage-7 corporate actions")
     assert_supported_markets(
         events,
         config.supported_markets,
@@ -357,15 +336,11 @@ def execute_validation_stages(code_root: Path, data_root: Path, run_root: Path) 
         _write_json(candidate_artifacts / "stale_audit.json", stale)
         stale_intervals.write_parquet(candidate_artifacts / "stale_intervals.parquet")
         diagnostics = target_diagnostics.filter(pl.col("candidate") == candidate)
-        metric_rows.append(
-            validation_portfolio_metrics(candidate, result, diagnostics)
-        )
+        metric_rows.append(validation_portfolio_metrics(candidate, result, diagnostics))
         del result, shadow_daily, stale_intervals
         gc.collect()
 
-    metrics = _attach_composite_metrics(
-        pl.DataFrame(metric_rows), composite_summary
-    )
+    metrics = _attach_composite_metrics(pl.DataFrame(metric_rows), composite_summary)
     metrics.write_parquet(artifacts / "validation_metrics.parquet")
     decision = select_validation_candidate(metrics, validation)
     _write_json(artifacts / "selection_decision.json", decision)
@@ -379,8 +354,7 @@ def _load_factor_daily_panel(root: Path) -> pl.DataFrame:
         root / f"processed/factor_research/daily_panel/year={year}/part-000.parquet"
         for year in range(2003, 2017)
     ] + [
-        root
-        / f"processed/validation_evaluation/daily_panel/year={year}/part-000.parquet"
+        root / f"processed/validation_evaluation/daily_panel/year={year}/part-000.parquet"
         for year in range(2017, 2022)
     ]
     if any(not path.is_file() for path in paths):
@@ -395,10 +369,9 @@ def _load_readiness(path: Path) -> FieldReadiness:
 
 def _realization_dates(returns: pl.DataFrame) -> pl.DataFrame:
     return returns.group_by("date").agg(
-        (
-            pl.col("date").first()
-            + pl.duration(days=pl.col("forward_calendar_days_20").max())
-        ).alias("realization_date")
+        (pl.col("date").first() + pl.duration(days=pl.col("forward_calendar_days_20").max())).alias(
+            "realization_date"
+        )
     )
 
 
@@ -418,12 +391,17 @@ def _attach_composite_metrics(
         "icir",
         "monotonicity",
     )
-    return portfolio_metrics.join(mapping, on="candidate", how="left").join(
-        research,
-        on="method",
-        how="left",
-        validate="m:1",
-    ).drop("method").sort("candidate")
+    return (
+        portfolio_metrics.join(mapping, on="candidate", how="left")
+        .join(
+            research,
+            on="method",
+            how="left",
+            validate="m:1",
+        )
+        .drop("method")
+        .sort("candidate")
+    )
 
 
 def _write_json(path: Path, payload: dict[str, object]) -> None:

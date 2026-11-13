@@ -55,10 +55,6 @@ def validation_portfolio_metrics(
         "average_cash_weight": (
             validation.get_column("cash") / validation.get_column("nav")
         ).mean(),
-        "average_target_deviation": execution_diagnostics.get_column(
-            "target_deviation_l1"
-        ).mean(),
-        "maximum_reconciliation_difference": reconciliation.get_column(
-            "difference"
-        ).abs().max(),
+        "average_target_deviation": execution_diagnostics.get_column("target_deviation_l1").mean(),
+        "maximum_reconciliation_difference": reconciliation.get_column("difference").abs().max(),
     }

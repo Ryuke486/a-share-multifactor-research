@@ -64,30 +64,39 @@ def build_validation_combinations(
         minimum_families=minimum_families,
     )
     scores = pl.concat((static, dynamic)).sort("date", "symbol", "method")
-    weights = rolling.with_columns(
-        pl.lit("rolling_ic_family").alias("method"),
-        (pl.col("factor_weight") / len(CANDIDATE_FACTORS)).alias("weight"),
-    ).select(
-        "date",
-        "method",
-        "factor_name",
-        "family",
-        "weight",
-        "history_start",
-        "history_end",
-        "history_months",
-        "fallback_equal",
-    ).sort("date", "factor_name")
-    audit = scores.group_by("date", "method").agg(
-        pl.len().alias("scored_securities"),
-        pl.col("family_count").min().alias("minimum_family_count"),
-    ).join(
-        weights.group_by("date").agg(
-            pl.col("fallback_equal").sum().alias("fallback_factor_count"),
-            pl.col("history_months").min().alias("minimum_history_months"),
-        ),
-        on="date",
-        how="left",
-        validate="m:1",
-    ).sort("date", "method")
+    weights = (
+        rolling.with_columns(
+            pl.lit("rolling_ic_family").alias("method"),
+            (pl.col("factor_weight") / len(CANDIDATE_FACTORS)).alias("weight"),
+        )
+        .select(
+            "date",
+            "method",
+            "factor_name",
+            "family",
+            "weight",
+            "history_start",
+            "history_end",
+            "history_months",
+            "fallback_equal",
+        )
+        .sort("date", "factor_name")
+    )
+    audit = (
+        scores.group_by("date", "method")
+        .agg(
+            pl.len().alias("scored_securities"),
+            pl.col("family_count").min().alias("minimum_family_count"),
+        )
+        .join(
+            weights.group_by("date").agg(
+                pl.col("fallback_equal").sum().alias("fallback_factor_count"),
+                pl.col("history_months").min().alias("minimum_history_months"),
+            ),
+            on="date",
+            how="left",
+            validate="m:1",
+        )
+        .sort("date", "method")
+    )
     return ValidationCombinationExtension(scores, weights, audit)

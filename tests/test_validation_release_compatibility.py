@@ -21,12 +21,8 @@ FIXED_IDENTITY: dict[str, object] = {
     "sources": [],
     "tree": "b" * 40,
 }
-FIXED_INPUTS: dict[str, object] = {
-    "frozen_input": {"sha256": "d" * 64, "size": 123}
-}
-VALIDATION_CORE_PATHS_SHA256 = (
-    "3a9d9634313088521a74b412b986810160c79d6c02a47dbb72ca586f22869f31"
-)
+FIXED_INPUTS: dict[str, object] = {"frozen_input": {"sha256": "d" * 64, "size": 123}}
+VALIDATION_CORE_PATHS_SHA256 = "3a9d9634313088521a74b412b986810160c79d6c02a47dbb72ca586f22869f31"
 OBSERVED_VALIDATION_CALL_SURFACE = {
     "assert_validation_outputs_sealed": ("(root: 'Path') -> 'None'", "None"),
     "assert_validation_runtime_gates": (
@@ -38,10 +34,7 @@ OBSERVED_VALIDATION_CALL_SURFACE = {
         "None",
     ),
     "certify_full_validation_runs": (
-        (
-            "(data_root: 'Path', first_run_id: 'str', second_run_id: 'str') "
-            "-> 'dict[str, object]'"
-        ),
+        ("(data_root: 'Path', first_run_id: 'str', second_run_id: 'str') -> 'dict[str, object]'"),
         "dict[str, object]",
     ),
     "compare_validation_outputs": (
@@ -53,10 +46,7 @@ OBSERVED_VALIDATION_CALL_SURFACE = {
         "Path",
     ),
     "execute_validation_reproducibility": (
-        (
-            "(code_root: 'Path', *, run_id_prefix: 'str | None' = None) "
-            "-> 'dict[str, object]'"
-        ),
+        ("(code_root: 'Path', *, run_id_prefix: 'str | None' = None) -> 'dict[str, object]'"),
         "dict[str, object]",
     ),
     "finalize_validation_run": (
@@ -91,9 +81,7 @@ OBSERVED_VALIDATION_CALL_SURFACE = {
 
 
 def _json_bytes(payload: object) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode()
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
 
 def _core_bytes(relative: str) -> bytes:
@@ -173,9 +161,10 @@ def test_validation_observed_call_surface_and_core_paths_are_frozen() -> None:
     assert actual == OBSERVED_VALIDATION_CALL_SURFACE
     assert len(pipeline.CORE_VALIDATION_FILES) == 98
     assert len(set(pipeline.CORE_VALIDATION_FILES)) == 98
-    assert hashlib.sha256(
-        "\n".join(pipeline.CORE_VALIDATION_FILES).encode()
-    ).hexdigest() == VALIDATION_CORE_PATHS_SHA256
+    assert (
+        hashlib.sha256("\n".join(pipeline.CORE_VALIDATION_FILES).encode()).hexdigest()
+        == VALIDATION_CORE_PATHS_SHA256
+    )
 
 
 def test_stage7_manifest_and_certificate_bytes_are_frozen(
@@ -187,9 +176,7 @@ def test_stage7_manifest_and_certificate_bytes_are_frozen(
         expected = _expected_manifest(root.name)
         assert (root / "run_manifest.json").read_bytes() == _json_bytes(expected)
 
-    result = pipeline.certify_full_validation_runs(
-        tmp_path, first.name, second.name
-    )
+    result = pipeline.certify_full_validation_runs(tmp_path, first.name, second.name)
     expected_manifests = [_expected_manifest(first.name), _expected_manifest(second.name)]
     expected_certificate = {
         "scope": "full_pipeline",
@@ -201,19 +188,14 @@ def test_stage7_manifest_and_certificate_bytes_are_frozen(
         "reason": None,
         "code": FIXED_IDENTITY,
         "inputs": FIXED_INPUTS,
-        "core_hashes": {
-            item["path"]: item["sha256"] for item in expected_manifests[1]["files"]
-        },
+        "core_hashes": {item["path"]: item["sha256"] for item in expected_manifests[1]["files"]},
         "run_manifest_sha256": [
-            hashlib.sha256(_json_bytes(manifest)).hexdigest()
-            for manifest in expected_manifests
+            hashlib.sha256(_json_bytes(manifest)).hexdigest() for manifest in expected_manifests
         ],
     }
 
     assert result == expected_certificate
-    certificate = (
-        tmp_path / "processed/validation_evaluation/full_reproducibility.json"
-    )
+    certificate = tmp_path / "processed/validation_evaluation/full_reproducibility.json"
     assert certificate.read_bytes() == _json_bytes(expected_certificate)
 
 
@@ -302,9 +284,7 @@ def test_stage7_closed_tree_symlinks_extra_files_and_missing_files_are_frozen(
     target.mkdir()
     root_link = tmp_path / "root-link"
     root_link.symlink_to(target, target_is_directory=True)
-    with pytest.raises(
-        ValueError, match="^validation run root must not be a symlink$"
-    ):
+    with pytest.raises(ValueError, match="^validation run root must not be a symlink$"):
         pipeline.finalize_validation_run(
             root_link,
             run_id="root-link",
@@ -316,9 +296,7 @@ def test_stage7_closed_tree_symlinks_extra_files_and_missing_files_are_frozen(
 
     nested_link = target / "linked-file"
     nested_link.symlink_to(tmp_path / "outside")
-    with pytest.raises(
-        ValueError, match="^validation run must not contain symlinks$"
-    ):
+    with pytest.raises(ValueError, match="^validation run must not contain symlinks$"):
         pipeline.finalize_validation_run(
             target,
             run_id="target",
@@ -366,9 +344,7 @@ def test_stage7_safe_slug_and_duplicate_run_directory_errors_are_frozen(
     assert pipeline.validate_run_id("Stage7_safe-1") == "Stage7_safe-1"
     assert pipeline.validate_run_id("a" * 128) == "a" * 128
     for invalid in ("", "../escape", "with space", "a/b", "a" * 129):
-        with pytest.raises(
-            ValueError, match="^validation run ID must be a safe slug$"
-        ):
+        with pytest.raises(ValueError, match="^validation run ID must be a safe slug$"):
             pipeline.validate_run_id(invalid)
 
     monkeypatch.setattr(pipeline, "resolve_validation_data_root", lambda root: tmp_path)
@@ -437,9 +413,7 @@ def test_stage7_execution_drift_cleans_new_run(
         else [FIXED_IDENTITY, FIXED_IDENTITY]
     )
     inputs = iter(
-        [FIXED_INPUTS, FIXED_INPUTS]
-        if drift == "code"
-        else [FIXED_INPUTS, {"changed": True}]
+        [FIXED_INPUTS, FIXED_INPUTS] if drift == "code" else [FIXED_INPUTS, {"changed": True}]
     )
     monkeypatch.setattr(pipeline, "code_identity", lambda root: next(identities))
     monkeypatch.setattr(
@@ -467,11 +441,7 @@ def test_stage7_publish_false_mapping_and_lineage_shape_are_frozen(
     }
     pipeline._copy_certified_core(source, staged, hashes)
 
-    actual = {
-        path.relative_to(staged).as_posix()
-        for path in staged.rglob("*")
-        if path.is_file()
-    }
+    actual = {path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file()}
     assert actual == {_staged_path(path) for path in pipeline.CORE_VALIDATION_FILES}
     for relative in pipeline.CORE_VALIDATION_FILES:
         assert (staged / _staged_path(relative)).read_bytes() == _core_bytes(relative)
@@ -543,9 +513,7 @@ def test_stage7_publish_false_mapping_and_lineage_shape_are_frozen(
         "publish_release",
         lambda *args, **kwargs: pytest.fail("publish=false must not publish"),
     )
-    assert pipeline.run_validation_release(
-        code_root, publish=False, run_id="staged"
-    ) == staged
+    assert pipeline.run_validation_release(code_root, publish=False, run_id="staged") == staged
 
 
 @pytest.mark.parametrize(
@@ -590,16 +558,14 @@ def test_validation_cli_run_reproduce_and_required_command_contract(
     monkeypatch.setattr(
         validation_cli,
         "execute_full_validation_run",
-        lambda root, *, run_id: calls.append(("run", root, run_id))
-        or Path("/fixed/run"),
+        lambda root, *, run_id: calls.append(("run", root, run_id)) or Path("/fixed/run"),
     )
     monkeypatch.setattr(
         validation_cli,
         "execute_validation_reproducibility",
-        lambda root, *, run_id_prefix: calls.append(
-            ("reproduce", root, run_id_prefix)
-        )
-        or {"status": "fixed"},
+        lambda root, *, run_id_prefix: (
+            calls.append(("reproduce", root, run_id_prefix)) or {"status": "fixed"}
+        ),
     )
 
     monkeypatch.setattr(

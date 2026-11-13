@@ -17,4 +17,3 @@ def next_trading_dates(
         execution_date = next((value for value in calendar if value > signal_date), None)
         rows.append({"signal_date": signal_date, "execution_date": execution_date})
     return pl.DataFrame(rows, schema={"signal_date": pl.Date, "execution_date": pl.Date})
-

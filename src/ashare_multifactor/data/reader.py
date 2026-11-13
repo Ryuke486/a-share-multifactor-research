@@ -81,8 +81,10 @@ def _read_selected(path: Path, rename: dict[str, str]) -> pl.DataFrame:
 
 
 def _parse_boolean(column: str) -> pl.Expr:
-    return pl.col(column).cast(pl.String).replace_strict(
-        {"是": True, "否": False}, default=None, return_dtype=pl.Boolean
+    return (
+        pl.col(column)
+        .cast(pl.String)
+        .replace_strict({"是": True, "否": False}, default=None, return_dtype=pl.Boolean)
     )
 
 
@@ -94,7 +96,9 @@ def _normalize_symbols(frame: pl.DataFrame, label: str) -> pl.DataFrame:
 
 
 def read_daily_pair(pair: DailyFilePair) -> pl.DataFrame:
-    raw = _normalize_symbols(_read_selected(pair.unadjusted, RAW_RENAME), "unadjusted").with_columns(
+    raw = _normalize_symbols(
+        _read_selected(pair.unadjusted, RAW_RENAME), "unadjusted"
+    ).with_columns(
         _parse_boolean("is_st"),
         _parse_boolean("is_limit_up"),
         _parse_boolean("is_margin"),

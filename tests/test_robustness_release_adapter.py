@@ -18,15 +18,11 @@ FIXED_CODE: dict[str, object] = {
     "dirty": False,
     "tree": "b" * 40,
 }
-FIXED_INPUTS: dict[str, object] = {
-    "frozen_input": {"sha256": "c" * 64, "size": 123}
-}
+FIXED_INPUTS: dict[str, object] = {"frozen_input": {"sha256": "c" * 64, "size": 123}}
 
 
 def _json_bytes(payload: object) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode()
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
 
 def _protocol() -> SimpleNamespace:
@@ -310,9 +306,7 @@ def test_stage8_adapter_prepares_legacy_mapping_seal_and_lineage(
     assert (staged / "datasets/robustness_results.parquet").read_bytes() == (
         source / "robustness_results.parquet"
     ).read_bytes()
-    assert (staged / "artifacts/report.md").read_bytes() == (
-        source / "report.md"
-    ).read_bytes()
+    assert (staged / "artifacts/report.md").read_bytes() == (source / "report.md").read_bytes()
     assert captured["validation_pointer"] == validation_pointer
     assert prepared.lineage == {
         "stage": "robustness",
@@ -386,9 +380,7 @@ def test_stage8_adapter_prepare_release_preserves_protocol_gate_failure(
 ) -> None:
     source = tmp_path / "source"
     source.mkdir()
-    (source / "protocol_gate.json").write_text(
-        '{"sealed_test_protocol_allowed": false}\n'
-    )
+    (source / "protocol_gate.json").write_text('{"sealed_test_protocol_allowed": false}\n')
     binding = release_adapter.RobustnessReleaseBinding(
         profile="stage8_v1",
         code_root=tmp_path / "code",

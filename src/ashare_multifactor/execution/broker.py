@@ -68,9 +68,7 @@ def _run_backtest_once(
     }
     actions_by_payment_date = {
         key[0]: group.to_dicts()
-        for key, group in corporate_actions.group_by(
-            "effective_date", maintain_order=True
-        )
+        for key, group in corporate_actions.group_by("effective_date", maintain_order=True)
     }
     security_events_by_date = (
         {
@@ -165,9 +163,7 @@ def _run_backtest_once(
                     ledgers["explicit_fee_only"],
                     ledgers["zero_cost"],
                 ):
-                    alternate.apply_action(
-                        action["symbol"], 0.0, action["share_ratio"], trade_date
-                    )
+                    alternate.apply_action(action["symbol"], 0.0, action["share_ratio"], trade_date)
 
         for action in actions_by_payment_date.get(trade_date, []):
             if action["action_id"] not in recognized_dividends:
@@ -209,9 +205,7 @@ def _run_backtest_once(
             cash_sequence += 1
             if event["event_type"] in {"cash_exit", "write_off"}:
                 cash_per_share = (
-                    event["cash_per_share"]
-                    if event["event_type"] == "cash_exit"
-                    else 0.0
+                    event["cash_per_share"] if event["event_type"] == "cash_exit" else 0.0
                 )
                 proceeds = ledger.cash_exit(source, cash_per_share)
                 for alternate in (
@@ -304,9 +298,7 @@ def _run_backtest_once(
             active_signal_date = signal_date
             active_target_weights = weights
             diagnostic_target = weights
-            order_specs = build_target_order_specs(
-                ledger, weights, market, last_close
-            )
+            order_specs = build_target_order_specs(ledger, weights, market, last_close)
             candidates: list[tuple[int, str, Order]] = []
             for priority, symbol, side, requested, _ in order_specs:
                 quantity = requested
@@ -370,9 +362,7 @@ def _run_backtest_once(
                     if within_band and candidate_open >= upper:
                         continue
                     capacity = math.floor(
-                        candidate_row["adv20"]
-                        * settings.maximum_participation
-                        / candidate_open
+                        candidate_row["adv20"] * settings.maximum_participation / candidate_open
                     )
                     capacity = capacity // settings.buy_lot_size * settings.buy_lot_size
                     requested = min(candidate.remaining_quantity, capacity)
@@ -407,18 +397,14 @@ def _run_backtest_once(
             maximum_amount = row["adv20"] * settings.maximum_participation
             maximum_quantity = math.floor(maximum_amount / row["open_raw"])
             if order.side == "buy":
-                    maximum_quantity = (
-                        maximum_quantity // settings.buy_lot_size * settings.buy_lot_size
-                    )
+                maximum_quantity = maximum_quantity // settings.buy_lot_size * settings.buy_lot_size
             fill_quantity = min(order.remaining_quantity, maximum_quantity)
             if order.side == "sell":
                 fill_quantity = min(
                     fill_quantity, ledger.available_quantity(order.symbol, trade_date)
                 )
             if order.side == "buy":
-                fill_quantity = min(
-                    fill_quantity, (buy_allocations or {}).get(order.symbol, 0)
-                )
+                fill_quantity = min(fill_quantity, (buy_allocations or {}).get(order.symbol, 0))
                 affordable = (
                     math.floor(ledger.cash / row["open_raw"] / settings.buy_lot_size)
                     * settings.buy_lot_size
@@ -427,8 +413,7 @@ def _run_backtest_once(
             if fill_quantity <= 0:
                 zero_reason = (
                     "insufficient_cash_after_fees"
-                    if order.side == "buy"
-                    and (buy_allocations or {}).get(order.symbol, 0) == 0
+                    if order.side == "buy" and (buy_allocations or {}).get(order.symbol, 0) == 0
                     else "capacity_cash_or_t1"
                 )
                 record_event(order, trade_date, zero_reason)
@@ -512,9 +497,7 @@ def _run_backtest_once(
                 )
                 cash_change = -(fill_quantity * priced.price + explicit)
             else:
-                ledger.sell(
-                    order.symbol, fill_quantity, priced.price, explicit, trade_date
-                )
+                ledger.sell(order.symbol, fill_quantity, priced.price, explicit, trade_date)
                 explicit_at_open = fees.calculate(
                     trade_date=trade_date,
                     market=market_code,
@@ -713,12 +696,8 @@ def _run_backtest_once(
 def _zero_fee_schedule(fees: FeeSchedule) -> FeeSchedule:
     return replace(
         fees,
-        stamp_duty=tuple(
-            replace(rule, buy_rate=0.0, sell_rate=0.0) for rule in fees.stamp_duty
-        ),
-        transfer_fees=tuple(
-            replace(rule, rate=0.0, minimum=0.0) for rule in fees.transfer_fees
-        ),
+        stamp_duty=tuple(replace(rule, buy_rate=0.0, sell_rate=0.0) for rule in fees.stamp_duty),
+        transfer_fees=tuple(replace(rule, rate=0.0, minimum=0.0) for rule in fees.transfer_fees),
         commission_rate=0.0,
         minimum_commission=0.0,
     )
@@ -779,10 +758,10 @@ def run_backtest(
     )
     for name in scenario_outputs:
         frames_with_scenario = [
-                frame.with_columns(pl.lit(scenario).alias("scenario"))
-                for scenario, frames in runs.items()
-                if not (frame := frames[name]).is_empty()
-            ]
+            frame.with_columns(pl.lit(scenario).alias("scenario"))
+            for scenario, frames in runs.items()
+            if not (frame := frames[name]).is_empty()
+        ]
         result[f"scenario_{name}"] = (
             pl.concat(frames_with_scenario, how="diagonal_relaxed")
             if frames_with_scenario
@@ -806,7 +785,9 @@ def run_backtest(
         .drop("explicit_cost_nav", "zero_cost_nav")
         .join(comparison, on="date", how="left")
     )
-    result["scenario_reconciliation"] = result["scenario_reconciliation"].drop(
-        "scenario_right", strict=False
-    ).sort("date", "scenario")
+    result["scenario_reconciliation"] = (
+        result["scenario_reconciliation"]
+        .drop("scenario_right", strict=False)
+        .sort("date", "scenario")
+    )
     return result

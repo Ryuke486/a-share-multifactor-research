@@ -44,7 +44,9 @@ def test_rolling_mean_ic_waits_for_a_full_window() -> None:
 
 
 def test_drawdowns_are_measured_from_the_running_peak() -> None:
-    levels = pl.DataFrame({"date": [date(2017, 1, day) for day in (2, 3, 4, 5)], "a": [1.0, 1.2, 0.9, 1.3]})
+    levels = pl.DataFrame(
+        {"date": [date(2017, 1, day) for day in (2, 3, 4, 5)], "a": [1.0, 1.2, 0.9, 1.3]}
+    )
 
     result = drawdowns(levels, columns=("a",))
 

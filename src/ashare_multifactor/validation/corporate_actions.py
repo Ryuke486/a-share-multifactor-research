@@ -101,18 +101,13 @@ def _normalize_baostock_actions(
     if missing:
         raise ValueError(f"missing BaoStock dividend fields: {missing}")
     if raw.filter(
-        (pl.col("query_year_type") != "operate")
-        | ~pl.col("query_year").is_between(2017, 2021)
+        (pl.col("query_year_type") != "operate") | ~pl.col("query_year").is_between(2017, 2021)
     ).height:
         raise ValueError("sealed final test query metadata found in BaoStock cache")
 
     parsed = raw.with_columns(
         *(
-            pl.col(column)
-            .cast(pl.String)
-            .replace("", None)
-            .str.to_date(strict=False)
-            .alias(column)
+            pl.col(column).cast(pl.String).replace("", None).str.to_date(strict=False).alias(column)
             for column in _RAW_DATE_COLUMNS
             if column in raw.columns
         ),
@@ -123,15 +118,11 @@ def _normalize_baostock_actions(
         .alias("cash_per_share"),
         (
             pl.col("dividStocksPs").cast(pl.Float64, strict=False).fill_null(0.0)
-            + pl.col("dividReserveToStockPs")
-            .cast(pl.Float64, strict=False)
-            .fill_null(0.0)
+            + pl.col("dividReserveToStockPs").cast(pl.Float64, strict=False).fill_null(0.0)
         ).alias("share_ratio"),
     )
     for column in _RAW_DATE_COLUMNS:
-        if column in parsed.columns and parsed.filter(
-            pl.col(column) >= date(2022, 1, 1)
-        ).height:
+        if column in parsed.columns and parsed.filter(pl.col(column) >= date(2022, 1, 1)).height:
             raise ValueError(f"sealed final test date found in BaoStock cache: {column}")
     parsed = _apply_official_action_corrections(parsed, action_corrections)
     parsed = _apply_payment_date_overrides(parsed, payment_date_overrides)
@@ -163,9 +154,7 @@ def _normalize_baostock_actions(
             shares.select(
                 "symbol",
                 pl.col("dividOperateDate").alias("ex_date"),
-                pl.coalesce("dividStockMarketDate", "dividOperateDate").alias(
-                    "effective_date"
-                ),
+                pl.coalesce("dividStockMarketDate", "dividOperateDate").alias("effective_date"),
                 pl.lit(0.0).alias("cash_per_share"),
                 "share_ratio",
                 pl.when(pl.col("official_action_correction"))
@@ -218,9 +207,7 @@ def _apply_official_action_corrections(
     key = ["symbol", "source_ex_date"]
     if corrections.select(pl.struct(*key).is_duplicated().any()).item():
         raise ValueError("duplicate action-correction key")
-    source_keys = parsed.select(
-        "symbol", pl.col("dividOperateDate").alias("source_ex_date")
-    )
+    source_keys = parsed.select("symbol", pl.col("dividOperateDate").alias("source_ex_date"))
     if corrections.join(source_keys, on=key, how="anti").height:
         raise ValueError("official action correction does not match BaoStock row")
     joined = parsed.join(
@@ -236,9 +223,7 @@ def _apply_official_action_corrections(
     )
     return joined.with_columns(
         pl.col("corrected_ex_date").is_not_null().alias("official_action_correction"),
-        pl.coalesce("corrected_ex_date", "dividOperateDate").alias(
-            "dividOperateDate"
-        ),
+        pl.coalesce("corrected_ex_date", "dividOperateDate").alias("dividOperateDate"),
         pl.coalesce("corrected_payment_date", "dividPayDate").alias("dividPayDate"),
     ).drop("corrected_ex_date", "corrected_payment_date")
 
@@ -248,18 +233,14 @@ def _apply_payment_date_overrides(
     overrides: pl.DataFrame | None,
 ) -> pl.DataFrame:
     if overrides is None:
-        return parsed.with_columns(
-            pl.lit(None, dtype=pl.Date).alias("official_payment_date")
-        )
+        return parsed.with_columns(pl.lit(None, dtype=pl.Date).alias("official_payment_date"))
     required = {"symbol", "ex_date", "payment_date", "source_url"}
     missing = sorted(required - set(overrides.columns))
     if missing:
         raise ValueError(f"payment-date override fields missing: {missing}")
     if overrides.select(pl.struct("symbol", "ex_date").is_duplicated().any()).item():
         raise ValueError("duplicate payment-date override key")
-    keys = parsed.select(
-        "symbol", pl.col("dividOperateDate").alias("ex_date")
-    ).unique()
+    keys = parsed.select("symbol", pl.col("dividOperateDate").alias("ex_date")).unique()
     if overrides.join(keys, on=["symbol", "ex_date"], how="anti").height:
         raise ValueError("official payment-date evidence does not match BaoStock row")
     joined = parsed.join(

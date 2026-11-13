@@ -23,12 +23,8 @@ FIXED_IDENTITY: dict[str, object] = {
     "sources": [],
     "tree": "b" * 40,
 }
-FIXED_INPUTS: dict[str, object] = {
-    "frozen_input": {"sha256": "d" * 64, "size": 123}
-}
-ROBUSTNESS_CORE_PATHS_SHA256 = (
-    "8eea1cb33977da93c0c0927f3024caf9bd5f8982d99172f62c06f29e3b18b8e7"
-)
+FIXED_INPUTS: dict[str, object] = {"frozen_input": {"sha256": "d" * 64, "size": 123}}
+ROBUSTNESS_CORE_PATHS_SHA256 = "8eea1cb33977da93c0c0927f3024caf9bd5f8982d99172f62c06f29e3b18b8e7"
 OBSERVED_ROBUSTNESS_CALL_SURFACE = {
     "_assert_validation_market_scope": (
         "(validation: 'object', supported_markets: 'tuple[str, ...]') -> 'None'",
@@ -47,10 +43,7 @@ OBSERVED_ROBUSTNESS_CALL_SURFACE = {
         "dict[str, Any]",
     ),
     "execute_robustness_reproducibility": (
-        (
-            "(code_root: 'Path', *, run_id_prefix: 'str | None' = None) "
-            "-> 'dict[str, Any]'"
-        ),
+        ("(code_root: 'Path', *, run_id_prefix: 'str | None' = None) -> 'dict[str, Any]'"),
         "dict[str, Any]",
     ),
     "execute_robustness_run": (
@@ -80,9 +73,7 @@ OBSERVED_ROBUSTNESS_CALL_SURFACE = {
 
 
 def _json_bytes(payload: object) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode()
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
 
 def _core_bytes(relative: str) -> bytes:
@@ -215,9 +206,10 @@ def test_robustness_observed_call_surface_and_core_paths_are_frozen() -> None:
         "report.md",
         "protocol_gate.json",
     )
-    assert hashlib.sha256(
-        "\n".join(pipeline.CORE_ROBUSTNESS_FILES).encode()
-    ).hexdigest() == ROBUSTNESS_CORE_PATHS_SHA256
+    assert (
+        hashlib.sha256("\n".join(pipeline.CORE_ROBUSTNESS_FILES).encode()).hexdigest()
+        == ROBUSTNESS_CORE_PATHS_SHA256
+    )
 
 
 def test_stage8_manifest_and_certificate_bytes_are_frozen(
@@ -243,13 +235,9 @@ def test_stage8_manifest_and_certificate_bytes_are_frozen(
             data_root=tmp_path,
         )
     )
-    monkeypatch.setattr(
-        lifecycle, "run_once", lambda adapter, code_root, *, run_id: next(runs)
-    )
+    monkeypatch.setattr(lifecycle, "run_once", lambda adapter, code_root, *, run_id: next(runs))
     monkeypatch.setattr(pipeline, "_stage8_release_adapter", lambda: adapter)
-    result = pipeline.execute_robustness_reproducibility(
-        tmp_path, run_id_prefix="stage8_fixed"
-    )
+    result = pipeline.execute_robustness_reproducibility(tmp_path, run_id_prefix="stage8_fixed")
     expected = {
         **_expected_comparison(),
         "release_eligible": True,
@@ -257,9 +245,9 @@ def test_stage8_manifest_and_certificate_bytes_are_frozen(
     }
 
     assert result == expected
-    assert (
-        tmp_path / "processed/robustness/reproducibility.json"
-    ).read_bytes() == _json_bytes(expected)
+    assert (tmp_path / "processed/robustness/reproducibility.json").read_bytes() == _json_bytes(
+        expected
+    )
 
 
 def test_stage8_dirty_identity_is_identical_but_not_release_eligible(
@@ -280,14 +268,10 @@ def test_stage8_dirty_identity_is_identical_but_not_release_eligible(
             data_root=tmp_path,
         )
     )
-    monkeypatch.setattr(
-        lifecycle, "run_once", lambda adapter, code_root, *, run_id: next(runs)
-    )
+    monkeypatch.setattr(lifecycle, "run_once", lambda adapter, code_root, *, run_id: next(runs))
     monkeypatch.setattr(pipeline, "_stage8_release_adapter", lambda: adapter)
 
-    result = pipeline.execute_robustness_reproducibility(
-        tmp_path, run_id_prefix="stage8_fixed"
-    )
+    result = pipeline.execute_robustness_reproducibility(tmp_path, run_id_prefix="stage8_fixed")
 
     assert result["outputs_identical"] is True
     assert result["release_eligible"] is False
@@ -399,9 +383,7 @@ def test_stage8_extra_files_and_loose_run_ids_remain_allowed(
     )
     run = pipeline.execute_robustness_run(tmp_path, run_id="nested/legacy run")
     assert run == tmp_path / "artifacts/robustness/full_runs/nested/legacy run"
-    assert json.loads((run / "run_manifest.json").read_text())["run_id"] == (
-        "nested/legacy run"
-    )
+    assert json.loads((run / "run_manifest.json").read_text())["run_id"] == ("nested/legacy run")
 
 
 def test_stage8_duplicate_run_directory_error_is_frozen(
@@ -434,9 +416,7 @@ def test_stage8_dirty_release_fails_before_adapter_binding(
     monkeypatch.setattr(
         pipeline,
         "_stage8_release_adapter",
-        lambda **kwargs: pytest.fail(
-            "dirty identity must fail before adapter binding"
-        ),
+        lambda **kwargs: pytest.fail("dirty identity must fail before adapter binding"),
     )
 
     with pytest.raises(
@@ -471,9 +451,7 @@ def test_stage8_execution_drift_cleans_new_run(
             else [FIXED_IDENTITY, FIXED_IDENTITY]
         ),
         inputs=(
-            [FIXED_INPUTS, FIXED_INPUTS]
-            if drift == "code"
-            else [FIXED_INPUTS, {"changed": True}]
+            [FIXED_INPUTS, FIXED_INPUTS] if drift == "code" else [FIXED_INPUTS, {"changed": True}]
         ),
     )
     run = tmp_path / "artifacts/robustness/full_runs/drift"
@@ -610,9 +588,7 @@ def test_stage8_publication_preparation_mapping_and_lineage_are_frozen(
     assert captured["artifact_files"] == {
         "protocol_gate.json": source_payloads["protocol_gate.json"],
         "report.md": source_payloads["report.md"],
-        "sealed_test_protocol.json": _json_bytes(
-            {"sealed_protocol_sha256": "f" * 64}
-        ),
+        "sealed_test_protocol.json": _json_bytes({"sealed_protocol_sha256": "f" * 64}),
     }
     assert captured["manifest_metadata"] == {"stage": "robustness"}
     lineage = captured["lineage"]
@@ -643,22 +619,21 @@ def test_robustness_cli_run_reproduce_and_publish_contract(
     monkeypatch.setattr(
         robustness_cli,
         "execute_robustness_run",
-        lambda root, *, run_id: calls.append(("run", root, run_id))
-        or Path("/fixed/run"),
+        lambda root, *, run_id: calls.append(("run", root, run_id)) or Path("/fixed/run"),
     )
     monkeypatch.setattr(
         robustness_cli,
         "execute_robustness_reproducibility",
-        lambda root, *, run_id_prefix: calls.append(
-            ("reproduce", root, run_id_prefix)
-        )
-        or {"z": 1, "a": 2},
+        lambda root, *, run_id_prefix: (
+            calls.append(("reproduce", root, run_id_prefix)) or {"z": 1, "a": 2}
+        ),
     )
     monkeypatch.setattr(
         robustness_cli,
         "publish_robustness_release",
-        lambda root, *, run_id: calls.append(("publish", root, run_id))
-        or SimpleNamespace(root=Path("/fixed/release")),
+        lambda root, *, run_id: (
+            calls.append(("publish", root, run_id)) or SimpleNamespace(root=Path("/fixed/release"))
+        ),
     )
 
     monkeypatch.setattr(

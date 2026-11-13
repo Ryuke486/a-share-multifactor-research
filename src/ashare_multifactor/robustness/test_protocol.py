@@ -55,10 +55,10 @@ def seal_test_protocol(
             raise ValueError("Stage-8 successor execution contract is incomplete")
         if not _valid_git_oid(str(code_identity.get("tree", ""))):
             raise ValueError("Stage-8 successor Git tree identity is invalid")
-        if not _valid_sha256(str(action_source_contract_sha256)) or not _valid_sha256(
-            str(action_coverage_audit_sha256)
-        ) or not _valid_sha256(
-            str(collector_readiness_audit_sha256)
+        if (
+            not _valid_sha256(str(action_source_contract_sha256))
+            or not _valid_sha256(str(action_coverage_audit_sha256))
+            or not _valid_sha256(str(collector_readiness_audit_sha256))
         ):
             raise ValueError("Stage-8 successor execution contract hash is invalid")
         if (
@@ -119,9 +119,7 @@ def seal_test_protocol(
             {
                 "action_source_contract_sha256": action_source_contract_sha256,
                 "action_coverage_audit_sha256": action_coverage_audit_sha256,
-                "collector_readiness_audit_sha256": (
-                    collector_readiness_audit_sha256
-                ),
+                "collector_readiness_audit_sha256": (collector_readiness_audit_sha256),
                 "predecessor": predecessor,
             }
         )
@@ -129,9 +127,7 @@ def seal_test_protocol(
         payload.update(
             {
                 "protocol_identities": protocol_identities,
-                "predecessor_final_execution_identity": (
-                    predecessor_final_execution_identity
-                ),
+                "predecessor_final_execution_identity": (predecessor_final_execution_identity),
                 "change_impact_audit_sha256": change_impact_audit_sha256,
                 "evidence_workflow_readiness_audit_sha256": (
                     evidence_workflow_readiness_audit_sha256
@@ -155,9 +151,7 @@ def _valid_sha256(value: str) -> bool:
 
 
 def _valid_git_oid(value: str) -> bool:
-    return len(value) == 40 and all(
-        character in "0123456789abcdef" for character in value
-    )
+    return len(value) == 40 and all(character in "0123456789abcdef" for character in value)
 
 
 def verify_test_opening_token(
@@ -192,13 +186,13 @@ def verify_test_opening_token(
     approval_id = str(token.get("approval_id", ""))
     seal = recorded_seal
     identity_fields = (
-        "robustness_release", "robustness_manifest_sha256", "robustness_lineage_sha256"
+        "robustness_release",
+        "robustness_manifest_sha256",
+        "robustness_lineage_sha256",
     )
     if any(not token.get(field) for field in identity_fields):
         raise ValueError("opening token lacks frozen Stage-8 identity")
-    identity = "|".join(
-        (seal, *(str(token[field]) for field in identity_fields))
-    )
+    identity = "|".join((seal, *(str(token[field]) for field in identity_fields)))
     if len(approval_key) < 16:
         raise ValueError("final-test approval key is too short")
     expected = hmac.new(

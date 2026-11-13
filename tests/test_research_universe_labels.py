@@ -138,9 +138,7 @@ def test_research_universe_uses_no_information_after_target_date() -> None:
     target_columns = ["symbol", "liquidity_rank", "is_research_eligible"]
     target = baseline.filter(pl.col("date") == days[1]).select(target_columns).sort("symbol")
     changed_target = (
-        changed_future.filter(pl.col("date") == days[1])
-        .select(target_columns)
-        .sort("symbol")
+        changed_future.filter(pl.col("date") == days[1]).select(target_columns).sort("symbol")
     )
 
     assert target.rows() == [("000001", 1, True), ("000002", 2, False)]
@@ -151,9 +149,7 @@ def test_research_universe_breaks_liquidity_ties_by_symbol_ascending() -> None:
     from ashare_multifactor.research.research_universe import build_research_universe
 
     day = date(2004, 1, 5)
-    panel = pl.DataFrame(
-        [_universe_row(day, symbol) for symbol in ("000003", "000001", "000002")]
-    )
+    panel = pl.DataFrame([_universe_row(day, symbol) for symbol in ("000003", "000001", "000002")])
 
     rows = build_research_universe(
         panel,
@@ -172,7 +168,10 @@ def test_research_universe_excludes_bj_before_history_and_ranking() -> None:
 
     day = date(2004, 1, 5)
     panel = pl.DataFrame(
-        [_universe_row(day, symbol) for symbol in ("000001", "600000", "430001", "830001", "920001")]
+        [
+            _universe_row(day, symbol)
+            for symbol in ("000001", "600000", "430001", "830001", "920001")
+        ]
     )
     rows = build_research_universe(
         panel,
@@ -187,10 +186,7 @@ def test_research_universe_requires_exactly_252_valid_history_observations() -> 
 
     days = [date(2003, 1, 1) + timedelta(days=offset) for offset in range(253)]
     panel = pl.DataFrame([_universe_row(day, "000001") for day in days]).with_columns(
-        pl.when(pl.col("date") == days[1])
-        .then(0.0)
-        .otherwise(pl.col("amount"))
-        .alias("amount")
+        pl.when(pl.col("date") == days[1]).then(0.0).otherwise(pl.col("amount")).alias("amount")
     )
 
     rows = build_research_universe(panel, _settings()).filter(
@@ -213,10 +209,7 @@ def test_research_universe_liquidity_uses_last_20_valid_observations() -> None:
             for index, day in enumerate(days)
         ]
     ).with_columns(
-        pl.when(pl.col("date") == days[5])
-        .then(0.0)
-        .otherwise(pl.col("amount"))
-        .alias("amount")
+        pl.when(pl.col("date") == days[5]).then(0.0).otherwise(pl.col("amount")).alias("amount")
     )
 
     row = build_research_universe(
@@ -274,9 +267,7 @@ def test_research_universe_is_not_capped_by_mvp_top_200() -> None:
     from ashare_multifactor.research.research_universe import build_research_universe
 
     day = date(2004, 1, 5)
-    panel = pl.DataFrame(
-        [_universe_row(day, f"{symbol:06d}") for symbol in range(1, 202)]
-    )
+    panel = pl.DataFrame([_universe_row(day, f"{symbol:06d}") for symbol in range(1, 202)])
 
     rows = build_research_universe(
         panel,
@@ -301,11 +292,7 @@ def test_forward_returns_use_each_symbols_valid_observations_and_audit_gaps() ->
 
     days = [date(2005, 1, 1) + timedelta(days=offset) for offset in range(66)]
     rows = [_label_row(day, "000001", index) for index, day in enumerate(days)]
-    rows.extend(
-        _label_row(day, "000002", index)
-        for index, day in enumerate(days)
-        if index != 2
-    )
+    rows.extend(_label_row(day, "000002", index) for index, day in enumerate(days) if index != 2)
     panel = pl.DataFrame(rows).with_columns(
         pl.when((pl.col("symbol") == "000001") & pl.col("date").is_in([days[2], days[4]]))
         .then(0.0)
@@ -322,9 +309,7 @@ def test_forward_returns_use_each_symbols_valid_observations_and_audit_gaps() ->
     )
 
     target_rows = (
-        add_forward_returns(panel, (5, 20, 60))
-        .filter(pl.col("date") == days[0])
-        .sort("symbol")
+        add_forward_returns(panel, (5, 20, 60)).filter(pl.col("date") == days[0]).sort("symbol")
     )
 
     assert target_rows.select(
@@ -393,9 +378,7 @@ def test_forward_target_and_diagnostics_are_null_when_horizon_is_unavailable() -
     from ashare_multifactor.research.labels import add_forward_returns
 
     days = [date(2005, 1, 1) + timedelta(days=offset) for offset in range(6)]
-    panel = pl.DataFrame(
-        [_label_row(day, "000001", index) for index, day in enumerate(days)]
-    )
+    panel = pl.DataFrame([_label_row(day, "000001", index) for index, day in enumerate(days)])
 
     row = add_forward_returns(panel, (5, 20)).filter(pl.col("date") == days[0])
 

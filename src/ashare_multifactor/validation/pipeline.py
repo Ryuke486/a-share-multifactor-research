@@ -71,14 +71,8 @@ CORE_DATASET_FILES = (
     "datasets/execution_panel.parquet",
     "datasets/corporate_actions.parquet",
     "datasets/security_events.parquet",
-    *(
-        f"datasets/target_weights_{candidate}.parquet"
-        for candidate in FROZEN_CANDIDATES
-    ),
-    *(
-        f"datasets/continuous_targets_{candidate}.parquet"
-        for candidate in FROZEN_CANDIDATES
-    ),
+    *(f"datasets/target_weights_{candidate}.parquet" for candidate in FROZEN_CANDIDATES),
+    *(f"datasets/continuous_targets_{candidate}.parquet" for candidate in FROZEN_CANDIDATES),
 )
 CORE_RESEARCH_FILES = (
     "artifacts/factor_audit.parquet",
@@ -92,10 +86,7 @@ CORE_RESEARCH_FILES = (
     "artifacts/composite_subperiods.parquet",
     "artifacts/composite_summary.parquet",
     "artifacts/target_diagnostics.parquet",
-    *(
-        f"artifacts/target_diagnostics_{candidate}.parquet"
-        for candidate in FROZEN_CANDIDATES
-    ),
+    *(f"artifacts/target_diagnostics_{candidate}.parquet" for candidate in FROZEN_CANDIDATES),
     "artifacts/validation_metrics.parquet",
     "artifacts/selection_decision.json",
     "artifacts/report.md",
@@ -155,9 +146,12 @@ def assert_validation_outputs_sealed(root: Path) -> None:
         columns = [name for name in DATE_COLUMNS if name in schema]
         if not columns:
             continue
-        maximums = pl.scan_parquet(path).select(
-            *(pl.col(column).max().alias(column) for column in columns)
-        ).collect().row(0, named=True)
+        maximums = (
+            pl.scan_parquet(path)
+            .select(*(pl.col(column).max().alias(column) for column in columns))
+            .collect()
+            .row(0, named=True)
+        )
         leaks = {
             column: value
             for column, value in maximums.items()
@@ -224,12 +218,8 @@ def assert_validation_runtime_gates(
 ) -> None:
     for candidate in candidates:
         artifacts = work / "backtests" / candidate / "artifacts"
-        shadow = json.loads(
-            (artifacts / "shadow_nav_audit.json").read_text(encoding="utf-8")
-        )
-        stale = json.loads(
-            (artifacts / "stale_audit.json").read_text(encoding="utf-8")
-        )
+        shadow = json.loads((artifacts / "shadow_nav_audit.json").read_text(encoding="utf-8"))
+        stale = json.loads((artifacts / "stale_audit.json").read_text(encoding="utf-8"))
         if (
             shadow.get("status") != "ready"
             or stale.get("status") != "ready"
@@ -305,9 +295,7 @@ def _validation_input_identity(
     if len(readiness_records) != 1:
         raise ValueError("stage four lineage does not bind data_readiness.json")
     validate_file_records(readiness_records, stage_four_root)
-    validation_daily_root = (
-        data_root / "processed/validation_evaluation/daily_panel"
-    )
+    validation_daily_root = data_root / "processed/validation_evaluation/daily_panel"
     validation_daily = validate_panel_source(
         validation_daily_root,
         Period(date(2017, 1, 1), date(2021, 12, 31)),
@@ -323,21 +311,16 @@ def _validation_input_identity(
         "validation_corporate_action_corrections": (
             code_root / "configs/validation_corporate_action_corrections.csv"
         ),
-        "validation_security_events": (
-            code_root / "configs/validation_security_events.csv"
-        ),
+        "validation_security_events": (code_root / "configs/validation_security_events.csv"),
         "stage_five_manifest": stage_five.manifest,
         "stage_six_manifest": stage_six.manifest,
         "baostock_dividends": (
-            data_root
-            / "artifacts/validation_evaluation/source_cache/baostock_dividend/"
+            data_root / "artifacts/validation_evaluation/source_cache/baostock_dividend/"
             "baostock_dividends_execution_union.parquet"
         ),
     }
     correction_evidence = sorted(
-        (code_root / "configs/evidence/validation_action_corrections").glob(
-            "*.json"
-        )
+        (code_root / "configs/evidence/validation_action_corrections").glob("*.json")
     )
     identity = {
         name: {
@@ -394,13 +377,9 @@ def stage_validation_release(
         )
     except ValueError as error:
         if str(error) == "current inputs differ from certified runs":
-            raise ValueError(
-                "current validation inputs differ from certified runs"
-            ) from error
+            raise ValueError("current validation inputs differ from certified runs") from error
         if str(error) == "inputs changed during release preparation":
-            raise ValueError(
-                "validation inputs changed while writing lineage"
-            ) from error
+            raise ValueError("validation inputs changed while writing lineage") from error
         raise
     return prepared.staged_root
 
@@ -416,9 +395,7 @@ def run_validation_release(
         return stage_validation_release(code_root, run_id=run_id)
     actual_run_id = run_id or uuid.uuid4().hex
     try:
-        reproducible_release._assert_clean_release_identity(
-            code_identity(code_root)
-        )
+        reproducible_release._assert_clean_release_identity(code_identity(code_root))
         return reproducible_release.release(
             _stage7_release_adapter(),
             code_root,
@@ -427,9 +404,7 @@ def run_validation_release(
             options=_stage7_release_options(publish=True),
         )
     except FileNotFoundError as error:
-        raise ValueError(
-            "full validation pipeline reproducibility gate is incomplete"
-        ) from error
+        raise ValueError("full validation pipeline reproducibility gate is incomplete") from error
     except ValueError as error:
         if str(error) in {
             "current code identity is dirty",
@@ -437,20 +412,12 @@ def run_validation_release(
             "code identity changed during release preparation",
         }:
             if str(error) == "current code identity is dirty":
-                raise ValueError(
-                    "validation release requires a clean Git identity"
-                ) from error
-            raise ValueError(
-                "code identity changed during validation publication"
-            ) from error
+                raise ValueError("validation release requires a clean Git identity") from error
+            raise ValueError("code identity changed during validation publication") from error
         if str(error) == "current inputs differ from certified runs":
-            raise ValueError(
-                "current validation inputs differ from certified runs"
-            ) from error
+            raise ValueError("current validation inputs differ from certified runs") from error
         if str(error) == "inputs changed during release preparation":
-            raise ValueError(
-                "validation inputs changed during validation publication"
-            ) from error
+            raise ValueError("validation inputs changed during validation publication") from error
         if str(error) in {
             "reproducibility certificate does not bind two runs",
             "reproducibility gate is not release eligible",
@@ -473,9 +440,7 @@ def _copy_certified_core(
         if relative.startswith("datasets/"):
             destination = staged / "datasets/inputs" / relative.removeprefix("datasets/")
         elif relative.startswith("artifacts/"):
-            destination = staged / "artifacts/research" / relative.removeprefix(
-                "artifacts/"
-            )
+            destination = staged / "artifacts/research" / relative.removeprefix("artifacts/")
         else:
             _, candidate, kind, name = relative.split("/", 3)
             destination_root = "datasets" if kind == "datasets" else "artifacts"
@@ -498,9 +463,7 @@ def _validation_lineage(
     stage_five = resolve_current(data_root / "processed/factor_combination")
     stage_six = resolve_current(data_root / "processed/formal_backtest")
     upstream = {
-        "stage_four": (
-            data_root / "processed/factor_research/report_manifest.json"
-        ),
+        "stage_four": (data_root / "processed/factor_research/report_manifest.json"),
         "stage_four_lineage": data_root / "processed/factor_research/lineage.json",
         "stage_five_manifest": stage_five.manifest,
         "stage_five_lineage": stage_five.lineage,
@@ -512,16 +475,11 @@ def _validation_lineage(
     }
     source_paths = (
         source_cache / "baostock_dividend/baostock_dividends_execution_union.parquet",
-        source_cache
-        / "baostock_dividend/baostock_dividends_execution_union.metadata.json",
+        source_cache / "baostock_dividend/baostock_dividends_execution_union.metadata.json",
         code_root / "configs/validation_corporate_action_evidence.csv",
         code_root / "configs/validation_corporate_action_corrections.csv",
         code_root / "configs/validation_security_events.csv",
-        *sorted(
-            (code_root / "configs/evidence/validation_action_corrections").glob(
-                "*.json"
-            )
-        ),
+        *sorted((code_root / "configs/evidence/validation_action_corrections").glob("*.json")),
         source_cache / "cninfo_official_pdfs/000819_1210269787.pdf",
         source_cache / "cninfo_official_pdfs/000916_1204242424.pdf",
         source_cache / "cninfo_official_pdfs/000979_c0f86b35.pdf",

@@ -26,19 +26,21 @@ def render_combination_report(
     issues: pl.DataFrame,
     primary: str,
 ) -> str:
-    primary_row = summary.filter(
-        (pl.col("method") == primary) & (pl.col("horizon") == 20)
-    ).row(0, named=True)
-    avg_turnover = diagnostics.filter(
-        pl.col("portfolio_name") == "size_stratified_buffered"
-    ).get_column("one_way_turnover").mean()
+    primary_row = summary.filter((pl.col("method") == primary) & (pl.col("horizon") == 20)).row(
+        0, named=True
+    )
+    avg_turnover = (
+        diagnostics.filter(pl.col("portfolio_name") == "size_stratified_buffered")
+        .get_column("one_way_turnover")
+        .mean()
+    )
     return f"""# 阶段五：因子合成与目标组合
 
 本报告只使用2005–2016研究期，验证期和最终测试期仍封存。本阶段不模拟成交，不生成正式NAV。
 
 - 预注册主复合方案：`{primary}`
-- 20日平均Rank IC：{primary_row['mean_ic']:.6f}
-- 20日ICIR：{primary_row['icir']:.6f}
+- 20日平均Rank IC：{primary_row["mean_ic"]:.6f}
+- 20日ICIR：{primary_row["icir"]:.6f}
 - 规模分层缓冲组合平均单边目标换手：{avg_turnover:.6f}
 - 质量警告：{issues.height}
 

@@ -14,4 +14,3 @@ def limit_prices(previous_close: float, limit_rate: float) -> tuple[float, float
     close = Decimal(str(previous_close))
     rate = Decimal(str(limit_rate))
     return _price(close * (1 - rate)), _price(close * (1 + rate))
-

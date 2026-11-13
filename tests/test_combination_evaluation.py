@@ -19,19 +19,23 @@ from ashare_multifactor.cli import combinations as combinations_cli
 
 
 def test_combination_evaluation_computes_rank_ic_with_current_polars() -> None:
-    scores = pl.DataFrame({
-        "date": [date(2005, 1, 31)] * 3,
-        "symbol": ["A", "B", "C"],
-        "method": ["family_equal"] * 3,
-        "score": [-1.0, 0.0, 1.0],
-    })
-    returns = pl.DataFrame({
-        "date": [date(2005, 1, 31)] * 3,
-        "symbol": ["A", "B", "C"],
-        "forward_return_5": [-0.1, 0.0, 0.1],
-        "forward_return_20": [-0.2, 0.0, 0.2],
-        "forward_return_60": [-0.3, 0.0, 0.3],
-    })
+    scores = pl.DataFrame(
+        {
+            "date": [date(2005, 1, 31)] * 3,
+            "symbol": ["A", "B", "C"],
+            "method": ["family_equal"] * 3,
+            "score": [-1.0, 0.0, 1.0],
+        }
+    )
+    returns = pl.DataFrame(
+        {
+            "date": [date(2005, 1, 31)] * 3,
+            "symbol": ["A", "B", "C"],
+            "forward_return_5": [-0.1, 0.0, 0.1],
+            "forward_return_20": [-0.2, 0.0, 0.2],
+            "forward_return_60": [-0.3, 0.0, 0.3],
+        }
+    )
 
     result = evaluate_combinations(scores, returns)
 
@@ -63,9 +67,7 @@ def test_combination_evaluation_accepts_validation_subperiod() -> None:
         subperiod_boundaries=(("2017-2021", 2017, 2021),),
     )
 
-    assert result.subperiods.get_column("subperiod").unique().to_list() == [
-        "2017-2021"
-    ]
+    assert result.subperiods.get_column("subperiod").unique().to_list() == ["2017-2021"]
 
 
 def test_combination_correlations_accept_mixed_null_and_string_reasons() -> None:
@@ -94,9 +96,7 @@ def test_combination_correlations_accept_mixed_null_and_string_reasons() -> None
 
     result = evaluate_combinations(scores, returns, factor_panel)
 
-    assert set(result.correlation_monthly.get_column("reason").drop_nulls()) == {
-        "constant_series"
-    }
+    assert set(result.correlation_monthly.get_column("reason").drop_nulls()) == {"constant_series"}
 
 
 def test_combination_lineage_is_json_serializable(tmp_path: Path) -> None:
@@ -122,19 +122,21 @@ def test_upstream_validation_rejects_file_not_matching_frozen_lineage(tmp_path: 
         if name != "lineage.json":
             path = tmp_path / name
             records.append({"path": name, "sha256": "0" * 64, "size_bytes": path.stat().st_size})
-    (tmp_path / "lineage.json").write_text(json.dumps({"stages": {
-        "factors": {"outputs": records}, "evaluate": {"outputs": records}
-    }}))
+    (tmp_path / "lineage.json").write_text(
+        json.dumps({"stages": {"factors": {"outputs": records}, "evaluate": {"outputs": records}}})
+    )
 
     with pytest.raises(ValueError, match="digest mismatch"):
         _validate_upstream(tmp_path)
 
 
 def test_realization_dates_are_scalar_dates() -> None:
-    returns = pl.DataFrame({
-        "date": [date(2005, 1, 31), date(2005, 1, 31)],
-        "forward_calendar_days_20": [30, 35],
-    })
+    returns = pl.DataFrame(
+        {
+            "date": [date(2005, 1, 31), date(2005, 1, 31)],
+            "forward_calendar_days_20": [30, 35],
+        }
+    )
 
     result = _realization_dates(returns)
 
@@ -199,13 +201,18 @@ def test_combination_correlations_average_monthly_cross_sections_equally() -> No
         }
     )
     combined = pl.concat((scores, right))
-    returns = combined.select("date", "symbol").unique().sort("date", "symbol").with_row_index(
-        "return_rank"
-    ).with_columns(
-        pl.col("return_rank").cast(pl.Float64).alias("forward_return_5"),
-        pl.col("return_rank").cast(pl.Float64).alias("forward_return_20"),
-        pl.col("return_rank").cast(pl.Float64).alias("forward_return_60"),
-    ).drop("return_rank")
+    returns = (
+        combined.select("date", "symbol")
+        .unique()
+        .sort("date", "symbol")
+        .with_row_index("return_rank")
+        .with_columns(
+            pl.col("return_rank").cast(pl.Float64).alias("forward_return_5"),
+            pl.col("return_rank").cast(pl.Float64).alias("forward_return_20"),
+            pl.col("return_rank").cast(pl.Float64).alias("forward_return_60"),
+        )
+        .drop("return_rank")
+    )
 
     result = evaluate_combinations(combined, returns)
     row = result.correlations.filter(
@@ -214,7 +221,10 @@ def test_combination_correlations_average_monthly_cross_sections_equally() -> No
 
     assert row["mean_correlation"] == pytest.approx(0.0)
     assert row["common_months"] == 2
-    assert result.correlation_monthly.select("date", "left_name", "right_name").is_duplicated().any() is False
+    assert (
+        result.correlation_monthly.select("date", "left_name", "right_name").is_duplicated().any()
+        is False
+    )
 
 
 def test_combination_cli_runs_only_complete_publication(monkeypatch: pytest.MonkeyPatch) -> None:

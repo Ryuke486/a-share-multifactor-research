@@ -103,9 +103,7 @@ def test_normalize_cninfo_uses_payment_and_share_credit_dates() -> None:
     assert result.filter(pl.col("event_type") == "share_distribution").item(
         0, "share_ratio"
     ) == pytest.approx(0.3)
-    assert result.filter(pl.col("event_type") == "cash_dividend").item(
-        0, "cash_per_share"
-    ) == 0.15
+    assert result.filter(pl.col("event_type") == "cash_dividend").item(0, "cash_per_share") == 0.15
 
 
 def test_normalize_cninfo_rejects_cash_without_payment_date() -> None:

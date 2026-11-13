@@ -18,34 +18,51 @@ def stage_five_dataset_entries(
 ) -> list[dict[str, object]]:
     contracts = {
         "composite_scores": DatasetContract(
-            "composite_scores", ("date", "symbol", "method"), "date",
-            analysis_start, analysis_end, ("score", "raw_score"),
+            "composite_scores",
+            ("date", "symbol", "method"),
+            "date",
+            analysis_start,
+            analysis_end,
+            ("score", "raw_score"),
         ),
         "composite_weights": DatasetContract(
-            "composite_weights", ("date", "method", "factor_name"), "date",
-            analysis_start, analysis_end, ("weight",), ("weight",),
+            "composite_weights",
+            ("date", "method", "factor_name"),
+            "date",
+            analysis_start,
+            analysis_end,
+            ("weight",),
+            ("weight",),
         ),
         "target_weights": DatasetContract(
-            "target_weights", ("date", "portfolio_name", "symbol"), "date",
-            analysis_start, analysis_end, ("target_weight",), ("target_weight",),
+            "target_weights",
+            ("date", "portfolio_name", "symbol"),
+            "date",
+            analysis_start,
+            analysis_end,
+            ("target_weight",),
+            ("target_weight",),
         ),
         "target_weight_diagnostics": DatasetContract(
-            "target_weight_diagnostics", ("date", "portfolio_name"), "date",
-            analysis_start, analysis_end,
+            "target_weight_diagnostics",
+            ("date", "portfolio_name"),
+            "date",
+            analysis_start,
+            analysis_end,
             ("one_way_turnover", "holdings", "max_weight", "hhi", "effective_holdings"),
         ),
     }
     entries = []
     for name, contract in contracts.items():
         entry = dataset_manifest_entry(
-                root / f"{name}.parquet",
-                root=root,
-                role="stage_five_dataset",
-                frame=frames[name],
-                contract=contract,
-                producer="ashare_multifactor.research.combination_pipeline",
-                stage="factor_combination",
-            )
+            root / f"{name}.parquet",
+            root=root,
+            role="stage_five_dataset",
+            frame=frames[name],
+            contract=contract,
+            producer="ashare_multifactor.research.combination_pipeline",
+            stage="factor_combination",
+        )
         entry["path"] = f"datasets/{entry['path']}"
         entries.append(entry)
     return entries

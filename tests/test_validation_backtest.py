@@ -53,9 +53,7 @@ def test_validation_actions_keep_ex_date_and_payment_date_separate(
         )
     )
 
-    actions = load_validation_corporate_actions(
-        research, raw, symbols=["000001"]
-    )
+    actions = load_validation_corporate_actions(research, raw, symbols=["000001"])
 
     row = actions.row(0, named=True)
     assert row["ex_date"] == date(2018, 6, 8)
@@ -224,9 +222,7 @@ def test_validation_actions_keep_strongest_provenance_after_correction_dedup(
     )
 
     assert actions.height == 1
-    assert actions.item(0, "source") == (
-        "baostock_dividend_operate_year+cninfo_action_correction"
-    )
+    assert actions.item(0, "source") == ("baostock_dividend_operate_year+cninfo_action_correction")
     if expected_action_id is not None:
         assert actions.item(0, "action_id") == expected_action_id
 
@@ -291,9 +287,7 @@ def test_buffered_validation_target_uses_research_period_holdings() -> None:
             "log_market_cap": [1.0, 2.0, 3.0, 4.0],
         }
     )
-    previous = pl.DataFrame(
-        {"symbol": ["000002", "000004"], "target_weight": [0.5, 0.5]}
-    )
+    previous = pl.DataFrame({"symbol": ["000002", "000004"], "target_weight": [0.5, 0.5]})
 
     result = build_validation_targets(
         scores,
@@ -352,9 +346,7 @@ def test_validation_backtest_runs_research_history_before_validation() -> None:
         BacktestSettings(initial_cash=100_000.0, analysis_end=date(2021, 12, 31)),
     )
 
-    first_validation = result["nav"].filter(pl.col("date") == date(2017, 1, 3)).row(
-        0, named=True
-    )
+    first_validation = result["nav"].filter(pl.col("date") == date(2017, 1, 3)).row(0, named=True)
     assert first_validation["holdings_value"] > 0
     assert first_validation["nav"] != 100_000.0
 

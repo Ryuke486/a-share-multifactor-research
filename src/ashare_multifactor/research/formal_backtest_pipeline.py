@@ -28,7 +28,11 @@ def _validate_source_coverage(
     payment_path = root / "normalized_payment_dates.parquet"
     payment_metadata_path = root / "normalized_payment_dates.metadata.json"
     blockers: list[str] = []
-    if not batch_path.is_file() or not payment_path.is_file() or not payment_metadata_path.is_file():
+    if (
+        not batch_path.is_file()
+        or not payment_path.is_file()
+        or not payment_metadata_path.is_file()
+    ):
         return {"status": "blocked"}, ["free corporate action cache is incomplete"]
     batch = json.loads(batch_path.read_text(encoding="utf-8"))
     payment = json.loads(payment_metadata_path.read_text(encoding="utf-8"))
@@ -76,15 +80,15 @@ def _readiness_markdown(audit: dict[str, object]) -> str:
     blocker_text = "\n".join(f"- {item}" for item in blockers) or "- 无"
     return f"""# 阶段六数据准备度审计
 
-**结论：** `{audit['status']}`
+**结论：** `{audit["status"]}`
 
 ## 结构化门禁
 
-- 阶段五目标行：{int(audit.get('target_rows', 0)):,}
-- 执行面板行：{int(audit.get('execution_rows', 0)):,}
-- 公司行动行：{int(audit.get('corporate_action_rows', 0)):,}
-- 巨潮免费缓存证券：{int(coverage.get('cached_symbols', 0)):,}
-- 现金派息日缺失：{int(coverage.get('payment_dates_missing', -1))}
+- 阶段五目标行：{int(audit.get("target_rows", 0)):,}
+- 执行面板行：{int(audit.get("execution_rows", 0)):,}
+- 公司行动行：{int(audit.get("corporate_action_rows", 0)):,}
+- 巨潮免费缓存证券：{int(coverage.get("cached_symbols", 0)):,}
+- 现金派息日缺失：{int(coverage.get("payment_dates_missing", -1))}
 
 ## 阻断项
 
@@ -231,9 +235,7 @@ def run_formal_pipeline(
         "status": "ready",
         "shadow_nav": shadow_summary,
         "stale_valuation": stale_summary,
-        "maximum_reconciliation_difference": summary[
-            "maximum_scenario_reconciliation_difference"
-        ],
+        "maximum_reconciliation_difference": summary["maximum_scenario_reconciliation_difference"],
     }
     inputs.execution_panel.write_parquet(datasets / "execution_panel.parquet")
     inputs.corporate_actions.write_parquet(datasets / "corporate_actions.parquet")
@@ -301,13 +303,11 @@ def run_formal_pipeline(
                 paths.artifacts / "source_cache/eastmoney_fhps/normalized_actions.parquet",
                 paths.artifacts
                 / "source_cache/sina_corporate_actions/normalized_dividends.parquet",
-                paths.artifacts
-                / "source_cache/cninfo_dividend/normalized_payment_dates.parquet",
+                paths.artifacts / "source_cache/cninfo_dividend/normalized_payment_dates.parquet",
                 paths.artifacts / "source_cache/cninfo_dividend/batch_metadata.json",
                 paths.artifacts
                 / "source_cache/cninfo_dividend/normalized_payment_dates.metadata.json",
-                paths.artifacts
-                / "source_cache/cninfo_official_pdfs/official_special_actions.csv",
+                paths.artifacts / "source_cache/cninfo_official_pdfs/official_special_actions.csv",
             )
         ],
         "security_events": file_record(
@@ -429,9 +429,7 @@ def _fill_statistics(result: dict[str, pl.DataFrame]) -> pl.DataFrame:
         {
             "order_count": [orders.height],
             "filled": [orders.filter(pl.col("status") == "filled").height],
-            "partially_filled": [
-                orders.filter(pl.col("status") == "partially_filled").height
-            ],
+            "partially_filled": [orders.filter(pl.col("status") == "partially_filled").height],
             "expired": [orders.filter(pl.col("status") == "expired").height],
             "trade_count": [result["trades"].height],
         }
@@ -439,35 +437,35 @@ def _fill_statistics(result: dict[str, pl.DataFrame]) -> pl.DataFrame:
 
 
 def _report(summary: dict[str, float | int], blocked: pl.DataFrame) -> str:
-    blocked_text = "\n".join(
-        f"- {row['reason']}: {row['len']}次" for row in blocked.to_dicts()
-    ) or "- 无"
+    blocked_text = (
+        "\n".join(f"- {row['reason']}: {row['len']}次" for row in blocked.to_dicts()) or "- 无"
+    )
     return f"""# 2005–2016正式A股执行回测
 
 本报告只覆盖研究期，不包含2017年及以后数据。阶段五组合与参数未因回测结果修改。
 
 ## 核心结果
 
-- 完整成本总收益：{summary['total_return']:.4%}
-- 仅显性费用总收益：{summary['explicit_fee_only_total_return']:.4%}
-- 零成本同成交约束总收益：{summary['zero_cost_total_return']:.4%}
-- 年化收益：{summary['annual_return']:.4%}
-- 年化波动：{summary['annual_volatility']:.4%}
-- Sharpe（零无风险利率）：{summary['sharpe_zero_rate']:.4f}
-- 最大回撤：{summary['maximum_drawdown']:.4%}
-- 成交笔数：{summary['trade_count']}
-- 订单最终成交率：{summary['filled_order_rate']:.2%}
-- 曾部分成交订单率：{summary['partially_filled_order_rate']:.2%}
-- 平均订单等待：{summary['average_order_wait_days']:.2f}天
-- 实际年化成交额/资产：{summary['annualized_traded_value_ratio']:.2f}倍
-- 平均目标L1偏离：{summary['average_target_deviation_l1']:.2%}
-- 实现短缺率（总成本/成交额）：{summary['implementation_shortfall_rate']:.4%}
-- 月度胜率：{summary['monthly_win_rate']:.2%}
-- 平均现金权重：{summary['average_cash_weight']:.2%}
-- 总成本：{summary['total_cost']:.2f}元
-- 最大逐日对账差：{summary['maximum_reconciliation_difference']:.8f}元
-- 三账本最大逐日对账差：{summary['maximum_scenario_reconciliation_difference']:.8f}元
-- 最长陈旧估值：{summary['maximum_stale_days']}天（单独审计并绑定停牌证据）
+- 完整成本总收益：{summary["total_return"]:.4%}
+- 仅显性费用总收益：{summary["explicit_fee_only_total_return"]:.4%}
+- 零成本同成交约束总收益：{summary["zero_cost_total_return"]:.4%}
+- 年化收益：{summary["annual_return"]:.4%}
+- 年化波动：{summary["annual_volatility"]:.4%}
+- Sharpe（零无风险利率）：{summary["sharpe_zero_rate"]:.4f}
+- 最大回撤：{summary["maximum_drawdown"]:.4%}
+- 成交笔数：{summary["trade_count"]}
+- 订单最终成交率：{summary["filled_order_rate"]:.2%}
+- 曾部分成交订单率：{summary["partially_filled_order_rate"]:.2%}
+- 平均订单等待：{summary["average_order_wait_days"]:.2f}天
+- 实际年化成交额/资产：{summary["annualized_traded_value_ratio"]:.2f}倍
+- 平均目标L1偏离：{summary["average_target_deviation_l1"]:.2%}
+- 实现短缺率（总成本/成交额）：{summary["implementation_shortfall_rate"]:.4%}
+- 月度胜率：{summary["monthly_win_rate"]:.2%}
+- 平均现金权重：{summary["average_cash_weight"]:.2%}
+- 总成本：{summary["total_cost"]:.2f}元
+- 最大逐日对账差：{summary["maximum_reconciliation_difference"]:.8f}元
+- 三账本最大逐日对账差：{summary["maximum_scenario_reconciliation_difference"]:.8f}元
+- 最长陈旧估值：{summary["maximum_stale_days"]}天（单独审计并绑定停牌证据）
 
 ## 订单阻断
 

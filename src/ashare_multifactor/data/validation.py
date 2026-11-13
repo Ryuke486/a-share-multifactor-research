@@ -56,22 +56,44 @@ def validate_daily_panel(frame: pl.DataFrame, expected_date: date) -> list[Quali
 
     duplicate_count = frame.select(pl.struct("date", "symbol").is_duplicated().sum()).item()
     if duplicate_count:
-        issues.append(QualityIssue("error", "duplicate_key", duplicate_count, "duplicate (date, symbol) keys"))
+        issues.append(
+            QualityIssue("error", "duplicate_key", duplicate_count, "duplicate (date, symbol) keys")
+        )
 
     date_count = _row_count(
         frame,
         pl.col("date").is_null() | (pl.col("date") != expected_date),
     )
     if date_count:
-        issues.append(QualityIssue("error", "date_mismatch", date_count, "date differs from expected file date"))
+        issues.append(
+            QualityIssue(
+                "error", "date_mismatch", date_count, "date differs from expected file date"
+            )
+        )
 
-    missing_price_count = _row_count(frame, pl.any_horizontal(pl.col(column).is_null() for column in _PRICE_COLUMNS))
+    missing_price_count = _row_count(
+        frame, pl.any_horizontal(pl.col(column).is_null() for column in _PRICE_COLUMNS)
+    )
     if missing_price_count:
-        issues.append(QualityIssue("error", "missing_price", missing_price_count, "raw or adjusted key price is missing"))
+        issues.append(
+            QualityIssue(
+                "error",
+                "missing_price",
+                missing_price_count,
+                "raw or adjusted key price is missing",
+            )
+        )
 
     invalid_ohlc_count = _row_count(frame, invalid_ohlc_expression())
     if invalid_ohlc_count:
-        issues.append(QualityIssue("error", "invalid_ohlc", invalid_ohlc_count, "OHLC values are non-positive or inconsistent"))
+        issues.append(
+            QualityIssue(
+                "error",
+                "invalid_ohlc",
+                invalid_ohlc_count,
+                "OHLC values are non-positive or inconsistent",
+            )
+        )
 
     missing_trade_count = _row_count(
         frame,
@@ -87,9 +109,15 @@ def validate_daily_panel(frame: pl.DataFrame, expected_date: date) -> list[Quali
             )
         )
 
-    negative_count = _row_count(frame, pl.any_horizontal(pl.col("volume") < 0, pl.col("amount") < 0))
+    negative_count = _row_count(
+        frame, pl.any_horizontal(pl.col("volume") < 0, pl.col("amount") < 0)
+    )
     if negative_count:
-        issues.append(QualityIssue("error", "negative_volume_amount", negative_count, "volume or amount is negative"))
+        issues.append(
+            QualityIssue(
+                "error", "negative_volume_amount", negative_count, "volume or amount is negative"
+            )
+        )
 
     warning_checks = (
         ("missing_industry", pl.col("industry").is_null(), "industry is missing"),
@@ -101,7 +129,9 @@ def validate_daily_panel(frame: pl.DataFrame, expected_date: date) -> list[Quali
         ),
         (
             "missing_valuation",
-            pl.any_horizontal(pl.col("pe_ttm").is_null(), pl.col("pb").is_null(), pl.col("ps_ttm").is_null()),
+            pl.any_horizontal(
+                pl.col("pe_ttm").is_null(), pl.col("pb").is_null(), pl.col("ps_ttm").is_null()
+            ),
             "one or more valuation fields are missing",
         ),
         (

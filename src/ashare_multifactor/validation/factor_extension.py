@@ -48,20 +48,21 @@ def build_validation_factor_extension(
         how="left",
         validate="1:1",
     ).sort("date", "symbol")
-    return_columns = [
-        f"forward_return_{horizon}" for horizon in settings.forward_horizons
-    ]
+    return_columns = [f"forward_return_{horizon}" for horizon in settings.forward_horizons]
     panel = features.join(
         forward_returns.select("date", "symbol", *return_columns),
         on=["date", "symbol"],
         how="left",
         validate="m:1",
     ).sort("date", "symbol", "factor_name")
-    audit = panel.group_by("factor_name", "family", "point_in_time_status").agg(
-        pl.len().alias("rows"),
-        pl.col("score_size_neutral").is_finite().sum().alias("finite_scores"),
-        pl.col("score_size_neutral").is_null().sum().alias("missing_scores"),
-    ).with_columns(
-        (pl.col("finite_scores") / pl.col("rows")).alias("coverage")
-    ).sort("factor_name")
+    audit = (
+        panel.group_by("factor_name", "family", "point_in_time_status")
+        .agg(
+            pl.len().alias("rows"),
+            pl.col("score_size_neutral").is_finite().sum().alias("finite_scores"),
+            pl.col("score_size_neutral").is_null().sum().alias("missing_scores"),
+        )
+        .with_columns((pl.col("finite_scores") / pl.col("rows")).alias("coverage"))
+        .sort("factor_name")
+    )
     return ValidationFactorExtension(features, forward_returns, panel, audit)

@@ -83,9 +83,9 @@ def test_family_ablation_removes_only_registered_family() -> None:
 
     assert result.get_column("family_count").to_list() == [2, 2]
     assert result.select("date", "symbol", "score").equals(
-        build_ablation_scores(
-            changed, weights, removed_family="liquidity"
-        ).select("date", "symbol", "score")
+        build_ablation_scores(changed, weights, removed_family="liquidity").select(
+            "date", "symbol", "score"
+        )
     )
     with pytest.raises(ValueError, match="not in frozen candidate families"):
         build_ablation_scores(panel, weights, removed_family="new_factor_family")

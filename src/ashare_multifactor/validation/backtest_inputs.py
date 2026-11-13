@@ -25,12 +25,12 @@ def build_continuous_targets(
         research_portfolio = _RESEARCH_PORTFOLIO[candidate]
     except KeyError as exc:
         raise ValueError(f"unknown validation candidate: {candidate}") from exc
-    research = research_targets.filter(
-        pl.col("portfolio_name") == research_portfolio
-    ).select("date", "symbol", "target_weight")
-    validation = validation_targets.filter(
-        pl.col("candidate") == candidate
-    ).select("date", "symbol", "target_weight")
+    research = research_targets.filter(pl.col("portfolio_name") == research_portfolio).select(
+        "date", "symbol", "target_weight"
+    )
+    validation = validation_targets.filter(pl.col("candidate") == candidate).select(
+        "date", "symbol", "target_weight"
+    )
     if research.is_empty() or validation.is_empty():
         raise ValueError("continuous target inputs are incomplete")
     if research.filter(pl.col("date") >= date(2017, 1, 1)).height:

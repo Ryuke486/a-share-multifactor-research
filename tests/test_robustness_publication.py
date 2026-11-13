@@ -28,15 +28,11 @@ def test_stage8_publish_rejects_bj_in_validation_forward_returns(
     inputs.mkdir(parents=True)
     pl.DataFrame({"symbol": ["000001"]}).write_parquet(inputs / "execution_panel.parquet")
     pl.DataFrame({"symbol": ["600000"]}).write_parquet(inputs / "corporate_actions.parquet")
-    pl.DataFrame(
-        {"source_symbol": ["000001"], "target_symbol": [None]}
-    ).write_parquet(inputs / "security_events.parquet")
-    pl.DataFrame({"symbol": ["000001"]}).write_parquet(
-        inputs / "continuous_targets_main.parquet"
+    pl.DataFrame({"source_symbol": ["000001"], "target_symbol": [None]}).write_parquet(
+        inputs / "security_events.parquet"
     )
-    pl.DataFrame({"symbol": ["920001"]}).write_parquet(
-        inputs / "forward_returns.parquet"
-    )
+    pl.DataFrame({"symbol": ["000001"]}).write_parquet(inputs / "continuous_targets_main.parquet")
+    pl.DataFrame({"symbol": ["920001"]}).write_parquet(inputs / "forward_returns.parquet")
 
     with pytest.raises(ValueError, match="forward_returns.*920001"):
         _assert_validation_market_scope(
@@ -63,7 +59,9 @@ def test_publication_rechecks_source_files_against_reproducibility(tmp_path: Pat
         hashes[name] = digest
         manifest_files.append({"path": name, "sha256": digest, "size": len(content)})
     (source / "run_manifest.json").write_text(
-        json.dumps({"run_id": "run_2", "code": {"dirty": False}, "inputs": {}, "files": manifest_files}),
+        json.dumps(
+            {"run_id": "run_2", "code": {"dirty": False}, "inputs": {}, "files": manifest_files}
+        ),
         encoding="utf-8",
     )
     reproducibility = {

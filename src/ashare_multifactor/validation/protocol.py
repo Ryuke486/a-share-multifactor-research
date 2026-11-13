@@ -30,9 +30,7 @@ def assert_validation_read_allowed(
 
 def assert_stage_six_release_allowed(formal_backtest_root: Path) -> None:
     """Require the audited stage-six release or an explicitly approved successor."""
-    pointer = json.loads(
-        (formal_backtest_root / "CURRENT.json").read_text(encoding="utf-8")
-    )
+    pointer = json.loads((formal_backtest_root / "CURRENT.json").read_text(encoding="utf-8"))
     run_id = pointer.get("run_id")
     if run_id == APPROVED_STAGE_SIX_RELEASE:
         return
@@ -41,8 +39,7 @@ def assert_stage_six_release_allowed(formal_backtest_root: Path) -> None:
         lineage = json.loads(lineage_path.read_text(encoding="utf-8"))
         if (
             lineage.get("validation_approved") is True
-            and lineage.get("supersedes", {}).get("run_id")
-            == APPROVED_STAGE_SIX_RELEASE
+            and lineage.get("supersedes", {}).get("run_id") == APPROVED_STAGE_SIX_RELEASE
         ):
             return
     raise ValueError(f"unapproved stage six release: {run_id}")

@@ -21,9 +21,7 @@ def classify_market_regimes(
     values = frame.get_column("market_return").to_numpy()
     vol_history: list[float] = []
     rows: list[dict[str, object]] = []
-    for index, (trade_date, value) in enumerate(
-        zip(frame.get_column("date"), values, strict=True)
-    ):
+    for index, (trade_date, value) in enumerate(zip(frame.get_column("date"), values, strict=True)):
         trend_slice = values[max(0, index - trend_window + 1) : index + 1]
         if len(trend_slice) < trend_window or not np.isfinite(trend_slice).all():
             trend = "insufficient_history"
@@ -61,8 +59,7 @@ def time_segments(frame: pl.DataFrame) -> pl.DataFrame:
     if "date" not in frame.columns:
         raise ValueError("time segmentation requires date")
     invalid = frame.filter(
-        (pl.col("date") < date(2005, 1, 1))
-        | (pl.col("date") > date(2021, 12, 31))
+        (pl.col("date") < date(2005, 1, 1)) | (pl.col("date") > date(2021, 12, 31))
     )
     if invalid.height:
         raise ValueError("time segmentation outside robustness sample")
@@ -105,17 +102,13 @@ def summarize_segment_returns(
         raise ValueError("segment returns are missing: " + ", ".join(sorted(missing)))
     rows: list[dict[str, object]] = []
     annualization = annualization_by_segment_type or {}
-    for key, group in returns.sort("date").group_by(
-        "segment_type", "segment", maintain_order=True
-    ):
+    for key, group in returns.sort("date").group_by("segment_type", "segment", maintain_order=True):
         values = group.get_column("return").drop_nulls().to_numpy()
         values = values[np.isfinite(values)]
         observations = len(values)
         mean = float(np.mean(values)) if observations else None
         standard_error = (
-            float(np.std(values, ddof=1) / math.sqrt(observations))
-            if observations > 1
-            else None
+            float(np.std(values, ddof=1) / math.sqrt(observations)) if observations > 1 else None
         )
         periods_per_year = annualization.get(str(key[0]), 252)
         rows.append(
@@ -126,9 +119,7 @@ def summarize_segment_returns(
                 "start_date": group.get_column("date").min(),
                 "end_date": group.get_column("date").max(),
                 "mean_period_return": mean,
-                "annualized_return": (
-                    mean * periods_per_year if mean is not None else None
-                ),
+                "annualized_return": (mean * periods_per_year if mean is not None else None),
                 "annualized_volatility": (
                     float(np.std(values, ddof=1) * math.sqrt(periods_per_year))
                     if observations > 1

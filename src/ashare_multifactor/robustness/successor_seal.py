@@ -68,10 +68,15 @@ def verify_action_coverage_audit(root: Path) -> str:
         except (FileNotFoundError, TypeError, ValueError) as error:
             raise ValueError("Stage-8 action coverage audit hash changed") from error
     summary = json.loads(resolved["action_coverage_summary"].read_text(encoding="utf-8"))
-    if summary.get("status") != "ready" or summary.get("event_difference_rows") not in {
-        None,
-        0,
-    } or summary.get("official_sample_gaps") not in {None, 0}:
+    if (
+        summary.get("status") != "ready"
+        or summary.get("event_difference_rows")
+        not in {
+            None,
+            0,
+        }
+        or summary.get("official_sample_gaps") not in {None, 0}
+    ):
         raise ValueError("Stage-8 action coverage audit gates are not closed")
     return sha256_file(manifest_path)
 
@@ -121,9 +126,7 @@ def build_stage8_successor_lineage(
             str(change_impact_audit_sha256),
             str(evidence_workflow_readiness_audit_sha256),
         ):
-            if len(value) != 64 or any(
-                character not in "0123456789abcdef" for character in value
-            ):
+            if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
                 raise ValueError("Stage-8 evidence-workflow lineage hash is invalid")
         lineage["protocol_identities"] = identities
         lineage["predecessor_final_execution_identity"] = predecessor_execution

@@ -138,10 +138,9 @@ def merge_baostock_caches(
         ):
             raise ValueError(f"invalid BaoStock cache metadata: {path}")
         coverage_path = path.with_suffix(".coverage.parquet")
-        if (
-            metadata.get("coverage_path") != coverage_path.name
-            or metadata.get("coverage_sha256") != sha256_file(coverage_path)
-        ):
+        if metadata.get("coverage_path") != coverage_path.name or metadata.get(
+            "coverage_sha256"
+        ) != sha256_file(coverage_path):
             raise ValueError(f"invalid BaoStock coverage metadata: {path}")
         covered.extend(metadata.get("symbols", []))
         frames.append(pl.read_parquet(path))
@@ -254,9 +253,7 @@ def download_baostock_cache(symbols: Iterable[str], output: Path) -> pl.DataFram
             yearType=year_type,
         )
         if result.error_code != "0":
-            raise RuntimeError(
-                f"BaoStock dividend query failed: {code} {year} {result.error_msg}"
-            )
+            raise RuntimeError(f"BaoStock dividend query failed: {code} {year} {result.error_msg}")
         rows = []
         while result.next():
             rows.append(result.get_row_data())
@@ -292,8 +289,7 @@ def load_official_payment_date_overrides(
     if evidence.select(pl.struct("symbol", "ex_date").is_duplicated().any()).item():
         raise ValueError("duplicate official payment evidence key")
     if evidence.filter(
-        (pl.col("ex_date") > VALIDATION_END)
-        | (pl.col("payment_date") > VALIDATION_END)
+        (pl.col("ex_date") > VALIDATION_END) | (pl.col("payment_date") > VALIDATION_END)
     ).height:
         raise ValueError("sealed final test date in official payment evidence")
     for row in evidence.iter_rows(named=True):
@@ -345,9 +341,7 @@ def load_official_action_corrections(
             raise ValueError(f"invalid official action correction URL: {source_url}")
         cached = cache_root / row["cache_file"]
         if not cached.is_file() or sha256_file(cached) != row["sha256"]:
-            raise ValueError(
-                f"official action correction hash mismatch: {row['symbol']}"
-            )
+            raise ValueError(f"official action correction hash mismatch: {row['symbol']}")
     return evidence.select(
         "symbol",
         "source_ex_date",
@@ -384,9 +378,7 @@ def load_official_security_events(
     missing = sorted(required - set(events.columns))
     if missing:
         raise ValueError(f"official security evidence missing fields: {missing}")
-    if events.select(
-        pl.struct("effective_date", "source_symbol").is_duplicated().any()
-    ).item():
+    if events.select(pl.struct("effective_date", "source_symbol").is_duplicated().any()).item():
         raise ValueError("duplicate official security event key")
     if events.filter(pl.col("effective_date") > VALIDATION_END).height:
         raise ValueError("sealed final test date in official security evidence")

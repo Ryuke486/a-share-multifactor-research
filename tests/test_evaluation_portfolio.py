@@ -126,9 +126,7 @@ def test_target_weights_select_top_twenty_and_use_next_observed_trading_date() -
         "symbol",
         "target_weight",
     ]
-    assert targets.get_column("symbol").to_list() == [
-        f"{index:06d}" for index in range(5, 25)
-    ]
+    assert targets.get_column("symbol").to_list() == [f"{index:06d}" for index in range(5, 25)]
     assert targets.get_column("target_weight").to_list() == pytest.approx([0.05] * 20)
     assert targets.get_column("target_weight").sum() == pytest.approx(1.0)
     assert targets.get_column("signal_date").unique().item() == signal_date
@@ -145,15 +143,11 @@ def test_target_weights_break_equal_factor_scores_by_symbol() -> None:
             "momentum_z": [1.0] * len(symbols),
         }
     )
-    trading_dates = pl.DataFrame(
-        {"date": [signal_date, date(2014, 2, 3)]}
-    )
+    trading_dates = pl.DataFrame({"date": [signal_date, date(2014, 2, 3)]})
 
     targets = build_target_weights(frame, trading_dates, _config(universe_size=21))
 
-    assert targets.get_column("symbol").to_list() == [
-        f"{index:06d}" for index in range(20)
-    ]
+    assert targets.get_column("symbol").to_list() == [f"{index:06d}" for index in range(20)]
 
 
 def test_target_weights_drop_signal_without_later_trading_date() -> None:
@@ -167,9 +161,7 @@ def test_target_weights_drop_signal_without_later_trading_date() -> None:
             "momentum_z": [1.0, 2.0],
         }
     )
-    trading_dates = pl.DataFrame(
-        {"date": [executable_signal, next_trading_date, final_signal]}
-    )
+    trading_dates = pl.DataFrame({"date": [executable_signal, next_trading_date, final_signal]})
 
     targets = build_target_weights(
         frame,

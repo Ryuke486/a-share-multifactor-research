@@ -33,13 +33,10 @@ def select_validation_candidate(
             ):
                 failed.append("minimum_return_improvement")
             if row["maximum_drawdown"] < (
-                baseline["maximum_drawdown"]
-                - settings.maximum_drawdown_deterioration
+                baseline["maximum_drawdown"] - settings.maximum_drawdown_deterioration
             ):
                 failed.append("maximum_drawdown_deterioration")
-            if row["turnover"] > (
-                baseline["turnover"] + settings.maximum_turnover_increase
-            ):
+            if row["turnover"] > (baseline["turnover"] + settings.maximum_turnover_increase):
                 failed.append("maximum_turnover_increase")
         decision = {
             "candidate": candidate,

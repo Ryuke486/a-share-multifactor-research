@@ -192,9 +192,7 @@ def test_security_event_cancels_pending_order_without_existing_position() -> Non
         events,
     )
 
-    cancelled = result["order_events"].filter(
-        pl.col("reason") == "security_event"
-    )
+    cancelled = result["order_events"].filter(pl.col("reason") == "security_event")
     assert cancelled.height == 1
     assert cancelled.item(0, "status") == "cancelled"
 
@@ -430,12 +428,12 @@ def test_pending_buy_is_rebuilt_after_share_bonus() -> None:
         ),
     )
 
-    rebases = result["order_events"].filter(
-        pl.col("reason") == "corporate_action_rebase"
-    )
+    rebases = result["order_events"].filter(pl.col("reason") == "corporate_action_rebase")
     assert rebases.height == 1
     old_order_id = rebases.item(0, "order_id")
-    assert result["orders"].filter(pl.col("order_id") == old_order_id).item(0, "status") == "cancelled"
+    assert (
+        result["orders"].filter(pl.col("order_id") == old_order_id).item(0, "status") == "cancelled"
+    )
     replacement = result["orders"].filter(pl.col("order_id") != old_order_id).sort("signal_date")
     assert replacement.tail(1).item(0, "quantity") == 19_700
 
@@ -477,7 +475,5 @@ def test_corporate_action_without_affected_pending_does_not_rebalance() -> None:
         BacktestSettings(initial_cash=100_000.0, fixed_slippage_bps=0.0, reference_impact_bps=0.0),
     )
 
-    assert result["order_events"].filter(
-        pl.col("reason") == "corporate_action_rebase"
-    ).is_empty()
+    assert result["order_events"].filter(pl.col("reason") == "corporate_action_rebase").is_empty()
     assert result["orders"].height == 1

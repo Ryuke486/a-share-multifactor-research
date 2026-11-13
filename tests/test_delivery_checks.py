@@ -151,9 +151,7 @@ def test_delivery_manifest_detects_a_broken_final_test_seal(tmp_path: Path) -> N
         (16.109088864309605, "16.11"),
     ],
 )
-def test_number_renders_value_accepts_each_documented_precision(
-    value: float, literal: str
-) -> None:
+def test_number_renders_value_accepts_each_documented_precision(value: float, literal: str) -> None:
     assert number_renders_value(value, literal)
 
 

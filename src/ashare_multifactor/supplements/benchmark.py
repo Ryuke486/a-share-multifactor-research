@@ -52,16 +52,13 @@ def universe_benchmark_index(
         .with_columns(pl.col("close_adj").forward_fill().over("symbol").alias("price"))
     )
     # each trading day belongs to the window opened by the last signal close before it
-    day_windows = (
-        calendar.join_asof(
-            pl.DataFrame({"window_start": signal_dates}, schema={"window_start": pl.Date}),
-            left_on="date",
-            right_on="window_start",
-            strategy="backward",
-            allow_exact_matches=False,
-        )
-        .drop_nulls("window_start")
-    )
+    day_windows = calendar.join_asof(
+        pl.DataFrame({"window_start": signal_dates}, schema={"window_start": pl.Date}),
+        left_on="date",
+        right_on="window_start",
+        strategy="backward",
+        allow_exact_matches=False,
+    ).drop_nulls("window_start")
     based = members.join(
         filled.select(
             pl.col("date").alias("window_start"), "symbol", pl.col("close_adj").alias("base")
@@ -74,14 +71,11 @@ def universe_benchmark_index(
     if unpriced.height:
         row = unpriced.row(0, named=True)
         raise ValueError(f"member {row['symbol']} has no close on its signal date {row['date']}")
-    weighted = (
-        based.rename({"date": "window_start"})
-        .with_columns(
-            (1.0 / pl.len().over("window_start")).alias("equal_weight"),
-            (pl.col("market_cap") / pl.col("market_cap").sum().over("window_start")).alias(
-                "cap_weight"
-            ),
-        )
+    weighted = based.rename({"date": "window_start"}).with_columns(
+        (1.0 / pl.len().over("window_start")).alias("equal_weight"),
+        (pl.col("market_cap") / pl.col("market_cap").sum().over("window_start")).alias(
+            "cap_weight"
+        ),
     )
     held = (
         filled.select("date", "symbol", "price")
@@ -105,7 +99,12 @@ def _chain_windows(
     signal_dates: list[date],
 ) -> pl.DataFrame:
     growth = {
-        row["date"]: (row["window_start"], row["equal_growth"], row["cap_growth"], row["member_count"])
+        row["date"]: (
+            row["window_start"],
+            row["equal_growth"],
+            row["cap_growth"],
+            row["member_count"],
+        )
         for row in held.iter_rows(named=True)
     }
     starts = set(signal_dates)
@@ -119,7 +118,12 @@ def _chain_windows(
             equal_level = equal_base * equal_growth
             cap_level = cap_base * cap_growth
         rows.append(
-            {"date": day, "equal_weight": equal_level, "cap_weight": cap_level, "member_count": count}
+            {
+                "date": day,
+                "equal_weight": equal_level,
+                "cap_weight": cap_level,
+                "member_count": count,
+            }
         )
         if day in starts:
             equal_base, cap_base = equal_level, cap_level

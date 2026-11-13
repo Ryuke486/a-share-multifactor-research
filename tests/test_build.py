@@ -97,9 +97,30 @@ def _write_pair(
     config.paths.raw_backward_adjusted.mkdir(parents=True, exist_ok=True)
     name = f"{day.isoformat()}_金玥数据.csv"
     raw_row = (
-        day.isoformat(), "000001", "平安银行", "银行", open_raw, "10.5", "9.8", "10.2",
-        "9.9", volume, amount, "1.5", "否", "是", "100000", "80000", "1020000",
-        "816000", "8.0", "1.1", "2.0", "1991-04-03", "-", "是",
+        day.isoformat(),
+        "000001",
+        "平安银行",
+        "银行",
+        open_raw,
+        "10.5",
+        "9.8",
+        "10.2",
+        "9.9",
+        volume,
+        amount,
+        "1.5",
+        "否",
+        "是",
+        "100000",
+        "80000",
+        "1020000",
+        "816000",
+        "8.0",
+        "1.1",
+        "2.0",
+        "1991-04-03",
+        "-",
+        "是",
     )
     adj_row = (day.isoformat(), "000001", "20.0", "21.0", "19.6", "20.4", "19.8")
     _write_csv(config.paths.raw_unadjusted / name, RAW_COLUMNS, raw_row)
@@ -150,9 +171,9 @@ def test_builds_two_days_into_audited_year_partition(tmp_path: Path) -> None:
             "year": 2014,
         }
     ]
-    assert json.loads(
-        (config.paths.processed / "daily_panel/quality_issues.json").read_text()
-    ) == []
+    assert (
+        json.loads((config.paths.processed / "daily_panel/quality_issues.json").read_text()) == []
+    )
 
 
 def test_quality_error_leaves_no_official_dataset(tmp_path: Path) -> None:
@@ -272,7 +293,9 @@ def test_duplicate_invalid_ohlc_rows_still_block(tmp_path: Path) -> None:
         lines = path.read_text(encoding="utf-8").splitlines()
         path.write_text("\n".join([lines[0], lines[1], lines[1]]) + "\n", encoding="utf-8")
 
-    with pytest.raises(pl.exceptions.ComputeError, match="join keys did not fulfill 1:1 validation"):
+    with pytest.raises(
+        pl.exceptions.ComputeError, match="join keys did not fulfill 1:1 validation"
+    ):
         build_parquet_dataset(config, date(2014, 1, 2), date(2014, 1, 2))
 
 

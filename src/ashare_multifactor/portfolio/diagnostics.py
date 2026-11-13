@@ -6,9 +6,7 @@ import polars as pl
 def portfolio_diagnostics(current: pl.DataFrame, previous: pl.DataFrame) -> dict[str, float | int]:
     current_weights = dict(zip(current["symbol"], current["target_weight"]))
     previous_weights = (
-        dict(zip(previous["symbol"], previous["target_weight"]))
-        if not previous.is_empty()
-        else {}
+        dict(zip(previous["symbol"], previous["target_weight"])) if not previous.is_empty() else {}
     )
     symbols = current_weights.keys() | previous_weights.keys()
     turnover = 0.5 * sum(

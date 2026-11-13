@@ -3,9 +3,7 @@ from __future__ import annotations
 import polars as pl
 
 
-FROZEN_CANDIDATE_FAMILIES = frozenset(
-    {"liquidity", "reversal", "low_volatility"}
-)
+FROZEN_CANDIDATE_FAMILIES = frozenset({"liquidity", "reversal", "low_volatility"})
 
 
 def build_ablation_scores(
@@ -34,8 +32,7 @@ def build_ablation_scores(
         .group_by("date", "symbol", maintain_order=True)
         .agg(
             (
-                (pl.col("score_size_neutral") * pl.col("weight")).sum()
-                / pl.col("weight").sum()
+                (pl.col("score_size_neutral") * pl.col("weight")).sum() / pl.col("weight").sum()
             ).alias("raw_score"),
             pl.col("family").n_unique().alias("family_count"),
             pl.len().alias("factor_count"),

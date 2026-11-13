@@ -44,18 +44,12 @@ class Stage8ReleaseAdapter:
     def bind(self, code_root: Path, *, run_id: str) -> RobustnessReleaseBinding:
         code_root = code_root.resolve()
         data_root = pipeline.resolve_robustness_data_root(code_root)
-        protocol = pipeline.load_robustness_protocol(
-            code_root / "configs/robustness_protocol.yaml"
-        )
-        validation = pipeline.resolve_current(
-            data_root / "processed/validation_evaluation"
-        )
+        protocol = pipeline.load_robustness_protocol(code_root / "configs/robustness_protocol.yaml")
+        validation = pipeline.resolve_current(data_root / "processed/validation_evaluation")
         if validation.run_id != protocol.validation_release:
             raise ValueError("authoritative validation release changed")
         decision = json.loads(
-            (
-                validation.artifacts / "research/selection_decision.json"
-            ).read_text(encoding="utf-8")
+            (validation.artifacts / "research/selection_decision.json").read_text(encoding="utf-8")
         )
         if decision.get("selected_candidate") != protocol.main_candidate:
             raise ValueError("validation main candidate changed")
@@ -64,10 +58,7 @@ class Stage8ReleaseAdapter:
             protocol.analysis_start,
             protocol.analysis_end,
         )
-        if (
-            self.successor_audit_root is not None
-            and self._successor_contract is None
-        ):
+        if self.successor_audit_root is not None and self._successor_contract is None:
             assert self.collector_readiness_root is not None
             self._successor_contract = pipeline._successor_release_contract(
                 code_root,
@@ -136,29 +127,20 @@ class Stage8ReleaseAdapter:
         run_id: str,
         options: object,
     ) -> _ReleasePreparation:
-        gate = json.loads(
-            (source / "protocol_gate.json").read_text(encoding="utf-8")
-        )
+        gate = json.loads((source / "protocol_gate.json").read_text(encoding="utf-8"))
         if gate.get("sealed_test_protocol_allowed") is not True:
             raise ValueError("robustness gate does not allow publication")
-        research_config = pipeline.load_config(
-            binding.code_root / "configs/research_protocol.yaml"
-        )
+        research_config = pipeline.load_config(binding.code_root / "configs/research_protocol.yaml")
         pipeline._assert_validation_market_scope(
             binding.validation,
             research_config.supported_markets,
         )
         validation_pointer = json.loads(
-            (
-                binding.data_root
-                / "processed/validation_evaluation/CURRENT.json"
-            ).read_text(encoding="utf-8")
+            (binding.data_root / "processed/validation_evaluation/CURRENT.json").read_text(
+                encoding="utf-8"
+            )
         )
-        staged = (
-            binding.data_root
-            / "artifacts/robustness/release_staging"
-            / run_id
-        )
+        staged = binding.data_root / "artifacts/robustness/release_staging" / run_id
         if staged.exists():
             raise FileExistsError(staged)
         datasets = staged / "datasets"
@@ -185,16 +167,12 @@ class Stage8ReleaseAdapter:
             protocol=binding.protocol,
             code_identity=dict(binding.code),
             validation_pointer=validation_pointer,
-            market_rules_sha256=sha256_file(
-                binding.code_root / "configs/market_rules.yaml"
-            ),
+            market_rules_sha256=sha256_file(binding.code_root / "configs/market_rules.yaml"),
             report_template_sha256=sha256_file(
-                binding.code_root
-                / "docs/templates/stage9-final-test-report-template.md"
+                binding.code_root / "docs/templates/stage9-final-test-report-template.md"
             ),
             opening_ledger_root=(
-                binding.data_root
-                / "processed/robustness/final_test_opening_ledger"
+                binding.data_root / "processed/robustness/final_test_opening_ledger"
             ),
             gate=gate,
             supported_markets=research_config.supported_markets,
@@ -214,9 +192,7 @@ class Stage8ReleaseAdapter:
                 else None
             ),
             predecessor=(
-                successor_contract["predecessor"]
-                if successor_contract is not None
-                else None
+                successor_contract["predecessor"] if successor_contract is not None else None
             ),
         )
         lineage: dict[str, object] = {
@@ -233,9 +209,7 @@ class Stage8ReleaseAdapter:
         if successor_contract is not None:
             lineage = build_stage8_successor_lineage(
                 lineage,
-                supersession=Stage8Supersession(
-                    **successor_contract["predecessor"]
-                ),
+                supersession=Stage8Supersession(**successor_contract["predecessor"]),
                 action_source_contract_sha256=str(
                     successor_contract["action_source_contract_sha256"]
                 ),

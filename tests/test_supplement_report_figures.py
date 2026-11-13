@@ -22,7 +22,9 @@ def _is_png(path: Path) -> bool:
 def test_every_report_figure_renders_from_synthetic_tables(tmp_path: Path) -> None:
     days = [date(2016, month, 28) for month in range(1, 13)] + [date(2017, 1, 26)]
 
-    plot_correlation_heatmap(np.array([[1.0, -0.001], [-0.001, 1.0]]), ["a", "b"], tmp_path / "h.png")
+    plot_correlation_heatmap(
+        np.array([[1.0, -0.001], [-0.001, 1.0]]), ["a", "b"], tmp_path / "h.png"
+    )
     plot_rolling_ic(
         pl.DataFrame(
             {
@@ -35,7 +37,9 @@ def test_every_report_figure_renders_from_synthetic_tables(tmp_path: Path) -> No
         split=SPLIT,
     )
     plot_cost_components(
-        pl.DataFrame({"component": ["commission", "impact_cost"], "bps": [3.0, 22.0], "share": [0.12, 0.88]}),
+        pl.DataFrame(
+            {"component": ["commission", "impact_cost"], "bps": [3.0, 22.0], "share": [0.12, 0.88]}
+        ),
         tmp_path / "c.png",
     )
     plot_drawdowns(
@@ -57,7 +61,11 @@ def test_every_report_figure_renders_from_synthetic_tables(tmp_path: Path) -> No
         for quantile in range(1, 6)
     ]
     plot_quintile_panels(
-        pl.DataFrame(rows, schema=["period", "object_name", "quantile", "mean_excess", "months"], orient="row"),
+        pl.DataFrame(
+            rows,
+            schema=["period", "object_name", "quantile", "mean_excess", "months"],
+            orient="row",
+        ),
         ("x", "y"),
         tmp_path / "q.png",
     )

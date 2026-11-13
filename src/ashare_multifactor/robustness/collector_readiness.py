@@ -19,18 +19,12 @@ _FILES = {
     "sample.parquet": "collector_rehearsal_sample",
     "catalog.parquet": "collector_rehearsal_catalog",
     "routing.parquet": "collector_rehearsal_routing",
-    "official_query_coverage/official_query_coverage.json": (
-        "collector_query_coverage"
-    ),
+    "official_query_coverage/official_query_coverage.json": ("collector_query_coverage"),
     "rehearsal_report.json": "collector_rehearsal_report",
     "process_recovery_drill.json": "collector_process_recovery_drill",
     "routing_audit/audit_report_reviewed.json": "collector_routing_audit",
-    "routing_audit/known_event_audit_2005_2021.json": (
-        "collector_known_event_audit"
-    ),
-    "routing_audit/exclusion_reviewed.parquet": (
-        "collector_exclusion_reviewed"
-    ),
+    "routing_audit/known_event_audit_2005_2021.json": ("collector_known_event_audit"),
+    "routing_audit/exclusion_reviewed.parquet": ("collector_exclusion_reviewed"),
 }
 
 
@@ -41,17 +35,13 @@ def write_collector_readiness_audit(
     """Copy the bounded pre-2022 rehearsal evidence into one immutable audit."""
     if destination.exists():
         if not destination.is_dir() or any(destination.iterdir()):
-            raise FileExistsError(
-                f"collector readiness audit root is not empty: {destination}"
-            )
+            raise FileExistsError(f"collector readiness audit root is not empty: {destination}")
     else:
         destination.mkdir(parents=True)
     for relative_path in _FILES:
         source = source_root / relative_path
         if not source.is_file() or source.is_symlink():
-            raise ValueError(
-                f"collector readiness audit source is invalid: {relative_path}"
-            )
+            raise ValueError(f"collector readiness audit source is invalid: {relative_path}")
         target = destination / relative_path
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
@@ -90,9 +80,7 @@ def verify_collector_readiness_audit(root: Path) -> str:
     ):
         raise ValueError("Stage-8 collector readiness audit is not ready")
     expected_roles = set(_FILES.values())
-    actual_roles = {
-        record.get("role") for record in records if isinstance(record, dict)
-    }
+    actual_roles = {record.get("role") for record in records if isinstance(record, dict)}
     if actual_roles != expected_roles:
         raise ValueError("Stage-8 collector readiness file set is incomplete")
     for record in records:
@@ -108,25 +96,18 @@ def verify_collector_readiness_audit(root: Path) -> str:
 
 def _validate_evidence(root: Path) -> dict[str, Any]:
     rehearsal = _read_json(root / "rehearsal_report.json")
-    coverage = _read_json(
-        root / "official_query_coverage/official_query_coverage.json"
-    )
+    coverage = _read_json(root / "official_query_coverage/official_query_coverage.json")
     routing = _read_json(root / "routing_audit/audit_report_reviewed.json")
-    known = _read_json(
-        root / "routing_audit/known_event_audit_2005_2021.json"
-    )
+    known = _read_json(root / "routing_audit/known_event_audit_2005_2021.json")
     recovery = _read_json(root / "process_recovery_drill.json")
     implementation = str(rehearsal.get("implementation_sha256", ""))
     if (
         rehearsal.get("role") != "official_collection_validation_rehearsal"
         or rehearsal.get("period") != _VALIDATION_PERIOD
         or rehearsal.get("sample_count", 0) < 100
-        or rehearsal.get("sample_sha256")
-        != sha256_file(root / "sample.parquet")
+        or rehearsal.get("sample_sha256") != sha256_file(root / "sample.parquet")
         or rehearsal.get("coverage_index_sha256")
-        != sha256_file(
-            root / "official_query_coverage/official_query_coverage.json"
-        )
+        != sha256_file(root / "official_query_coverage/official_query_coverage.json")
         or rehearsal.get("split_count", 0) < 1
         or rehearsal.get("within_36_hour_budget") is not True
         or rehearsal.get("full_universe_eta_seconds", _PERFORMANCE_LIMIT_SECONDS + 1)
@@ -203,6 +184,4 @@ def _write_json(path: Path, payload: dict[str, object]) -> None:
 
 
 def _valid_sha256(value: str) -> bool:
-    return len(value) == 64 and all(
-        character in "0123456789abcdef" for character in value
-    )
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)

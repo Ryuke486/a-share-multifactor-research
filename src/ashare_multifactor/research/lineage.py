@@ -74,9 +74,11 @@ def validate_daily_panel_source(config: ResearchConfig) -> DailyPanelSource:
             config.smoke_data,
         )
     except ValueError as error:
-        message = str(error).replace(
-            "allowed period start", "configured smoke_data start"
-        ).replace("allowed period end", "configured smoke_data end")
+        message = (
+            str(error)
+            .replace("allowed period start", "configured smoke_data start")
+            .replace("allowed period end", "configured smoke_data end")
+        )
         raise ValueError(message) from error
 
 

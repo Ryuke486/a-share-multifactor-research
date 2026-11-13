@@ -28,13 +28,9 @@ KEY_RESULTS_SCHEMA_VERSION = 1
 DEFAULT_DELIVERY_MANIFEST = Path("releases/v1.0.0-research-validation.json")
 DEFAULT_KEY_RESULTS = Path("docs/results/v1.0-key-results.json")
 
-_LINK_PATTERN = re.compile(
-    r"!?\[[^\]]*\]\(\s*(?P<target>[^)\s]+)(?:\s+\"[^\"]*\")?\s*\)"
-)
+_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(\s*(?P<target>[^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")
 # ASCII-only boundaries: CJK characters around a number must not block a match.
-_NUMBER_PATTERN = re.compile(
-    r"(?<![0-9A-Za-z_.])(?P<number>-?\d[\d,]*(?:\.\d+)?)(?![0-9A-Za-z_])"
-)
+_NUMBER_PATTERN = re.compile(r"(?<![0-9A-Za-z_.])(?P<number>-?\d[\d,]*(?:\.\d+)?)(?![0-9A-Za-z_])")
 _EXTERNAL_PREFIXES = ("http://", "https://", "mailto:", "#")
 
 
@@ -155,9 +151,7 @@ def markdown_documents(root: Path, names: Iterable[str] | None = None) -> tuple[
         return tuple(sorted(names))
     tracked = tracked_files(root)
     if tracked is None:
-        candidates = {
-            path.relative_to(root).as_posix() for path in root.rglob("*.md")
-        }
+        candidates = {path.relative_to(root).as_posix() for path in root.rglob("*.md")}
         return tuple(sorted(candidates))
     return tuple(sorted(name for name in tracked if name.endswith(".md")))
 
@@ -192,7 +186,9 @@ def check_markdown_links(
     return CheckOutcome(
         name="markdown_links",
         issues=tuple(issues),
-        notes=(f"{checked} local links checked in {len(markdown_documents(root, documents))} documents",),
+        notes=(
+            f"{checked} local links checked in {len(markdown_documents(root, documents))} documents",
+        ),
     )
 
 
@@ -295,9 +291,7 @@ def check_delivery_manifest(
     if not path.is_file():
         return CheckOutcome(
             name="delivery_manifest",
-            issues=(
-                DeliveryIssue("delivery_manifest", manifest_name, "manifest is missing"),
-            ),
+            issues=(DeliveryIssue("delivery_manifest", manifest_name, "manifest is missing"),),
         )
     manifest = json.loads(path.read_text(encoding="utf-8"))
     anchor = _publication_commit(root, manifest_name)
@@ -778,8 +772,12 @@ def _supplement_specs() -> list[KeyResultSpec]:
         for benchmark in ("equal_weight", "cap_weight"):
             relative(
                 f"{label}.{benchmark}.annual_return",
-                (("period", period), ("portfolio", portfolio), ("cost_mode", "net"),
-                 ("benchmark", benchmark)),
+                (
+                    ("period", period),
+                    ("portfolio", portfolio),
+                    ("cost_mode", "net"),
+                    ("benchmark", benchmark),
+                ),
                 "benchmark_annual_return",
             )
     portfolios = [(label, period, portfolio) for label, period, portfolio in _SUPPLEMENT_PERIODS]
@@ -789,8 +787,12 @@ def _supplement_specs() -> list[KeyResultSpec]:
     ]
     for label, period, portfolio in portfolios:
         for cost_mode in ("net", "zero_cost"):
-            where = (("period", period), ("portfolio", portfolio), ("cost_mode", cost_mode),
-                     ("benchmark", "equal_weight"))
+            where = (
+                ("period", period),
+                ("portfolio", portfolio),
+                ("cost_mode", cost_mode),
+                ("benchmark", "equal_weight"),
+            )
             for field in ("annual_relative_return", "information_ratio", "beta"):
                 relative(f"{label}.{portfolio}.{cost_mode}.equal_weight.{field}", where, field)
     for year in range(2017, 2022):
@@ -800,7 +802,9 @@ def _supplement_specs() -> list[KeyResultSpec]:
                     f"supplement.calendar.{year}.{field}",
                     "v1_supplements",
                     ResultSelect(
-                        "calendar_year_returns.csv", kind="csv", field=field,
+                        "calendar_year_returns.csv",
+                        kind="csv",
+                        field=field,
                         where=(("year", year),),
                     ),
                     required_documents=report,
@@ -814,7 +818,9 @@ def _supplement_specs() -> list[KeyResultSpec]:
                         f"supplement.legs.{period}.{name}.{field}",
                         "v1_supplements",
                         ResultSelect(
-                            "leg_decomposition.csv", kind="csv", field=field,
+                            "leg_decomposition.csv",
+                            kind="csv",
+                            field=field,
                             where=(("period", period), ("object_name", name)),
                         ),
                         required_documents=report,
@@ -904,9 +910,13 @@ def _factor_statistic_specs(report: tuple[str, ...]) -> list[KeyResultSpec]:
             (("period", research), ("object_name", "log_market_cap")),
         )
     for period in (research, "validation_2017_2021"):
-        names = ("momentum_60", "momentum_120", "momentum_12_1") if period == research else (
-            "momentum_60",
-            "log_market_cap",
+        names = (
+            ("momentum_60", "momentum_120", "momentum_12_1")
+            if period == research
+            else (
+                "momentum_60",
+                "log_market_cap",
+            )
         )
         for name in names:
             add(
@@ -987,9 +997,9 @@ def _resolve_value(base: Path, select: ResultSelect) -> Any:
     if select.stat == "sum_ratio":
         if select.denominator is None:
             raise ValueError("a sum_ratio selection requires a denominator column")
-        return frame.get_column(str(select.field)).sum() / frame.get_column(
-            select.denominator
-        ).sum()
+        return (
+            frame.get_column(str(select.field)).sum() / frame.get_column(select.denominator).sum()
+        )
     if select.field is None:
         raise ValueError("a field is required for a single-row selection")
     if frame.height != 1:
@@ -1012,7 +1022,9 @@ def _discover_citations(
             literal = match.group("number")
             if literal in seen:
                 continue
-            if not _is_quotable(literal) and not (value == 0 and float(literal.replace(",", "")) == 0.0):
+            if not _is_quotable(literal) and not (
+                value == 0 and float(literal.replace(",", "")) == 0.0
+            ):
                 continue
             if number_renders_value(value, literal):
                 seen.add(literal)
@@ -1321,7 +1333,3 @@ def run_delivery_checks(
     if verify_sources:
         outcomes.append(verify_key_result_sources(root, results_path))
     return DeliveryReport(outcomes=tuple(outcomes))
-
-
-
-

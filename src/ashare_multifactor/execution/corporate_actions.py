@@ -71,9 +71,7 @@ def normalize_corporate_actions(
                 "source": pl.String,
             }
         )
-    return pl.DataFrame(
-        [{"action_id": _action_id(row), **row} for row in rows]
-    ).select(
+    return pl.DataFrame([{"action_id": _action_id(row), **row} for row in rows]).select(
         "action_id",
         "ex_date",
         "effective_date",

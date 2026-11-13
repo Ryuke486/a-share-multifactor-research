@@ -26,9 +26,7 @@ def candidate_registry(
     expected_families = {
         factor: family for family, factors in CANDIDATE_FACTORS.items() for factor in factors
     }
-    actual_families = dict(
-        candidate_rows.select("factor_name", "family").iter_rows()
-    )
+    actual_families = dict(candidate_rows.select("factor_name", "family").iter_rows())
     if actual_families != expected_families:
         raise ValueError("candidate factor families do not match the frozen registry")
     variants = set(candidate_rows.get_column("primary_score_variant"))

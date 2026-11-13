@@ -36,7 +36,9 @@ def test_executable_label_enters_at_the_next_open_and_exits_h_observations_later
     assert labels.item(0, "executable_return_2") == pytest.approx(13.0 / 11.0 - 1.0)
     # the signal-day close never enters the executable label
     changed = panel.with_columns(
-        pl.when(pl.col("date") == DAYS[0]).then(999.0).otherwise(pl.col("close_adj"))
+        pl.when(pl.col("date") == DAYS[0])
+        .then(999.0)
+        .otherwise(pl.col("close_adj"))
         .alias("close_adj")
     )
     assert executable_forward_returns(
@@ -140,9 +142,7 @@ def test_reproduction_guard_rejects_a_changed_or_missing_published_month() -> No
     _assert_reproduces(exact, published, "p", "x", 20)
 
     with pytest.raises(ValueError, match="do not reproduce"):
-        _assert_reproduces(
-            exact.with_columns(pl.col("rank_ic") + 1e-6), published, "p", "x", 20
-        )
+        _assert_reproduces(exact.with_columns(pl.col("rank_ic") + 1e-6), published, "p", "x", 20)
     with pytest.raises(ValueError, match="do not reproduce"):
         _assert_reproduces(exact.head(1), published, "p", "x", 20)
     assert [_published_lag(horizon) for horizon in (5, 20, 60)] == [0, 0, 2]

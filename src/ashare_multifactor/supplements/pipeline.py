@@ -60,16 +60,29 @@ BUILD_ROOT = Path("processed/v1_supplements/build")
 OUTPUT_ROOT = Path("artifacts/v1_supplements")
 FIGURE_NAME = "benchmark_comparison.png"
 HEATMAP_ORDER = (
-    "ep_ttm", "bp", "sp_ttm",
-    "momentum_60", "momentum_120", "momentum_12_1",
-    "reversal_5", "reversal_20",
-    "turnover_20", "amihud_20",
-    "volatility_20", "volatility_60", "downside_volatility_60",
+    "ep_ttm",
+    "bp",
+    "sp_ttm",
+    "momentum_60",
+    "momentum_120",
+    "momentum_12_1",
+    "reversal_5",
+    "reversal_20",
+    "turnover_20",
+    "amihud_20",
+    "volatility_20",
+    "volatility_60",
+    "downside_volatility_60",
     "log_market_cap",
 )
 QUINTILE_PANELS = (
-    "family_equal", "reversal_5", "reversal_20", "turnover_20",
-    "amihud_20", "volatility_20", "volatility_60",
+    "family_equal",
+    "reversal_5",
+    "reversal_20",
+    "turnover_20",
+    "amihud_20",
+    "volatility_20",
+    "volatility_60",
 )
 _TOLERANCE = 1e-12
 
@@ -278,7 +291,9 @@ def _relative_table(
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     initial = float(summary["start_nav"])
     published = pl.read_parquet(stage7.artifacts / "research/validation_metrics.parquet")
-    research_paths = {candidate: _slice(nav, ANALYSIS_START, RESEARCH_END) for candidate, nav in navs.items()}
+    research_paths = {
+        candidate: _slice(nav, ANALYSIS_START, RESEARCH_END) for candidate, nav in navs.items()
+    }
     reference = research_paths[CANDIDATES[0]]
     for candidate, path in research_paths.items():
         if not path.equals(reference):
@@ -351,7 +366,10 @@ def _period_rows(
                 benchmark_levels=benchmark_levels,
                 years=years,
             )
-            if cost_mode == "net" and abs(metrics["strategy_annual_return"] - published_net) > _TOLERANCE:
+            if (
+                cost_mode == "net"
+                and abs(metrics["strategy_annual_return"] - published_net) > _TOLERANCE
+            ):
                 raise ValueError(f"{period} {portfolio} does not reproduce its published return")
             rows.append(
                 {
@@ -395,7 +413,10 @@ def _calendar_years(nav: pl.DataFrame, index: pl.DataFrame) -> pl.DataFrame:
     columns = ("strategy_net", "strategy_zero_cost", "equal_weight", "cap_weight")
     return year_end.select(
         "year",
-        *[(pl.col(column) / pl.col(column).shift(1).fill_null(1.0) - 1.0).alias(column) for column in columns],
+        *[
+            (pl.col(column) / pl.col(column).shift(1).fill_null(1.0) - 1.0).alias(column)
+            for column in columns
+        ],
     ).with_columns(
         (pl.col("strategy_net") - pl.col("equal_weight")).alias("net_minus_equal_weight")
     )
@@ -553,7 +574,9 @@ def _write_report_figures(
     traded = float(
         pl.read_parquet(stage6.datasets / "trades.parquet", columns=["amount"])["amount"].sum()
     )
-    components = cost_components(pl.read_csv(breakdown_path).row(0, named=True), traded_amount=traded)
+    components = cost_components(
+        pl.read_csv(breakdown_path).row(0, named=True), traded_amount=traded
+    )
     components.write_csv(output / "cost_components.csv")
     plot_cost_components(components, figures / "research_cost_components.png")
 

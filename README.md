@@ -54,6 +54,7 @@
 .venv/bin/python -m pip install --no-deps -e ".[dev]"
 .venv/bin/python -m pytest -q
 .venv/bin/python -m ruff check src tests
+.venv/bin/python -m ruff format --check src tests
 .venv/bin/python -m ashare_multifactor.cli.delivery check
 ```
 

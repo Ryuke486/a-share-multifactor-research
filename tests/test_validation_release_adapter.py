@@ -17,15 +17,11 @@ FIXED_CODE: dict[str, object] = {
     "dirty": False,
     "tree": "b" * 40,
 }
-FIXED_INPUTS: dict[str, object] = {
-    "frozen_input": {"sha256": "c" * 64, "size": 123}
-}
+FIXED_INPUTS: dict[str, object] = {"frozen_input": {"sha256": "c" * 64, "size": 123}}
 
 
 def _json_bytes(payload: object) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode()
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
 
 def _write_stage7_core(root: Path) -> dict[str, str]:
@@ -232,9 +228,7 @@ def test_stage7_adapter_prepares_the_legacy_mapping_and_lineage_bytes(
     assert prepared.manifest_metadata == {"stage": "validation_evaluation"}
     assert (staged / "lineage.json").read_bytes() == _json_bytes(lineage)
     staged_files = {
-        path.relative_to(staged).as_posix()
-        for path in staged.rglob("*")
-        if path.is_file()
+        path.relative_to(staged).as_posix() for path in staged.rglob("*") if path.is_file()
     }
     assert len(staged_files) == 99
     assert calls == [
@@ -338,10 +332,7 @@ def test_stage7_adapter_cleans_failed_staging_on_input_drift(
         "_validation_lineage",
         lambda *args, **kwargs: {"fixed": True},
     )
-    staged = (
-        tmp_path
-        / "artifacts/validation_evaluation/validation_runs/release-fixed"
-    )
+    staged = tmp_path / "artifacts/validation_evaluation/validation_runs/release-fixed"
 
     with pytest.raises(ValueError, match=f"^{message}$"):
         release_adapter.Stage7ReleaseAdapter().prepare_release(
@@ -440,9 +431,7 @@ def test_stage7_run_facade_preserves_the_frozen_manifest_bytes(
         "files": [
             {
                 "path": relative,
-                "sha256": hashlib.sha256(
-                    f"stage7:{relative}\n".encode()
-                ).hexdigest(),
+                "sha256": hashlib.sha256(f"stage7:{relative}\n".encode()).hexdigest(),
                 "size": len(f"stage7:{relative}\n".encode()),
             }
             for relative in lifecycle._STAGE7_V1.core_paths
@@ -567,13 +556,10 @@ def test_stage7_reproduce_facade_preserves_the_frozen_certificate_bytes(
         "inputs": FIXED_INPUTS,
         "core_hashes": core_hashes,
         "run_manifest_sha256": [
-            hashlib.sha256(_json_bytes(manifest)).hexdigest()
-            for manifest in manifests
+            hashlib.sha256(_json_bytes(manifest)).hexdigest() for manifest in manifests
         ],
     }
-    certificate = (
-        tmp_path / "processed/validation_evaluation/full_reproducibility.json"
-    )
+    certificate = tmp_path / "processed/validation_evaluation/full_reproducibility.json"
     assert result == expected
     assert certificate.read_bytes() == _json_bytes(expected)
 

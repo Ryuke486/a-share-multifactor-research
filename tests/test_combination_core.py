@@ -91,23 +91,30 @@ def test_rolling_ic_weights_use_only_strictly_prior_months() -> None:
 
 
 def test_rolling_ic_excludes_ic_not_realized_before_weight_date() -> None:
-    rank_ic = pl.DataFrame({
-        "date": [date(2005, 1, 31), date(2005, 2, 28)] * 2,
-        "factor_name": ["reversal_5"] * 2 + ["reversal_20"] * 2,
-        "family": ["reversal"] * 4,
-        "score_variant": ["score_size_neutral"] * 4,
-        "horizon": [20] * 4,
-        "rank_ic": [1.0, 99.0, 3.0, -99.0],
-    })
-    realization = pl.DataFrame({
-        "date": [date(2005, 1, 31), date(2005, 2, 28)],
-        "realization_date": [date(2005, 3, 10), date(2005, 4, 10)],
-    })
+    rank_ic = pl.DataFrame(
+        {
+            "date": [date(2005, 1, 31), date(2005, 2, 28)] * 2,
+            "factor_name": ["reversal_5"] * 2 + ["reversal_20"] * 2,
+            "family": ["reversal"] * 4,
+            "score_variant": ["score_size_neutral"] * 4,
+            "horizon": [20] * 4,
+            "rank_ic": [1.0, 99.0, 3.0, -99.0],
+        }
+    )
+    realization = pl.DataFrame(
+        {
+            "date": [date(2005, 1, 31), date(2005, 2, 28)],
+            "realization_date": [date(2005, 3, 10), date(2005, 4, 10)],
+        }
+    )
 
     weights = rolling_ic_weights(
-        rank_ic, weight_dates=(date(2005, 4, 1),),
+        rank_ic,
+        weight_dates=(date(2005, 4, 1),),
         factors={"reversal": ("reversal_5", "reversal_20")},
-        window_months=36, minimum_months=1, shrinkage=0.5,
+        window_months=36,
+        minimum_months=1,
+        shrinkage=0.5,
         realization_dates=realization,
     )
 
@@ -218,8 +225,10 @@ def test_rolling_composite_scores_are_bitwise_independent_of_input_order() -> No
             )
         ]
     )
-    weights = panel.select("date", "factor_name").unique().with_columns(
-        pl.lit(1.0).alias("factor_weight")
+    weights = (
+        panel.select("date", "factor_name")
+        .unique()
+        .with_columns(pl.lit(1.0).alias("factor_weight"))
     )
 
     forward = build_rolling_composite_scores(panel, _classifications(), weights)

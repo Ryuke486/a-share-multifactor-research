@@ -26,9 +26,12 @@ def _levels(frame: pl.DataFrame, column: str) -> list[float]:
 def test_equal_and_cap_weighted_indices_buy_and_hold_within_a_window() -> None:
     prices = _prices(
         [
-            (D[0], "000001", 10.0), (D[0], "600000", 20.0),
-            (D[1], "000001", 11.0), (D[1], "600000", 20.0),
-            (D[2], "000001", 12.1), (D[2], "600000", 30.0),
+            (D[0], "000001", 10.0),
+            (D[0], "600000", 20.0),
+            (D[1], "000001", 11.0),
+            (D[1], "600000", 20.0),
+            (D[2], "000001", 12.1),
+            (D[2], "600000", 30.0),
         ]
     )
     members = _members([(D[0], "000001", 1.0), (D[0], "600000", 3.0)])
@@ -44,10 +47,14 @@ def test_equal_and_cap_weighted_indices_buy_and_hold_within_a_window() -> None:
 def test_membership_changes_only_after_the_next_signal_close() -> None:
     prices = _prices(
         [
-            (D[0], "000001", 10.0), (D[0], "600000", 10.0),
-            (D[1], "000001", 10.0), (D[1], "600000", 10.0),
-            (D[2], "000001", 20.0), (D[2], "600000", 10.0),
-            (D[3], "000001", 20.0), (D[3], "600000", 15.0),
+            (D[0], "000001", 10.0),
+            (D[0], "600000", 10.0),
+            (D[1], "000001", 10.0),
+            (D[1], "600000", 10.0),
+            (D[2], "000001", 20.0),
+            (D[2], "600000", 10.0),
+            (D[3], "000001", 20.0),
+            (D[3], "600000", 15.0),
         ]
     )
     members = _members(
@@ -75,9 +82,11 @@ def test_membership_changes_only_after_the_next_signal_close() -> None:
 def test_suspended_and_delisted_members_are_held_at_their_last_close() -> None:
     prices = _prices(
         [
-            (D[0], "000001", 10.0), (D[0], "600000", 10.0),
+            (D[0], "000001", 10.0),
+            (D[0], "600000", 10.0),
             (D[1], "000001", 12.0),
-            (D[3], "000001", 12.0), (D[3], "600000", 5.0),
+            (D[3], "000001", 12.0),
+            (D[3], "600000", 5.0),
         ]
     )
     members = _members([(D[0], "000001", 1.0), (D[0], "600000", 1.0)])
@@ -89,15 +98,11 @@ def test_suspended_and_delisted_members_are_held_at_their_last_close() -> None:
 
 def test_index_is_flat_before_the_first_signal_and_rejects_unpriced_members() -> None:
     prices = _prices([(D[1], "000001", 10.0), (D[2], "000001", 11.0)])
-    index = universe_benchmark_index(
-        prices, _members([(D[1], "000001", 1.0)]), trading_dates=D[:3]
-    )
+    index = universe_benchmark_index(prices, _members([(D[1], "000001", 1.0)]), trading_dates=D[:3])
     assert _levels(index, "equal_weight") == [1.0, 1.0, 1.1]
 
     with pytest.raises(ValueError, match="no close on its signal date"):
-        universe_benchmark_index(
-            prices, _members([(D[0], "000001", 1.0)]), trading_dates=D[:3]
-        )
+        universe_benchmark_index(prices, _members([(D[0], "000001", 1.0)]), trading_dates=D[:3])
     with pytest.raises(ValueError, match="not a trading date"):
         universe_benchmark_index(
             prices, _members([(date(2017, 1, 7), "000001", 1.0)]), trading_dates=D[:3]
@@ -134,9 +139,7 @@ def test_relative_performance_recovers_a_known_beta() -> None:
         benchmark.append(benchmark[-1] * (1 + value))
         strategy.append(strategy[-1] * (1 + 2 * value + 0.001))
 
-    result = relative_performance(
-        strategy_levels=strategy, benchmark_levels=benchmark, years=1.0
-    )
+    result = relative_performance(strategy_levels=strategy, benchmark_levels=benchmark, years=1.0)
 
     assert result["beta"] == pytest.approx(2.0)
     assert result["correlation"] == pytest.approx(1.0)

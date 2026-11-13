@@ -72,9 +72,7 @@ class BuildManifest:
 
 
 class SecureBuildOutput(Protocol):
-    def write_year(
-        self, year: int, frames: list[pl.DataFrame]
-    ) -> PartitionManifest: ...
+    def write_year(self, year: int, frames: list[pl.DataFrame]) -> PartitionManifest: ...
 
     def write_json(self, name: str, payload: object) -> bytes: ...
 
@@ -192,9 +190,7 @@ def _validated_output_root(
     if resolved_factor_root != expected_factor_root:
         if resolved_factor_root.is_relative_to(processed):
             raise ValueError("configured factor_research path uses a symlink alias")
-        raise ValueError(
-            "configured factor research daily panel escapes configured processed root"
-        )
+        raise ValueError("configured factor research daily panel escapes configured processed root")
 
     target = factor_root / "daily_panel"
     expected_target = expected_factor_root / "daily_panel"
@@ -202,9 +198,7 @@ def _validated_output_root(
     if resolved_target != expected_target:
         if resolved_target.is_relative_to(processed):
             raise ValueError("configured daily_panel path uses a symlink alias")
-        raise ValueError(
-            "configured factor research daily panel escapes configured processed root"
-        )
+        raise ValueError("configured factor research daily panel escapes configured processed root")
     return target
 
 
@@ -288,8 +282,7 @@ def build_parquet_dataset(
                             "code": "outside_supported_markets_excluded",
                             "count": excluded_rows,
                             "message": (
-                                "rows outside the configured supported market scope "
-                                "were excluded"
+                                "rows outside the configured supported market scope were excluded"
                             ),
                             "supported_markets": list(supported_markets),
                         }
@@ -322,9 +315,7 @@ def build_parquet_dataset(
                     )
                     frame = frame.filter(~invalid_ohlc_expression())
                 if frame.is_empty():
-                    raise ValueError(
-                        f"all rows quarantined for {pair.trading_date.isoformat()}"
-                    )
+                    raise ValueError(f"all rows quarantined for {pair.trading_date.isoformat()}")
             issues = validate_daily_panel(frame, pair.trading_date)
             raise_on_errors(issues)
             quality_records.extend(
@@ -344,9 +335,7 @@ def build_parquet_dataset(
             _write_json(staging / "quality_issues.json", quality_records)
             quality_bytes = (staging / "quality_issues.json").read_bytes()
         else:
-            quality_bytes = secure_output.write_json(
-                "quality_issues.json", quality_records
-            )
+            quality_bytes = secure_output.write_json("quality_issues.json", quality_records)
         quality_path = staging / "quality_issues.json"
         quality_manifest = QualityIssuesManifest(
             relative_path="quality_issues.json",
@@ -357,9 +346,7 @@ def build_parquet_dataset(
                 if record.get("code") == "invalid_ohlc_quarantined"
             ),
             size_bytes=(
-                quality_path.stat().st_size
-                if secure_output is None
-                else len(quality_bytes)
+                quality_path.stat().st_size if secure_output is None else len(quality_bytes)
             ),
             sha256=(
                 _file_sha256(quality_path)

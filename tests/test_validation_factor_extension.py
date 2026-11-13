@@ -45,13 +45,9 @@ def test_factor_extension_reuses_registry_and_keeps_validation_dates_only() -> N
     assert set(result.panel.get_column("factor_name")) == {
         definition.name for definition in FACTOR_DEFINITIONS
     }
-    assert (
-        result.panel.filter(pl.col("family") == "value")
-        .get_column("point_in_time_status")
-        .unique()
-        .to_list()
-        == ["unverified"]
-    )
+    assert result.panel.filter(pl.col("family") == "value").get_column(
+        "point_in_time_status"
+    ).unique().to_list() == ["unverified"]
     assert result.audit.filter(pl.col("factor_name") == "reversal_20").height == 1
 
 
@@ -133,9 +129,7 @@ def test_future_validation_ic_cannot_change_past_rolling_weights() -> None:
     )
 
 
-def _rank_ic_rows(
-    signal_date: date, factors: list[tuple[str, str]], value: float
-) -> pl.DataFrame:
+def _rank_ic_rows(signal_date: date, factors: list[tuple[str, str]], value: float) -> pl.DataFrame:
     return pl.DataFrame(
         {
             "date": [signal_date] * len(factors),

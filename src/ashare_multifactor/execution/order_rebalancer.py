@@ -24,10 +24,14 @@ def build_target_order_specs(
     """Build target gaps from post-action holdings and pre-open information only."""
     holdings = set(ledger._lots)
     selected = sorted(symbols if symbols is not None else set(weights) | holdings)
-    preopen_value = ledger.cash + ledger.receivables + sum(
-        ledger.quantity(symbol)
-        * float(market.get(symbol, {}).get("open_raw") or last_close.get(symbol, 0.0))
-        for symbol in holdings
+    preopen_value = (
+        ledger.cash
+        + ledger.receivables
+        + sum(
+            ledger.quantity(symbol)
+            * float(market.get(symbol, {}).get("open_raw") or last_close.get(symbol, 0.0))
+            for symbol in holdings
+        )
     )
     specs: list[tuple[int, str, str, int, float]] = []
     for symbol in selected:

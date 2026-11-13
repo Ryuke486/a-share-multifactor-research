@@ -179,9 +179,7 @@ def publish_robustness_release(
     """Publish only two-run-identical output from one clean Git identity."""
     code_root = code_root.resolve()
     try:
-        reproducible_release._assert_clean_release_identity(
-            code_identity(code_root)
-        )
+        reproducible_release._assert_clean_release_identity(code_identity(code_root))
         return reproducible_release.release(
             _stage8_release_adapter(
                 successor_audit_root=successor_audit_root,
@@ -193,17 +191,13 @@ def publish_robustness_release(
         )
     except ValueError as error:
         if str(error) == "current code identity is dirty":
-            raise ValueError(
-                "robustness release requires a clean Git identity"
-            ) from error
+            raise ValueError("robustness release requires a clean Git identity") from error
         if str(error) in {
             "current code identity differs from certified runs",
             "reproducibility certificate does not bind two runs",
             "reproducibility gate is not release eligible",
         }:
-            raise ValueError(
-                "robustness reproducibility gate is incomplete"
-            ) from error
+            raise ValueError("robustness reproducibility gate is incomplete") from error
         raise
 
 
@@ -215,9 +209,7 @@ def _successor_release_contract(
 ) -> dict[str, object]:
     predecessor = resolve_current(data_root / "processed/robustness")
     audit_sha256 = verify_action_coverage_audit(action_audit_root)
-    collector_readiness_sha256 = verify_collector_readiness_audit(
-        collector_readiness_root
-    )
+    collector_readiness_sha256 = verify_collector_readiness_audit(collector_readiness_root)
     market_rules_path = code_root / "configs/market_rules.yaml"
     source_contract_path = code_root / "configs/final_execution_sources.yaml"
     validate_fee_protocol(
@@ -231,9 +223,7 @@ def _successor_release_contract(
             "manifest_sha256": predecessor.manifest_sha256,
         },
         predecessor_manifest=predecessor.manifest,
-        reason=(
-            "predecessor final-execution seal omitted exact Git tree identity"
-        ),
+        reason=("predecessor final-execution seal omitted exact Git tree identity"),
     )
     return {
         "predecessor": supersession.to_dict(),
@@ -244,9 +234,7 @@ def _successor_release_contract(
     }
 
 
-def verify_reproducible_source(
-    source: Path, reproducibility: dict[str, Any]
-) -> None:
+def verify_reproducible_source(source: Path, reproducibility: dict[str, Any]) -> None:
     """Revalidate the selected run instead of trusting a mutable summary file."""
     reproducible_release._verify_compatibility_source(
         "stage8_v1",
@@ -273,12 +261,8 @@ def _execute_experiments(
     actions = read_bounded_parquet(
         inputs / "corporate_actions.parquet", date_column="effective_date"
     )
-    events = read_bounded_parquet(
-        inputs / "security_events.parquet", date_column="effective_date"
-    )
-    targets = read_bounded_parquet(
-        inputs / f"continuous_targets_{protocol.main_candidate}.parquet"
-    )
+    events = read_bounded_parquet(inputs / "security_events.parquet", date_column="effective_date")
+    targets = read_bounded_parquet(inputs / f"continuous_targets_{protocol.main_candidate}.parquet")
     assert_supported_markets(execution, config.supported_markets, label="Stage-8 execution panel")
     assert_supported_markets(actions, config.supported_markets, label="Stage-8 corporate actions")
     assert_supported_markets(
@@ -304,9 +288,7 @@ def _execute_experiments(
     fatal: list[dict[str, object]] = []
     for scenario in build_execution_scenarios(protocol, settings, fees):
         if scenario.settings == settings and scenario.fees == fees:
-            selected = select_backtest_scenario(
-                baseline_result, scenario.result_scenario
-            )
+            selected = select_backtest_scenario(baseline_result, scenario.result_scenario)
         else:
             rerun = run_validation_backtest(
                 execution, targets, actions, scenario.fees, scenario.settings, events
@@ -345,9 +327,7 @@ def _execute_experiments(
                 size_groups=portfolio.size_groups,
             )
             continuous = _continuous_variant(research_targets, built.targets, protocol)
-            rerun = run_validation_backtest(
-                execution, continuous, actions, fees, settings, events
-            )
+            rerun = run_validation_backtest(execution, continuous, actions, fees, settings, events)
             results.append(_wide_result(variant.experiment_id, rerun))
         except ExpectedExperimentUnavailability as exc:
             results.append(_failed_result(variant.experiment_id, str(exc)))
@@ -374,9 +354,7 @@ def _execute_experiments(
             size_groups=portfolio.size_groups,
         )
         continuous = _continuous_variant(research_targets, built.targets, protocol)
-        rerun = run_validation_backtest(
-            execution, continuous, actions, fees, settings, events
-        )
+        rerun = run_validation_backtest(execution, continuous, actions, fees, settings, events)
         results.append(_wide_result(experiment.experiment_id, rerun))
 
     # Static classification metadata has no observations or date column.
@@ -387,21 +365,20 @@ def _execute_experiments(
         data_root / "processed/factor_research/rank_ic.parquet",
         end=date(2016, 12, 31),
     )
-    validation_ic = read_bounded_parquet(
-        validation.artifacts / "research/factor_rank_ic.parquet"
-    )
+    validation_ic = read_bounded_parquet(validation.artifacts / "research/factor_rank_ic.parquet")
     historical_returns = read_bounded_parquet(
         data_root / "processed/factor_research/forward_returns.parquet",
         end=date(2016, 12, 31),
     )
     validation_returns = read_bounded_parquet(inputs / "forward_returns.parquet")
-    realization_dates = pl.concat(
-        (historical_returns, validation_returns), how="vertical_relaxed"
-    ).group_by("date").agg(
-        (
-            pl.col("date").first()
-            + pl.duration(days=pl.col("forward_calendar_days_20").max())
-        ).alias("realization_date")
+    realization_dates = (
+        pl.concat((historical_returns, validation_returns), how="vertical_relaxed")
+        .group_by("date")
+        .agg(
+            (
+                pl.col("date").first() + pl.duration(days=pl.col("forward_calendar_days_20").max())
+            ).alias("realization_date")
+        )
     )
     rank_ic = pl.concat((historical_ic, validation_ic), how="diagonal_relaxed")
     weight_dates = panel.get_column("date").unique().sort().to_list()
@@ -435,9 +412,7 @@ def _execute_experiments(
             size_groups=portfolio.size_groups,
         )
         continuous = _continuous_variant(research_targets, built.targets, protocol)
-        rerun = run_validation_backtest(
-            execution, continuous, actions, fees, settings, events
-        )
+        rerun = run_validation_backtest(execution, continuous, actions, fees, settings, events)
         results.append(_wide_result(experiment.experiment_id, rerun))
 
     results.extend(_regime_results(baseline_result, execution, panel))
@@ -449,9 +424,7 @@ def _load_published_backtest(validation: object, candidate: str) -> dict[str, pl
     return {
         name: read_bounded_parquet(
             root / f"{name}.parquet",
-            date_column=(
-                "signal_date" if name in {"orders", "scenario_orders"} else "date"
-            ),
+            date_column=("signal_date" if name in {"orders", "scenario_orders"} else "date"),
         )
         for name in (
             "nav",
@@ -505,9 +478,7 @@ def _continuous_variant(
     validation_targets: pl.DataFrame,
     protocol: RobustnessProtocol,
 ) -> pl.DataFrame:
-    labeled = validation_targets.with_columns(
-        pl.lit(protocol.main_candidate).alias("candidate")
-    )
+    labeled = validation_targets.with_columns(pl.lit(protocol.main_candidate).alias("candidate"))
     return build_continuous_targets(
         research_targets,
         labeled,
@@ -523,9 +494,7 @@ def _regime_results(
     nav = baseline_result["nav"].select("date", "return")
     market = (
         execution.with_columns(
-            (pl.col("close_adj") / pl.col("prev_close_adj") - 1.0).alias(
-                "market_return"
-            )
+            (pl.col("close_adj") / pl.col("prev_close_adj") - 1.0).alias("market_return")
         )
         .filter(pl.col("market_return").is_finite())
         .group_by("date")
@@ -616,10 +585,6 @@ def _assert_input_period_contracts(data_root: Path, validation: object) -> None:
     validation_lineage = json.loads(validation.lineage.read_text(encoding="utf-8"))
     stage5_lineage = json.loads(stage_five.lineage.read_text(encoding="utf-8"))
     factor_lineage = json.loads(
-        (data_root / "processed/factor_research/lineage.json").read_text(
-            encoding="utf-8"
-        )
+        (data_root / "processed/factor_research/lineage.json").read_text(encoding="utf-8")
     )
-    assert_authoritative_period_contracts(
-        validation_lineage, stage5_lineage, factor_lineage
-    )
+    assert_authoritative_period_contracts(validation_lineage, stage5_lineage, factor_lineage)

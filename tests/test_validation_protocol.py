@@ -36,9 +36,7 @@ def test_read_gate_rejects_final_test_before_scanner_is_called() -> None:
         scanner_called = True
 
     with pytest.raises(ValueError, match="final test period is sealed"):
-        assert_validation_read_allowed(
-            date(2021, 12, 31), date(2022, 1, 1), before_read=scanner
-        )
+        assert_validation_read_allowed(date(2021, 12, 31), date(2022, 1, 1), before_read=scanner)
 
     assert scanner_called is False
 
@@ -63,9 +61,7 @@ def test_stage_six_gate_accepts_only_approved_current_release(tmp_path: Path) ->
     processed = tmp_path / "formal_backtest"
     processed.mkdir()
     current = processed / "CURRENT.json"
-    current.write_text(
-        json.dumps({"run_id": "b995878_stage6_authoritative"}), encoding="utf-8"
-    )
+    current.write_text(json.dumps({"run_id": "b995878_stage6_authoritative"}), encoding="utf-8")
 
     assert_stage_six_release_allowed(processed)
 

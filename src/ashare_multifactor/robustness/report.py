@@ -55,8 +55,7 @@ def render_robustness_report(
     else:
         for row in failed.iter_rows(named=True):
             lines.append(
-                f"- `{row['experiment_id']}`：`{row['status']}`；"
-                f"{row['reason'] or '未提供原因'}"
+                f"- `{row['experiment_id']}`：`{row['status']}`；{row['reason'] or '未提供原因'}"
             )
     for event in gate.get("fatal_events", []):
         lines.append(f"- 致命缺陷：{event.get('reason', event.get('status'))}")

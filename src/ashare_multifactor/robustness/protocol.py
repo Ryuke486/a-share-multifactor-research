@@ -96,9 +96,7 @@ def read_bounded_parquet(
         .filter(pl.col(date_column).is_between(start, end, closed="both"))
         .collect()
     )
-    if frame.filter(
-        (pl.col(date_column) < start) | (pl.col(date_column) > end)
-    ).height:
+    if frame.filter((pl.col(date_column) < start) | (pl.col(date_column) > end)).height:
         raise ValueError(f"bounded parquet returned an out-of-range row: {path}")
     return frame
 
@@ -114,8 +112,7 @@ def assert_authoritative_period_contracts(
         not isinstance(validation_period, list)
         or len(validation_period) != 2
         or _as_date(validation_period[1]) > ANALYSIS_END
-        or validation_lineage.get("sealed_final_test_start")
-        != FINAL_TEST_START.isoformat()
+        or validation_lineage.get("sealed_final_test_start") != FINAL_TEST_START.isoformat()
     ):
         raise ValueError("validation input contract reaches the sealed test period")
     try:

@@ -17,9 +17,7 @@ def test_validation_builder_reuses_canonical_reader_and_audited_manifest(
     _write_pair(config, date(2017, 1, 3))
     _write_pair(config, date(2017, 1, 4))
 
-    manifest = build_validation_daily_panel(
-        config, date(2017, 1, 3), date(2017, 1, 4)
-    )
+    manifest = build_validation_daily_panel(config, date(2017, 1, 3), date(2017, 1, 4))
 
     root = config.paths.processed / "validation_evaluation/daily_panel"
     panel = pl.read_parquet(root / "year=2017/part-000.parquet")
@@ -48,8 +46,6 @@ def test_validation_builder_blocks_final_test_before_discovery(
     monkeypatch.setattr("ashare_multifactor.data.build.discover_daily_pairs", forbidden)
 
     with pytest.raises(ValueError, match="final test period is sealed"):
-        build_validation_daily_panel(
-            config, date(2021, 12, 31), date(2022, 1, 4)
-        )
+        build_validation_daily_panel(config, date(2021, 12, 31), date(2022, 1, 4))
 
     assert called is False

@@ -70,10 +70,7 @@ def select_backtest_scenario(
 ) -> dict[str, pl.DataFrame]:
     """Select a broker cost scenario without changing signals or orders."""
     if scenario == "full_cost":
-        return {
-            name: result[name]
-            for name in ("nav", "orders", "trades", "target_diagnostics")
-        }
+        return {name: result[name] for name in ("nav", "orders", "trades", "target_diagnostics")}
     selected: dict[str, pl.DataFrame] = {}
     for name in ("nav", "orders", "trades", "target_diagnostics"):
         frame = result[f"scenario_{name}"]
@@ -111,16 +108,12 @@ def summarize_execution_result(
         else 0.0
     )
     requested = float(orders.get_column("quantity").sum()) if orders.height else 0.0
-    remaining = (
-        float(orders.get_column("remaining_quantity").sum()) if orders.height else 0.0
-    )
+    remaining = float(orders.get_column("remaining_quantity").sum()) if orders.height else 0.0
     return {
         "experiment_id": experiment_id,
         "annual_return": annual_return,
         "annual_volatility": (
-            float(np.std(returns, ddof=1) * math.sqrt(252.0))
-            if len(returns) > 1
-            else None
+            float(np.std(returns, ddof=1) * math.sqrt(252.0)) if len(returns) > 1 else None
         ),
         "maximum_drawdown": float(drawdown.min()),
         "turnover": gross / (2.0 * float(path.mean()) * years),

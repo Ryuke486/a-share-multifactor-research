@@ -21,17 +21,17 @@ class DatasetContract:
 
 
 def validate_dataset(frame: pl.DataFrame, contract: DatasetContract) -> None:
-    required = set(contract.primary_key) | set(contract.finite_columns) | set(
-        contract.non_negative_columns
+    required = (
+        set(contract.primary_key)
+        | set(contract.finite_columns)
+        | set(contract.non_negative_columns)
     )
     if contract.date_column is not None:
         required.add(contract.date_column)
     missing = sorted(required - set(frame.columns))
     if missing:
         raise ValueError(f"{contract.name} missing columns: " + ", ".join(missing))
-    if frame.select(*contract.primary_key).null_count().row(0) != (0,) * len(
-        contract.primary_key
-    ):
+    if frame.select(*contract.primary_key).null_count().row(0) != (0,) * len(contract.primary_key):
         raise ValueError(f"{contract.name} primary key contains nulls")
     if frame.select(*contract.primary_key).is_duplicated().any():
         raise ValueError(f"{contract.name} has duplicate primary key")

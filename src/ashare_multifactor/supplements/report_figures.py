@@ -41,7 +41,12 @@ def plot_correlation_heatmap(matrix: np.ndarray, names: Sequence[str], path: Pat
         for j in range(len(names)):
             value = matrix[i, j]
             axis.text(
-                j, i, f"{round(value, 2) + 0.0:.2f}", ha="center", va="center", fontsize=6.5,
+                j,
+                i,
+                f"{round(value, 2) + 0.0:.2f}",
+                ha="center",
+                va="center",
+                fontsize=6.5,
                 color="#ffffff" if abs(value) > 0.6 else PRIMARY_INK,
             )
     bar = figure.colorbar(image, ax=axis, fraction=0.04, pad=0.02)
@@ -56,16 +61,24 @@ def plot_rolling_ic(rolling: pl.DataFrame, path: Path, *, split: date) -> None:
     """Trailing 12-month mean Rank IC of the two composite methods."""
     figure, axis = plt.subplots(figsize=(9.0, 4.2))
     style_axis(axis)
-    labels = {"family_equal": "family_equal (pre-registered)", "rolling_ic_family": "rolling_ic_family"}
+    labels = {
+        "family_equal": "family_equal (pre-registered)",
+        "rolling_ic_family": "rolling_ic_family",
+    }
     for color, method in zip(SERIES, ("family_equal", "rolling_ic_family"), strict=False):
         frame = rolling.filter(pl.col("method") == method).drop_nulls("rolling_ic").sort("date")
         axis.plot(
-            frame["date"].to_list(), frame["rolling_ic"].to_list(),
-            color=color, linewidth=1.6, label=labels[method],
+            frame["date"].to_list(),
+            frame["rolling_ic"].to_list(),
+            color=color,
+            linewidth=1.6,
+            label=labels[method],
         )
     axis.axhline(0.0, color=BASELINE, linewidth=1.0)
     axis.axvline(split, color=MUTED_INK, linewidth=1.0, linestyle=":")
-    axis.text(split, axis.get_ylim()[1], " validation starts", va="top", fontsize=8, color=SECONDARY_INK)
+    axis.text(
+        split, axis.get_ylim()[1], " validation starts", va="top", fontsize=8, color=SECONDARY_INK
+    )
     axis.set_ylabel("trailing 12-month mean Rank IC (20-day)", fontsize=9, color=SECONDARY_INK)
     axis.legend(fontsize=8, frameon=False, loc="lower left")
     title(axis, "Composite signal Rank IC, 2005-2021")
@@ -90,7 +103,11 @@ def plot_cost_components(components: pl.DataFrame, path: Path) -> None:
     axis.set_yticks(list(positions), [names[name] for name in ordered["component"]], fontsize=9)
     for position, bps, share in zip(positions, ordered["bps"], ordered["share"], strict=True):
         axis.text(
-            bps, position, f"  {bps:.1f} bps ({share:.0%})", va="center", fontsize=8,
+            bps,
+            position,
+            f"  {bps:.1f} bps ({share:.0%})",
+            va="center",
+            fontsize=8,
             color=SECONDARY_INK,
         )
     axis.set_xlim(0, float(ordered["bps"].max()) * 1.35)
@@ -116,9 +133,7 @@ def plot_drawdowns(frame: pl.DataFrame, path: Path, *, split: date) -> None:
     axis.axvline(split, color=MUTED_INK, linewidth=1.0, linestyle=":")
     axis.yaxis.set_major_formatter(plt.FuncFormatter(lambda value, _: f"{value:.0%}"))
     axis.set_ylabel("drawdown from running peak", fontsize=9, color=SECONDARY_INK)
-    axis.legend(
-        fontsize=8, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.08), ncol=3
-    )
+    axis.legend(fontsize=8, frameon=False, loc="upper center", bbox_to_anchor=(0.5, -0.08), ncol=3)
     title(axis, "Drawdowns, 2005-2021 (selected candidate vs zero-cost universe benchmarks)")
     save(figure, path)
     plt.close(figure)
@@ -134,19 +149,23 @@ def plot_quintile_panels(excess: pl.DataFrame, names: Sequence[str], path: Path)
     width = 0.36
     for axis, name in zip(flat, names, strict=False):
         style_axis(axis)
-        for offset, color, (period, label) in zip((-width / 2, width / 2), SERIES, periods, strict=False):
+        for offset, color, (period, label) in zip(
+            (-width / 2, width / 2), SERIES, periods, strict=False
+        ):
             frame = excess.filter(
                 (pl.col("period") == period) & (pl.col("object_name") == name)
             ).sort("quantile")
             axis.bar(
                 [quantile + offset for quantile in frame["quantile"].to_list()],
                 [value * 100 for value in frame["mean_excess"].to_list()],
-                width=width, color=color, label=label,
+                width=width,
+                color=color,
+                label=label,
             )
         axis.axhline(0.0, color=BASELINE, linewidth=1.0)
         axis.set_xticks(range(1, 6), ["Q1", "Q2", "Q3", "Q4", "Q5"], fontsize=7)
         axis.set_title(name, fontsize=9, color=PRIMARY_INK, loc="left")
-    for axis in flat[len(names):]:
+    for axis in flat[len(names) :]:
         axis.axis("off")
     flat[0].set_ylabel("excess over universe, %/month", fontsize=8, color=SECONDARY_INK)
     if len(flat) > len(names):
@@ -154,7 +173,10 @@ def plot_quintile_panels(excess: pl.DataFrame, names: Sequence[str], path: Path)
         flat[len(names)].legend(handles, labels, fontsize=9, frameon=False, loc="center")
     figure.suptitle(
         "Quintile 20-day return minus universe mean (Q5 = highest score, gross, equal-weight)",
-        fontsize=10, color=PRIMARY_INK, x=0.01, ha="left",
+        fontsize=10,
+        color=PRIMARY_INK,
+        x=0.01,
+        ha="left",
     )
     save(figure, path)
     plt.close(figure)

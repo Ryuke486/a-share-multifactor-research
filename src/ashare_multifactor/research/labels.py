@@ -59,17 +59,11 @@ def add_forward_returns(frame: pl.DataFrame, horizons: Sequence[int]) -> pl.Data
                 .then((pl.col(date_column) - pl.col("date")).dt.total_days())
                 .alias(calendar_column),
                 pl.when(target_exists)
-                .then(
-                    pl.col(index_column)
-                    - pl.col("_panel_observation_index")
-                    - horizon
-                )
+                .then(pl.col(index_column) - pl.col("_panel_observation_index") - horizon)
                 .alias(skipped_column),
             )
         )
-    labels = valid.with_columns(label_expressions).select(
-        "date", "symbol", *label_columns
-    )
+    labels = valid.with_columns(label_expressions).select("date", "symbol", *label_columns)
     return (
         base.join(
             labels,

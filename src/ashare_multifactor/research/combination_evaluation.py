@@ -38,17 +38,30 @@ def evaluate_combinations(
             label = f"forward_return_{horizon}"
             valid = frame.filter(pl.col("score").is_finite() & pl.col(label).is_finite())
             rank_ic = _spearman(valid["score"], valid[label]) if valid.height >= 3 else None
-            ic_rows.append({"date": signal_date, "method": method, "horizon": horizon,
-                            "n_obs": valid.height, "rank_ic": rank_ic})
+            ic_rows.append(
+                {
+                    "date": signal_date,
+                    "method": method,
+                    "horizon": horizon,
+                    "n_obs": valid.height,
+                    "rank_ic": rank_ic,
+                }
+            )
         valid = frame.filter(pl.col("score").is_finite() & pl.col("forward_return_20").is_finite())
         if valid.height:
-            ranked = valid.sort("score", "symbol").with_row_index("rank").with_columns(
-                ((pl.col("rank") * 5 / valid.height).floor() + 1).clip(1, 5).alias("quantile")
+            ranked = (
+                valid.sort("score", "symbol")
+                .with_row_index("rank")
+                .with_columns(
+                    ((pl.col("rank") * 5 / valid.height).floor() + 1).clip(1, 5).alias("quantile")
+                )
             )
             for quantile in range(1, 6):
-                values = ranked.filter(pl.col("quantile") == quantile).get_column(
-                    "forward_return_20"
-                ).to_numpy()
+                values = (
+                    ranked.filter(pl.col("quantile") == quantile)
+                    .get_column("forward_return_20")
+                    .to_numpy()
+                )
                 if len(values):
                     quantile_rows.append(
                         {
@@ -66,27 +79,39 @@ def evaluate_combinations(
         values = frame.get_column("rank_ic").drop_nulls().to_list()
         nw = newey_west_mean_test(values, horizon=horizon)
         std = float(np.std(values, ddof=1)) if len(values) > 1 else None
-        summary_rows.append({"method": method, "horizon": horizon, "mean_ic": nw["mean"],
-                             "icir": nw["mean"] / std * math.sqrt(12) if std else None,
-                             "nw_t": nw["t"], "valid_months": len(values)})
+        summary_rows.append(
+            {
+                "method": method,
+                "horizon": horizon,
+                "mean_ic": nw["mean"],
+                "icir": nw["mean"] / std * math.sqrt(12) if std else None,
+                "nw_t": nw["t"],
+                "valid_months": len(values),
+            }
+        )
     summary = pl.DataFrame(summary_rows).sort("method", "horizon")
     q_metrics = []
     for method in sorted(set(scores.get_column("method"))):
         returns_by_quantile = []
         method_quantiles = quantiles.filter(pl.col("method") == method)
         for quantile in method_quantiles.get_column("quantile").unique().sort():
-            values = quantiles.filter(
-                (pl.col("method") == method) & (pl.col("quantile") == quantile)
-            ).sort("date").get_column("mean_return").to_numpy()
+            values = (
+                quantiles.filter((pl.col("method") == method) & (pl.col("quantile") == quantile))
+                .sort("date")
+                .get_column("mean_return")
+                .to_numpy()
+            )
             returns_by_quantile.append(float(np.mean(values)))
-        q_metrics.append({
-            "method": method,
-            "q5_q1": returns_by_quantile[-1] - returns_by_quantile[0],
-            "monotonicity": _spearman(
-                pl.Series(range(1, len(returns_by_quantile) + 1)),
-                pl.Series(returns_by_quantile),
-            ),
-        })
+        q_metrics.append(
+            {
+                "method": method,
+                "q5_q1": returns_by_quantile[-1] - returns_by_quantile[0],
+                "monotonicity": _spearman(
+                    pl.Series(range(1, len(returns_by_quantile) + 1)),
+                    pl.Series(returns_by_quantile),
+                ),
+            }
+        )
     summary = summary.join(pl.DataFrame(q_metrics), on="method", how="left", validate="m:1")
     subperiods = _subperiods(ic, subperiod_boundaries)
     correlations, correlation_monthly = _correlations(scores, factor_panel)
@@ -109,10 +134,14 @@ def _subperiods(
     rows = []
     for label, start, end in boundaries:
         part = ic.filter(pl.col("date").dt.year().is_between(start, end))
-        for row in part.group_by("method", "horizon").agg(
-            pl.col("rank_ic").mean().alias("mean_ic"),
-            pl.col("rank_ic").count().alias("valid_months"),
-        ).iter_rows(named=True):
+        for row in (
+            part.group_by("method", "horizon")
+            .agg(
+                pl.col("rank_ic").mean().alias("mean_ic"),
+                pl.col("rank_ic").count().alias("valid_months"),
+            )
+            .iter_rows(named=True)
+        ):
             rows.append({"subperiod": label, **row})
     return pl.DataFrame(
         rows,
@@ -144,9 +173,7 @@ def _correlations(
         for left in methods:
             for right in factors:
                 pair_frames.append(_monthly_pair(combined, left, right, "single_factor"))
-    monthly = pl.concat(pair_frames, how="vertical_relaxed").sort(
-        "date", "left_name", "right_name"
-    )
+    monthly = pl.concat(pair_frames, how="vertical_relaxed").sort("date", "left_name", "right_name")
     rows = []
     for (left, right, right_type), frame in monthly.group_by(
         "left_name", "right_name", "right_type", maintain_order=True
@@ -169,9 +196,7 @@ def _correlations(
     return pl.DataFrame(rows).sort("left_name", "right_name"), monthly
 
 
-def _monthly_pair(
-    wide: pl.DataFrame, left: str, right: str, right_type: str
-) -> pl.DataFrame:
+def _monthly_pair(wide: pl.DataFrame, left: str, right: str, right_type: str) -> pl.DataFrame:
     rows = []
     for (signal_date,), frame in wide.group_by("date", maintain_order=True):
         valid = frame.select(

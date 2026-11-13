@@ -208,9 +208,7 @@ def test_validate_panel_source_rejects_path_traversal(tmp_path: Path) -> None:
 def test_validate_panel_source_rejects_absolute_partition_path(tmp_path: Path) -> None:
     root = tmp_path / "daily_panel"
     manifest = _write_source(root)
-    _partition_record(manifest)["relative_path"] = str(
-        (tmp_path / "outside.parquet").resolve()
-    )
+    _partition_record(manifest)["relative_path"] = str((tmp_path / "outside.parquet").resolve())
     _write_manifest(root, manifest)
 
     with pytest.raises(ValueError, match="invalid daily panel partition path"):

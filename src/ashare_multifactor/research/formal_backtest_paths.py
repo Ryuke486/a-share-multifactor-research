@@ -13,4 +13,3 @@ def formal_backtest_paths(root: Path) -> FormalBacktestPaths:
         root / "processed" / "formal_backtest",
         root / "artifacts" / "formal_backtest",
     )
-

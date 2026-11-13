@@ -91,8 +91,7 @@ def test_every_module_on_main_imports_without_the_archived_code() -> None:
             "    ashare_multifactor.__path__, 'ashare_multifactor.')]",
             "for name in names:",
             "    importlib.import_module(name)",
-            "loaded = sorted(m for m in sys.modules if m.startswith("
-            f"{FINAL_TEST_PREFIX!r}))",
+            f"loaded = sorted(m for m in sys.modules if m.startswith({FINAL_TEST_PREFIX!r}))",
             "print(json.dumps({'modules': len(names), 'final_test': loaded}))",
         )
     )
@@ -111,9 +110,9 @@ def test_every_module_on_main_imports_without_the_archived_code() -> None:
 
 
 def test_every_declared_console_script_resolves() -> None:
-    scripts = tomllib.loads((CODE_ROOT / "pyproject.toml").read_text(encoding="utf-8"))[
-        "project"
-    ]["scripts"]
+    scripts = tomllib.loads((CODE_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
+        "scripts"
+    ]
     assert "ashare-final-test" not in scripts
     for target in scripts.values():
         module_name, function_name = target.split(":")

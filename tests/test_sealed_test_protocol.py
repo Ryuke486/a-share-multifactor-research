@@ -140,9 +140,7 @@ def test_opening_token_requires_external_secret_and_is_consumed_once(tmp_path: P
     sealed = {
         "status": "sealed",
         "opening_token_status": "closed",
-        "opening_ledger_root": str(
-            (tmp_path / "authoritative-opening-ledger").resolve()
-        ),
+        "opening_ledger_root": str((tmp_path / "authoritative-opening-ledger").resolve()),
         "sealed_protocol_sha256": seal,
     }
     canonical = json.dumps(
@@ -160,11 +158,13 @@ def test_opening_token_requires_external_secret_and_is_consumed_once(tmp_path: P
     ).hexdigest()
     payload = json.loads(token.read_text())
     payload["sealed_protocol_sha256"] = seal
-    payload.update({
-        "robustness_release": "stage8-release",
-        "robustness_manifest_sha256": "b" * 64,
-        "robustness_lineage_sha256": "c" * 64,
-    })
+    payload.update(
+        {
+            "robustness_release": "stage8-release",
+            "robustness_manifest_sha256": "b" * 64,
+            "robustness_lineage_sha256": "c" * 64,
+        }
+    )
     identity = f"{seal}|stage8-release|{'b' * 64}|{'c' * 64}"
     payload["signature"] = hmac.new(
         key, f"{identity}|{approval_id}|stage9-one-shot".encode(), hashlib.sha256
@@ -208,13 +208,11 @@ def test_robustness_run_finalization_rejects_test_dates_and_compares_hashes(
     second = tmp_path / "second"
     for root in (first, second):
         root.mkdir()
-        pl.DataFrame(
-            {"date": [date(2021, 12, 31)], "value": [1.0]}
-        ).write_parquet(root / "robustness_results.parquet")
-        (root / "report.md").write_text("same\n", encoding="utf-8")
-        (root / "protocol_gate.json").write_text(
-            '{"status":"ready_to_seal"}\n', encoding="utf-8"
+        pl.DataFrame({"date": [date(2021, 12, 31)], "value": [1.0]}).write_parquet(
+            root / "robustness_results.parquet"
         )
+        (root / "report.md").write_text("same\n", encoding="utf-8")
+        (root / "protocol_gate.json").write_text('{"status":"ready_to_seal"}\n', encoding="utf-8")
         finalize_robustness_run(root, run_id=root.name, identity=_identity())
 
     comparison = compare_robustness_runs(first, second)
@@ -277,19 +275,16 @@ def test_protocol_v4_binds_split_identities_and_new_readiness_gates(
             "status": "superseded_for_final_execution",
         },
         protocol_identities=_identities(evidence="v4"),
-        predecessor_final_execution_identity=_identities(evidence="v3")[
-            "final_execution"
-        ],
+        predecessor_final_execution_identity=_identities(evidence="v3")["final_execution"],
         change_impact_audit_sha256="5" * 64,
         evidence_workflow_readiness_audit_sha256="6" * 64,
     )
 
     assert sealed["protocol_version"] == 4
-    assert sealed["protocol_identities"]["research"]["role"] == (
-        "research_result_identity"
-    )
+    assert sealed["protocol_identities"]["research"]["role"] == ("research_result_identity")
     assert sealed["change_impact_audit_sha256"] == "5" * 64
     assert sealed["evidence_workflow_readiness_audit_sha256"] == "6" * 64
-    assert sealed["predecessor_final_execution_identity"] == _identities(
-        evidence="v3"
-    )["final_execution"]
+    assert (
+        sealed["predecessor_final_execution_identity"]
+        == _identities(evidence="v3")["final_execution"]
+    )

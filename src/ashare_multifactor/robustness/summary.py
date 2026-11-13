@@ -64,9 +64,7 @@ def build_robustness_long_table(
         baseline_id = _baseline_id(row["category"])
         baseline = baselines.get((baseline_id, row["metric"]))
         delta = (
-            row["value"] - baseline
-            if row["value"] is not None and baseline is not None
-            else None
+            row["value"] - baseline if row["value"] is not None and baseline is not None else None
         )
         status = row["status"]
         if status != "ready":
@@ -113,10 +111,7 @@ def assess_test_protocol_gate(
         .iter_rows(named=True)
     )
     missing = sorted(
-        table.filter(pl.col("status") == "not_run")
-        .get_column("experiment_id")
-        .unique()
-        .to_list()
+        table.filter(pl.col("status") == "not_run").get_column("experiment_id").unique().to_list()
     )
     if fatal:
         status = "fatal_defect"
@@ -142,12 +137,9 @@ def _baseline_id(category: str) -> str | None:
 
 def _baseline_values(frame: pl.DataFrame) -> dict[tuple[str, str], float]:
     rows = frame.filter(
-        pl.col("experiment_id").is_in(
-            ["execution_full_cost", "portfolio_baseline"]
-        )
+        pl.col("experiment_id").is_in(["execution_full_cost", "portfolio_baseline"])
         & pl.col("value").is_not_null()
     )
     return {
-        (row["experiment_id"], row["metric"]): row["value"]
-        for row in rows.iter_rows(named=True)
+        (row["experiment_id"], row["metric"]): row["value"] for row in rows.iter_rows(named=True)
     }

@@ -16,9 +16,7 @@ FIXED_INPUTS = {"frozen": {"sha256": "c" * 64, "size": 7}}
 
 
 def _json_bytes(payload: object) -> bytes:
-    return (
-        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    ).encode()
+    return (json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode()
 
 
 def _expected_stage7_manifest(run_id: str, *, dirty: bool = False) -> dict[str, object]:
@@ -266,11 +264,7 @@ class ReleasingStage7Adapter(Stage7Adapter):
         run_id: str,
         options: object,
     ) -> lifecycle._ReleasePreparation:
-        staged = (
-            self.data_root
-            / "artifacts/validation_evaluation/validation_runs"
-            / run_id
-        )
+        staged = self.data_root / "artifacts/validation_evaluation/validation_runs" / run_id
         if staged.exists():
             raise FileExistsError(staged)
         datasets = staged / "datasets"
@@ -470,13 +464,10 @@ def test_reproduce_writes_stage7_certificate_and_certifies_the_second_run(
             for relative in lifecycle._STAGE7_V1.core_paths
         },
         "run_manifest_sha256": [
-            hashlib.sha256(_json_bytes(manifest)).hexdigest()
-            for manifest in expected_manifests
+            hashlib.sha256(_json_bytes(manifest)).hexdigest() for manifest in expected_manifests
         ],
     }
-    certificate = (
-        tmp_path / "processed/validation_evaluation/full_reproducibility.json"
-    )
+    certificate = tmp_path / "processed/validation_evaluation/full_reproducibility.json"
     assert result == expected
     assert certificate.read_bytes() == _json_bytes(expected)
     assert result["run_ids"][1] == "pair_2"
@@ -575,9 +566,7 @@ def test_release_rebuilds_a_mutable_certificate_and_returns_staging_only(
 
     assert isinstance(prepared, lifecycle._ReleasePreparation)
     assert prepared.staged_root == tmp_path / "artifacts/robustness/release_staging/staged"
-    assert adapter.prepared_source == (
-        tmp_path / "artifacts/robustness/full_runs/certified_2"
-    )
+    assert adapter.prepared_source == (tmp_path / "artifacts/robustness/full_runs/certified_2")
     assert adapter.prepared_certificate == expected
     assert certificate_path.read_bytes() == _json_bytes(expected)
 

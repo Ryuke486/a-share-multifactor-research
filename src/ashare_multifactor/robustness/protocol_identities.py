@@ -40,10 +40,8 @@ _EVIDENCE_WORKFLOW_EXTRA_PATHS = (
     "src/ashare_multifactor/final_test/data_reuse_contract.py",
     "src/ashare_multifactor/final_test/execution_sources.py",
     "src/ashare_multifactor/final_test/official_exchange_monthly_statistics.py",
-    "src/ashare_multifactor/final_test/"
-    "official_exchange_monthly_statistics_authorization.py",
-    "src/ashare_multifactor/final_test/"
-    "official_exchange_monthly_statistics_validation.py",
+    "src/ashare_multifactor/final_test/official_exchange_monthly_statistics_authorization.py",
+    "src/ashare_multifactor/final_test/official_exchange_monthly_statistics_validation.py",
     "src/ashare_multifactor/final_test/gate.py",
     "src/ashare_multifactor/final_test/historical_attempt.py",
     "src/ashare_multifactor/final_test/preparation.py",
@@ -120,20 +118,22 @@ def build_final_execution_identity_at_revision(
     if not _valid_git_oid(commit) or not _valid_git_oid(tree):
         raise ValueError("sealed predecessor Git identity is invalid")
     root = code_root.resolve()
-    actual_tree = _git_bytes(
-        root,
-        "rev-parse",
-        f"{commit}^{{tree}}",
-    ).decode().strip()
+    actual_tree = (
+        _git_bytes(
+            root,
+            "rev-parse",
+            f"{commit}^{{tree}}",
+        )
+        .decode()
+        .strip()
+    )
     if actual_tree != tree:
         raise ValueError("sealed predecessor Git tree differs from commit")
     records: dict[str, object] = {}
     for relative in _FINAL_EXECUTION_PATHS:
         inventory = _git_bytes(root, "ls-tree", commit, "--", relative).decode()
         if not inventory.startswith(("100644 blob ", "100755 blob ")):
-            raise ValueError(
-                f"sealed predecessor execution source is missing: {relative}"
-            )
+            raise ValueError(f"sealed predecessor execution source is missing: {relative}")
         payload = _git_bytes(root, "show", f"{commit}:{relative}")
         records[relative] = {
             "sha256": hashlib.sha256(payload).hexdigest(),
@@ -151,9 +151,7 @@ def build_evidence_workflow_identity(code_root: Path) -> dict[str, object]:
                 *_EVIDENCE_WORKFLOW_EXTRA_PATHS,
                 *(
                     path.relative_to(root).as_posix()
-                    for path in (
-                        root / "src/ashare_multifactor/final_test"
-                    ).glob("official_*.py")
+                    for path in (root / "src/ashare_multifactor/final_test").glob("official_*.py")
                 ),
             }
         )
@@ -269,9 +267,7 @@ def _canonical_json_bytes(payload: object) -> bytes:
 
 
 def _valid_git_oid(value: str) -> bool:
-    return len(value) == 40 and all(
-        character in "0123456789abcdef" for character in value
-    )
+    return len(value) == 40 and all(character in "0123456789abcdef" for character in value)
 
 
 def _git_bytes(code_root: Path, *args: str) -> bytes:

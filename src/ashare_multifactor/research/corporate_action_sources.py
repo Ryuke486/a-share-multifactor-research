@@ -27,29 +27,21 @@ def normalize_fhps_em(
     if missing:
         raise ValueError(f"missing provider columns: {missing}")
     result = (
-        frame.filter(
-            (pl.col("方案进度") == "实施分配")
-            & pl.col("除权除息日").is_not_null()
-        )
+        frame.filter((pl.col("方案进度") == "实施分配") & pl.col("除权除息日").is_not_null())
         .select(
             pl.col("代码").cast(pl.String).str.zfill(6).alias("symbol"),
             pl.col("除权除息日").cast(pl.Date).alias("effective_date"),
             pl.col("股权登记日").cast(pl.Date).alias("record_date"),
-            (pl.col("现金分红-现金分红比例").fill_null(0.0) / 10.0).alias(
-                "cash_per_share"
-            ),
-            (pl.col("送转股份-送转总比例").fill_null(0.0) / 10.0).alias(
-                "share_ratio"
-            ),
+            (pl.col("现金分红-现金分红比例").fill_null(0.0) / 10.0).alias("cash_per_share"),
+            (pl.col("送转股份-送转总比例").fill_null(0.0) / 10.0).alias("share_ratio"),
             pl.lit(report_period).alias("report_period"),
             pl.col("最新公告日期").cast(pl.Date).alias("source_announcement_date"),
             pl.lit("eastmoney_fhps_via_akshare").alias("source"),
         )
         .sort("effective_date", "symbol")
     )
-    outside_period = (
-        (pl.col("effective_date") < date(2005, 1, 1))
-        | (pl.col("effective_date") > date(2016, 12, 31))
+    outside_period = (pl.col("effective_date") < date(2005, 1, 1)) | (
+        pl.col("effective_date") > date(2016, 12, 31)
     )
     if filter_to_research_period:
         return result.filter(~outside_period)
@@ -75,13 +67,9 @@ def normalize_cninfo_dividend(frame: pl.DataFrame, *, symbol: str) -> pl.DataFra
     rows: list[dict[str, object]] = []
     for item in frame.iter_rows(named=True):
         cash_ratio = float(item["派息比例"] or 0.0) / 10.0
-        share_ratio = float(item["送股比例"] or 0.0) / 10.0 + float(
-            item["转增比例"] or 0.0
-        ) / 10.0
+        share_ratio = float(item["送股比例"] or 0.0) / 10.0 + float(item["转增比例"] or 0.0) / 10.0
         if share_ratio:
-            credit_date = _optional_date(item["股份到账日"]) or _optional_date(
-                item["除权日"]
-            )
+            credit_date = _optional_date(item["股份到账日"]) or _optional_date(item["除权日"])
             if credit_date is None:
                 raise ValueError("share distribution missing credit date")
             rows.append(
@@ -121,9 +109,7 @@ def normalize_cninfo_dividend(frame: pl.DataFrame, *, symbol: str) -> pl.DataFra
     return (
         pl.DataFrame(rows, schema=schema)
         .filter(
-            pl.col("effective_date").is_between(
-                date(2005, 1, 1), date(2016, 12, 31), closed="both"
-            )
+            pl.col("effective_date").is_between(date(2005, 1, 1), date(2016, 12, 31), closed="both")
         )
         .sort("effective_date", "event_type")
     )

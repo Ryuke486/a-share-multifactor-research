@@ -61,9 +61,7 @@ def test_segment_summary_reports_sample_and_uncertainty() -> None:
 
 
 def test_time_and_industry_boundaries_are_explicit() -> None:
-    dates = pl.DataFrame(
-        {"date": [date(2016, 12, 30), date(2017, 1, 3), date(2021, 12, 31)]}
-    )
+    dates = pl.DataFrame({"date": [date(2016, 12, 30), date(2017, 1, 3), date(2021, 12, 31)]})
     segmented = time_segments(dates)
 
     assert segmented.get_column("segment").to_list() == [
@@ -79,9 +77,7 @@ def test_time_and_industry_boundaries_are_explicit() -> None:
 
 
 def test_time_segments_use_the_canonical_concat_column_order() -> None:
-    frame = pl.DataFrame(
-        {"date": [date(2017, 1, 3)], "return": [0.01]}
-    )
+    frame = pl.DataFrame({"date": [date(2017, 1, 3)], "return": [0.01]})
 
     assert time_segments(frame).columns == [
         "date",
@@ -101,9 +97,7 @@ def test_monthly_size_summary_uses_monthly_rows_and_annualization() -> None:
         }
     )
 
-    summary = summarize_segment_returns(
-        returns, annualization_by_segment_type={"market_size": 12}
-    )
+    summary = summarize_segment_returns(returns, annualization_by_segment_type={"market_size": 12})
 
     assert summary.item(0, "observations") == 2
     assert summary.item(0, "annualized_return") == 0.24

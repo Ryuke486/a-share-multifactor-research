@@ -35,12 +35,10 @@ class _VerifiedValidationLineage(Mapping[str, object]):
     data_root: Path
 
     def _verified(self) -> Mapping[str, object]:
-        staged_lineage = json.loads(
-            (self.staged / "lineage.json").read_text(encoding="utf-8")
-        )
-        if pipeline.resolve_validation_predecessor(
-            self.data_root
-        ) != staged_lineage.get("supersedes"):
+        staged_lineage = json.loads((self.staged / "lineage.json").read_text(encoding="utf-8"))
+        if pipeline.resolve_validation_predecessor(self.data_root) != staged_lineage.get(
+            "supersedes"
+        ):
             raise ValueError("validation predecessor changed during publication")
         return self.payload
 
@@ -109,11 +107,7 @@ class Stage7ReleaseAdapter:
         pipeline.assert_validation_upstream_releases(binding.data_root)
         pipeline.assert_validation_outputs_sealed(source)
         pipeline.assert_validation_runtime_gates(source, settings.candidates)
-        staged = (
-            binding.data_root
-            / "artifacts/validation_evaluation/validation_runs"
-            / run_id
-        )
+        staged = binding.data_root / "artifacts/validation_evaluation/validation_runs" / run_id
         if staged.exists():
             raise FileExistsError(staged)
         pipeline._copy_certified_core(
@@ -140,8 +134,7 @@ class Stage7ReleaseAdapter:
             predecessor=predecessor,
         )
         (staged / "lineage.json").write_text(
-            json.dumps(lineage, ensure_ascii=False, indent=2, sort_keys=True)
-            + "\n",
+            json.dumps(lineage, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         if (
@@ -162,9 +155,7 @@ class Stage7ReleaseAdapter:
             )
         return _ReleasePreparation(
             staged_root=staged,
-            publication_root=(
-                binding.data_root / "processed/validation_evaluation"
-            ),
+            publication_root=(binding.data_root / "processed/validation_evaluation"),
             staged_datasets=staged / "datasets",
             staged_artifacts=staged / "artifacts",
             lineage=release_lineage,

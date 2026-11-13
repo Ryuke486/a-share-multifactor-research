@@ -58,14 +58,10 @@ class FeeSchedule:
             raise ValueError(f"no unique stamp duty rule for {trade_date}")
         return matches[0].buy_rate if side == "buy" else matches[0].sell_rate
 
-    def transfer_fee(
-        self, trade_date: date, market: str, amount: float, quantity: int
-    ) -> float:
+    def transfer_fee(self, trade_date: date, market: str, amount: float, quantity: int) -> float:
         if market not in {"sh", "sz"}:
             raise ValueError(f"unknown market: {market}")
-        matches = [
-            rule for rule in self.transfer_fees if rule.matches(trade_date, market)
-        ]
+        matches = [rule for rule in self.transfer_fees if rule.matches(trade_date, market)]
         if len(matches) != 1:
             raise ValueError(f"no unique transfer fee rule for {trade_date} {market}")
         rule = matches[0]
@@ -143,10 +139,7 @@ def load_market_rules(path: Path) -> FeeSchedule:
     for market in ("sh", "sz"):
         market_rules = [item for item in transfer if item.market == market]
         _validate_contiguous(
-            [
-                _DatedRate(item.start, item.end, item.rate, item.rate)
-                for item in market_rules
-            ],
+            [_DatedRate(item.start, item.end, item.rate, item.rate) for item in market_rules],
             period_start,
             period_end,
         )

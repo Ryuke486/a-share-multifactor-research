@@ -96,9 +96,7 @@ def _validate_targets(targets: pl.DataFrame) -> None:
 
 def _load_actions(source_cache: Path, symbols: list[str]) -> pl.DataFrame:
     east = pl.read_parquet(source_cache / "eastmoney_fhps" / "normalized_actions.parquet")
-    sina = pl.read_parquet(
-        source_cache / "sina_corporate_actions" / "normalized_dividends.parquet"
-    )
+    sina = pl.read_parquet(source_cache / "sina_corporate_actions" / "normalized_dividends.parquet")
     columns = [
         "symbol",
         "ex_date",
@@ -119,15 +117,13 @@ def _load_actions(source_cache: Path, symbols: list[str]) -> pl.DataFrame:
         .select(columns)
         .with_columns(pl.lit(0.0).alias("cash_per_share"))
         .join(
-        east.select("symbol", "effective_date"),
-        on=["symbol", "effective_date"],
-        how="anti",
+            east.select("symbol", "effective_date"),
+            on=["symbol", "effective_date"],
+            how="anti",
         )
     )
     cash = (
-        pl.read_parquet(
-            source_cache / "cninfo_dividend" / "normalized_payment_dates.parquet"
-        )
+        pl.read_parquet(source_cache / "cninfo_dividend" / "normalized_payment_dates.parquet")
         .unique(
             subset=["symbol", "effective_date", "ex_date", "cash_per_share"],
             maintain_order=True,

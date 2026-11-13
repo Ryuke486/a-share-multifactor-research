@@ -25,9 +25,12 @@ def backtest_summary(
     )
     explicit_end = float(nav["explicit_cost_nav"][-1])
     zero_end = float(nav["zero_cost_nav"][-1])
-    month_ends = nav.sort("date").group_by_dynamic("date", every="1mo").agg(
-        pl.col("nav").last()
-    ).with_columns(pl.col("nav").pct_change().alias("monthly_return"))
+    month_ends = (
+        nav.sort("date")
+        .group_by_dynamic("date", every="1mo")
+        .agg(pl.col("nav").last())
+        .with_columns(pl.col("nav").pct_change().alias("monthly_return"))
+    )
     monthly = month_ends["monthly_return"].drop_nulls()
     events = result["order_events"]
     waits = events.group_by("order_id").agg(
@@ -54,8 +57,7 @@ def backtest_summary(
         "filled_order_rate": result["orders"].filter(pl.col("status") == "filled").height
         / order_count,
         "orders_ever_partially_filled": waits.filter(pl.col("was_partial")).height,
-        "partially_filled_order_rate": waits.filter(pl.col("was_partial")).height
-        / order_count,
+        "partially_filled_order_rate": waits.filter(pl.col("was_partial")).height / order_count,
         "average_order_wait_days": float(waits["wait_days"].mean()),
         "monthly_win_rate": float((monthly > 0).mean() or 0.0),
         "average_cash_weight": float((nav["cash"] / nav["nav"]).mean()),

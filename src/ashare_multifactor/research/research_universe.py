@@ -16,9 +16,7 @@ def build_research_universe(
 ) -> pl.DataFrame:
     """Add point-in-time eligibility and stable liquidity ranks for factor research."""
     scoped = filter_supported_markets(frame, settings.supported_markets)
-    with_validity = scoped.sort(["symbol", "date"]).with_columns(
-        is_valid_trade_observation()
-    )
+    with_validity = scoped.sort(["symbol", "date"]).with_columns(is_valid_trade_observation())
     with_history = with_validity.with_columns(
         pl.col("is_valid_trade_observation")
         .cast(pl.UInt32)
@@ -61,8 +59,7 @@ def build_research_universe(
         .alias("liquidity_rank")
     )
     is_eligible = (
-        pl.col("_passes_research_filters")
-        & (pl.col("liquidity_rank") <= settings.universe_size)
+        pl.col("_passes_research_filters") & (pl.col("liquidity_rank") <= settings.universe_size)
     ).fill_null(False)
     return ranked.with_columns(is_eligible.alias("is_research_eligible")).drop(
         "_passes_research_filters"

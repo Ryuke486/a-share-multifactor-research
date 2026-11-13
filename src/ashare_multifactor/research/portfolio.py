@@ -20,16 +20,12 @@ def build_target_weights(
         .rename({"date": "signal_date"})
     )
     selected = (
-        frame.filter(
-            pl.col("momentum_z").is_not_null() & pl.col("momentum_z").is_finite()
-        )
+        frame.filter(pl.col("momentum_z").is_not_null() & pl.col("momentum_z").is_finite())
         .sort(
             ["date", "momentum_z", "symbol"],
             descending=[False, True, False],
         )
-        .with_columns(
-            pl.col("symbol").cum_count().over("date").alias("_selection_rank")
-        )
+        .with_columns(pl.col("symbol").cum_count().over("date").alias("_selection_rank"))
         .filter(pl.col("_selection_rank") <= config.mvp.portfolio_size)
         .with_columns((1.0 / pl.len().over("date")).alias("target_weight"))
         .rename({"date": "signal_date"})

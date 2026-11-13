@@ -155,9 +155,7 @@ def test_official_payment_date_override_requires_hashed_bounded_evidence(
         "symbol": "000819",
         "ex_date": date(2021, 6, 25),
         "payment_date": date(2021, 6, 25),
-        "source_url": (
-            "https://static.cninfo.com.cn/finalpage/2021-06-18/notice.PDF"
-        ),
+        "source_url": ("https://static.cninfo.com.cn/finalpage/2021-06-18/notice.PDF"),
     }
 
 

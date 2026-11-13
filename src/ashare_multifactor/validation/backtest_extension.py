@@ -57,7 +57,5 @@ def _reject_sealed_dates(
     name: str,
 ) -> None:
     for column in columns:
-        if column in frame.columns and frame.filter(
-            pl.col(column) >= SEALED_TEST_START
-        ).height:
+        if column in frame.columns and frame.filter(pl.col(column) >= SEALED_TEST_START).height:
             raise ValueError(f"sealed final test date in {name}.{column}")

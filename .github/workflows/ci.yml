@@ -61,6 +61,7 @@ jobs:
       - name: Static checks
         run: |
           python -m ruff check src tests
+          python -m ruff format --check src tests
           git diff --check
       - name: Delivery checks
         run: python -m ashare_multifactor.cli.delivery check

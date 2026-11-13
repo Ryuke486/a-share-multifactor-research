@@ -78,9 +78,7 @@ def audit_factor_fields(
         )
         for definition in definitions
     }
-    industry_available = (
-        "industry" in frame.columns and metrics["industry"]["non_null_rate"] > 0
-    )
+    industry_available = "industry" in frame.columns and metrics["industry"]["non_null_rate"] > 0
     return FieldReadiness(
         factor_status=factor_status,
         industry_neutralization_enabled=industry_verified and industry_available,
@@ -122,8 +120,7 @@ def _factor_status(
     if any(field not in frame.columns for field in definition.source_columns):
         return "missing"
     if any(
-        frame.get_column(field).null_count() == frame.height
-        for field in definition.source_columns
+        frame.get_column(field).null_count() == frame.height for field in definition.source_columns
     ):
         return "missing"
     if definition.requires_verified_pit and not valuation_verified:

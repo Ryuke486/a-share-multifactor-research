@@ -27,9 +27,11 @@ def size_stratified_buffered(
     prior = set(previous_targets.get_column("symbol")) if not previous_targets.is_empty() else set()
     parts: list[pl.DataFrame] = []
     for group in range(1, size_groups + 1):
-        ranked = ranked_size.filter(pl.col("size_group") == group).sort(
-            "score", "symbol", descending=[True, False]
-        ).with_row_index("group_rank", offset=1)
+        ranked = (
+            ranked_size.filter(pl.col("size_group") == group)
+            .sort("score", "symbol", descending=[True, False])
+            .with_row_index("group_rank", offset=1)
+        )
         retained = ranked.filter(
             pl.col("symbol").is_in(prior) & (pl.col("group_rank") <= buffer_rank)
         )

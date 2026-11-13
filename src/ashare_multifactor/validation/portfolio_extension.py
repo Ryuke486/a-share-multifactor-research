@@ -71,9 +71,7 @@ def build_validation_targets(
                 **portfolio_diagnostics(target, prior),
             }
         )
-        parts.append(
-            target.select("date", "method", "portfolio_name", "symbol", "target_weight")
-        )
+        parts.append(target.select("date", "method", "portfolio_name", "symbol", "target_weight"))
         prior = target.select("symbol", "target_weight")
     targets = pl.concat(parts).sort("date", "symbol")
     sums = targets.group_by("date").agg(pl.col("target_weight").sum().alias("weight"))

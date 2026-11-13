@@ -30,8 +30,7 @@ def build_execution_panel(frame: pl.DataFrame, *, adv_lookback: int = 20) -> pl.
         .sort("symbol", "date")
     )
     return (
-        expanded
-        .with_columns(
+        expanded.with_columns(
             pl.col("amount")
             .shift(1)
             .rolling_mean(window_size=adv_lookback, min_samples=1)

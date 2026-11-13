@@ -165,7 +165,9 @@ def test_reader_rejects_invalid_symbols_on_both_sides(tmp_path: Path, symbol: st
 
     pair = _pair(tmp_path, [_raw_row(symbol)], [_adj_row(symbol)])
 
-    with pytest.raises(ValueError, match=r"^invalid symbol in unadjusted CSV: expected 1-6 digits$"):
+    with pytest.raises(
+        ValueError, match=r"^invalid symbol in unadjusted CSV: expected 1-6 digits$"
+    ):
         read_daily_pair(pair)
 
 

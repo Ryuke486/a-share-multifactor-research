@@ -26,9 +26,7 @@ class DailyPanelSource:
     quality_record: dict[str, object] | None = None
 
 
-def _manifest_date(
-    payload: Mapping[str, object], key: str, manifest_path: Path
-) -> date:
+def _manifest_date(payload: Mapping[str, object], key: str, manifest_path: Path) -> date:
     try:
         return date.fromisoformat(str(payload[key]))
     except (KeyError, ValueError) as error:
@@ -179,9 +177,7 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
     ):
         raise ValueError("daily panel manifest must contain sorted unique years")
     if years != list(range(minimum.year, maximum.year + 1)):
-        raise ValueError(
-            "daily panel manifest years must match the continuous min/max year range"
-        )
+        raise ValueError("daily panel manifest years must match the continuous min/max year range")
 
     records: list[tuple[dict[str, object], Path, date, date]] = []
     expected_relative_paths: set[str] = set()
@@ -207,11 +203,7 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
             raise ValueError(f"daily panel partition year outside allowed period: {year}")
         if not isinstance(rows, int) or isinstance(rows, bool) or rows <= 0:
             raise ValueError(f"invalid daily panel partition rows: {relative_path}")
-        if (
-            not isinstance(size_bytes, int)
-            or isinstance(size_bytes, bool)
-            or size_bytes <= 0
-        ):
+        if not isinstance(size_bytes, int) or isinstance(size_bytes, bool) or size_bytes <= 0:
             raise ValueError(f"invalid daily panel partition size: {relative_path}")
         if (
             not isinstance(sha256, str)
@@ -223,10 +215,7 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
         partition_maximum = _manifest_date(item, "max_date", manifest_path)
         if partition_maximum < partition_minimum:
             raise ValueError(f"daily panel partition date range is reversed: {relative_path}")
-        if (
-            partition_minimum < allowed.start
-            or partition_maximum > allowed.end
-        ):
+        if partition_minimum < allowed.start or partition_maximum > allowed.end:
             raise ValueError(f"daily panel partition dates outside allowed period: {relative_path}")
         if partition_minimum.year != year or partition_maximum.year != year:
             raise ValueError(f"daily panel partition year/date mismatch: {relative_path}")
@@ -236,9 +225,7 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
         records.append((item, path, partition_minimum, partition_maximum))
 
     actual_relative_paths = {
-        path.relative_to(root).as_posix()
-        for path in root.rglob("*.parquet")
-        if path.is_file()
+        path.relative_to(root).as_posix() for path in root.rglob("*.parquet") if path.is_file()
     }
     if actual_relative_paths != expected_relative_paths:
         missing = sorted(expected_relative_paths - actual_relative_paths)
@@ -251,19 +238,16 @@ def validate_panel_source(root: Path, allowed: Period) -> DailyPanelSource:
     for record, path, partition_minimum, partition_maximum in records:
         if path.is_symlink() or not path.resolve().is_relative_to(root_resolved):
             raise ValueError(
-                "invalid daily panel partition path: "
-                f"{path.relative_to(root).as_posix()}"
+                f"invalid daily panel partition path: {path.relative_to(root).as_posix()}"
             )
         actual_file = _file_summary(path)
         if record["sha256"] != actual_file["sha256"]:
             raise ValueError(
-                "daily panel partition digest mismatch: "
-                f"{path.relative_to(root).as_posix()}"
+                f"daily panel partition digest mismatch: {path.relative_to(root).as_posix()}"
             )
         if record["size_bytes"] != actual_file["size_bytes"]:
             raise ValueError(
-                "daily panel partition size mismatch: "
-                f"{path.relative_to(root).as_posix()}"
+                f"daily panel partition size mismatch: {path.relative_to(root).as_posix()}"
             )
         actual_rows, actual_minimum, actual_maximum = _parquet_summary(path)
         if record["rows"] != actual_rows:
@@ -404,9 +388,7 @@ def validate_panel_source_at(root_fd: int, allowed: Period) -> DailyPanelSource:
     ):
         raise ValueError("daily panel manifest must contain sorted unique years")
     if years != list(range(minimum.year, maximum.year + 1)):
-        raise ValueError(
-            "daily panel manifest years must match the continuous min/max year range"
-        )
+        raise ValueError("daily panel manifest years must match the continuous min/max year range")
 
     records: list[tuple[dict[str, object], str, date, date]] = []
     expected_relative_paths: set[str] = set()
@@ -432,11 +414,7 @@ def validate_panel_source_at(root_fd: int, allowed: Period) -> DailyPanelSource:
             raise ValueError(f"daily panel partition year outside allowed period: {year}")
         if not isinstance(rows, int) or isinstance(rows, bool) or rows <= 0:
             raise ValueError(f"invalid daily panel partition rows: {relative_path}")
-        if (
-            not isinstance(size_bytes, int)
-            or isinstance(size_bytes, bool)
-            or size_bytes <= 0
-        ):
+        if not isinstance(size_bytes, int) or isinstance(size_bytes, bool) or size_bytes <= 0:
             raise ValueError(f"invalid daily panel partition size: {relative_path}")
         if (
             not isinstance(sha256, str)
@@ -469,35 +447,21 @@ def validate_panel_source_at(root_fd: int, allowed: Period) -> DailyPanelSource:
         try:
             actual_file = _descriptor_summary(descriptor)
             if record["sha256"] != actual_file["sha256"]:
-                raise ValueError(
-                    "daily panel partition digest mismatch: " f"{relative_path}"
-                )
+                raise ValueError(f"daily panel partition digest mismatch: {relative_path}")
             if record["size_bytes"] != actual_file["size_bytes"]:
-                raise ValueError(
-                    "daily panel partition size mismatch: " f"{relative_path}"
-                )
-            actual_rows, actual_minimum, actual_maximum = _descriptor_parquet_summary(
-                descriptor
-            )
+                raise ValueError(f"daily panel partition size mismatch: {relative_path}")
+            actual_rows, actual_minimum, actual_maximum = _descriptor_parquet_summary(descriptor)
         finally:
             os.close(descriptor)
         if record["rows"] != actual_rows:
-            raise ValueError(
-                "daily panel partition rows do not match parquet: " f"{relative_path}"
-            )
+            raise ValueError(f"daily panel partition rows do not match parquet: {relative_path}")
         if actual_minimum < allowed.start or actual_maximum > allowed.end:
-            raise ValueError(
-                "daily panel partition dates outside allowed period: " f"{relative_path}"
-            )
+            raise ValueError(f"daily panel partition dates outside allowed period: {relative_path}")
         if actual_minimum != partition_minimum or actual_maximum != partition_maximum:
-            raise ValueError(
-                "daily panel partition dates do not match parquet: " f"{relative_path}"
-            )
+            raise ValueError(f"daily panel partition dates do not match parquet: {relative_path}")
         year = int(record["year"])
         if actual_minimum.year != year or actual_maximum.year != year:
-            raise ValueError(
-                "daily panel partition year does not match parquet: " f"{relative_path}"
-            )
+            raise ValueError(f"daily panel partition year does not match parquet: {relative_path}")
     declared_rows = manifest.get("rows")
     if (
         not isinstance(declared_rows, int)
@@ -514,7 +478,9 @@ def validate_panel_source_at(root_fd: int, allowed: Period) -> DailyPanelSource:
         raise ValueError("daily panel partition dates do not match data manifest")
     return DailyPanelSource(
         manifest=manifest,
-        files=tuple(Path(relative) for _, relative, _, _ in sorted(records, key=lambda item: item[1])),
+        files=tuple(
+            Path(relative) for _, relative, _, _ in sorted(records, key=lambda item: item[1])
+        ),
         manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
         manifest_size_bytes=len(manifest_bytes),
         quality_file=Path("quality_issues.json"),

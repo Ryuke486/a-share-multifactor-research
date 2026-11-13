@@ -36,9 +36,7 @@ def build_portfolio_variants(
         raise ValueError("portfolio baseline parameters are incomplete")
     output = []
     for experiment in definitions:
-        values = baseline | {
-            key: int(value) for key, value in experiment.parameters.items()
-        }
+        values = baseline | {key: int(value) for key, value in experiment.parameters.items()}
         changed = [key for key in required if values[key] != baseline[key]]
         if not experiment.baseline and len(changed) != 1:
             raise ValueError(
@@ -53,9 +51,7 @@ def build_portfolio_variants(
     return tuple(output)
 
 
-def apply_rebalance_schedule(
-    scores: pl.DataFrame, *, every_months: int
-) -> pl.DataFrame:
+def apply_rebalance_schedule(scores: pl.DataFrame, *, every_months: int) -> pl.DataFrame:
     if every_months <= 0:
         raise ValueError("rebalance interval must be positive")
     dates = scores.get_column("date").unique().sort().to_list()
@@ -79,13 +75,9 @@ def restrict_liquid_universe(
     )
     counts = joined.group_by("date").len().get_column("len")
     if counts.is_empty() or counts.min() < universe_size:
-        raise ExpectedExperimentUnavailability(
-            "requested universe exceeds frozen upstream"
-        )
+        raise ExpectedExperimentUnavailability("requested universe exceeds frozen upstream")
     return (
-        joined.sort(
-            "date", "liquidity", "symbol", descending=[False, True, False]
-        )
+        joined.sort("date", "liquidity", "symbol", descending=[False, True, False])
         .group_by("date", maintain_order=True)
         .head(universe_size)
         .drop("liquidity")

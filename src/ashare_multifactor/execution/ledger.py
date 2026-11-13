@@ -38,9 +38,7 @@ class Ledger:
 
     def available_quantity(self, symbol: str, trade_date: date) -> int:
         return sum(
-            lot.quantity
-            for lot in self._lots.get(symbol, [])
-            if lot.available_date <= trade_date
+            lot.quantity for lot in self._lots.get(symbol, []) if lot.available_date <= trade_date
         )
 
     def buy(
@@ -95,9 +93,7 @@ class Ledger:
         if bonus:
             self._lots.setdefault(symbol, []).append(_Lot(bonus, effective_date))
 
-    def recognize_dividend(
-        self, action_id: str, symbol: str, cash_per_share: float
-    ) -> float:
+    def recognize_dividend(self, action_id: str, symbol: str, cash_per_share: float) -> float:
         if action_id in self._dividend_receivables:
             raise ValueError(f"dividend already recognized: {action_id}")
         if cash_per_share < 0 or not math.isfinite(cash_per_share):

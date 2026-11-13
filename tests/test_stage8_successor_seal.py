@@ -76,14 +76,10 @@ def test_successor_seal_rejects_missing_git_tree(tmp_path: Path) -> None:
     try:
         seal_test_protocol(
             tmp_path / "sealed.json",
-            protocol=load_robustness_protocol(
-                Path("configs/robustness_protocol.yaml")
-            ),
+            protocol=load_robustness_protocol(Path("configs/robustness_protocol.yaml")),
             code_identity=identity,
             validation_pointer={
-                "run_id": (
-                    "65b19e1_stage7_validation_controlled_collector_successor"
-                ),
+                "run_id": ("65b19e1_stage7_validation_controlled_collector_successor"),
                 "manifest_sha256": "e" * 64,
             },
             market_rules_sha256="1" * 64,
@@ -188,7 +184,4 @@ def test_successor_lineage_requires_ready_hashed_action_audit(tmp_path: Path) ->
 
     assert lineage["predecessor"]["run_id"] == "old"
     assert lineage["execution_protocol"]["action_coverage_audit_sha256"] == audit_hash
-    assert (
-        lineage["execution_protocol"]["collector_readiness_audit_sha256"]
-        == "b" * 64
-    )
+    assert lineage["execution_protocol"]["collector_readiness_audit_sha256"] == "b" * 64
