@@ -36,7 +36,7 @@
 ![策略与股票池基准增长对比](../assets/v1/benchmark_comparison.png)
 
 - 图表：`docs/assets/v1/benchmark_comparison.png`
-- 来源：描述性补充 `artifacts/v1_supplements/`（`ashare_multifactor.cli.supplements`，代码提交 `a394cab`）
+- 来源：描述性补充 `artifacts/v1_supplements/`（`ashare_multifactor.cli.supplements`，代码提交 `53e6ead`）
 - 原文件：`artifacts/v1_supplements/figures/benchmark_comparison.png`
 - 补充 manifest SHA-256：`c489ed61913181884c60ffc6f7ff8a53c4f69fbd4e1acad055d24e9735fec0da`
 - 图表 SHA-256：`5b323213350a1a2ffe1749eb81e5af66b9814c18060dcb73dc15cd8ec0cb63d7`
